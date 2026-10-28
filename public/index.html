@@ -21,6 +21,7 @@
     --bg: #ffffff;
     --text: #1f2328;
     --up: #1a7f37;
+    --degraded: #8a5a00;
     --down: #cf222e;
     --unknown: #636c76;
     --maintenance: #9a6700;
@@ -35,6 +36,7 @@
     --bg: #0d1117;
     --text: #e6edf3;
     --up: #3fb950;
+    --degraded: #e3b341;
     --down: #ff7b72;
     --unknown: #8b949e;
     --maintenance: #d29922;
@@ -50,6 +52,7 @@
       --bg: #0d1117;
       --text: #e6edf3;
       --up: #3fb950;
+      --degraded: #e3b341;
       --down: #ff7b72;
       --unknown: #8b949e;
       --maintenance: #d29922;
@@ -71,6 +74,7 @@
   li { padding: .5rem; border-bottom: 1px solid var(--border); }
   .state { display: inline-block; min-width: 4.5rem; font-weight: bold; text-transform: uppercase; }
   .state-up .state { color: var(--up); }
+  .state-degraded .state { color: var(--degraded); }
   .state-down .state { color: var(--down); }
   .state-unknown .state { color: var(--unknown); }
   .state-maintenance .state { color: var(--maintenance); }

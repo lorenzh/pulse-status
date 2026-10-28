@@ -2,6 +2,7 @@ import type {
   ChecksResponse,
   CheckWithState,
   IncidentsResponse,
+  LocationResult,
   MaintenanceResponse,
 } from "@lorenzh/pulse-contract";
 
@@ -24,6 +25,21 @@ export function renderLocations(check: Pick<CheckWithState, "locations">): strin
   const active = locations.filter((entry) => !entry.stale);
   const down = active.filter((entry) => entry.result.status === "down").length;
   return `<span class="locations">${down}/${active.length} locations down</span> `;
+}
+
+export function renderLatency(check: CheckWithState): string {
+  if (check.state !== "up" && check.state !== "degraded") return "";
+  const newest = (check.locations ?? []).reduce<LocationResult | null>(
+    (best, entry) =>
+      best === null || entry.result.timestamp > best.result.timestamp ? entry : best,
+    null,
+  );
+  if (newest === null) return "";
+  const objective =
+    check.type !== "tls" && check.latencyObjectiveMs != null
+      ? ` (objective ${check.latencyObjectiveMs} ms)`
+      : "";
+  return `<span class="latency">${escapeHtml(`${newest.result.latencyMs} ms${objective}`)}</span> `;
 }
 
 export function renderChecks(checks: ChecksResponse): string {
@@ -57,6 +73,7 @@ export function renderChecks(checks: ChecksResponse): string {
       `<span class="name">${escapeHtml(check.name)}</span> ` +
       target +
       certDays +
+      renderLatency(check) +
       renderLocations(check) +
       note +
       reason +
