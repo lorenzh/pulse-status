@@ -1,5 +1,5 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { createPoller, type PollerState } from "./poller.ts";
 
 function fakeTimer() {
@@ -7,12 +7,18 @@ function fakeTimer() {
   let next = 1;
   return {
     pending,
-    setTimeout(fn: () => void, _ms: number) { const id = next++; pending.set(id, fn); return id; },
-    clearTimeout(h: unknown) { pending.delete(h as number); },
+    setTimeout(fn: () => void, _ms: number) {
+      const id = next++;
+      pending.set(id, fn);
+      return id;
+    },
+    clearTimeout(h: unknown) {
+      pending.delete(h as number);
+    },
     async fire() {
       const fns = [...pending.values()];
       pending.clear();
-      fns.forEach((f) => f());
+      for (const f of fns) f();
       await new Promise((r) => setImmediate(r));
     },
   };
@@ -32,7 +38,10 @@ test("refreshes on schedule, shows error, recovers, stops", async () => {
   const updates: PollerState[] = [];
   let clock = 100;
   const poller = createPoller({
-    fetch: fakeFetch, timer, now: () => clock, pollMs: 5000,
+    fetch: fakeFetch,
+    timer,
+    now: () => clock,
+    pollMs: 5000,
     onUpdate: (s) => updates.push(s),
   });
 
@@ -43,14 +52,16 @@ test("refreshes on schedule, shows error, recovers, stops", async () => {
   assert.equal(updates[0]!.updatedAt, 100);
   assert.equal(timer.pending.size, 1);
 
-  apiUp = false; clock = 200;
+  apiUp = false;
+  clock = 200;
   await timer.fire();
   assert.equal(updates.length, 2);
   assert.match(updates[1]!.error!, /ECONNREFUSED/);
   assert.equal(updates[1]!.checks.length, 1, "keeps last data");
   assert.equal(updates[1]!.updatedAt, 100);
 
-  apiUp = true; clock = 300;
+  apiUp = true;
+  clock = 300;
   await timer.fire();
   assert.equal(updates[2]!.error, null);
   assert.equal(updates[2]!.updatedAt, 300);
@@ -67,7 +78,10 @@ test("non-ok response is an error", async () => {
   const updates: PollerState[] = [];
   const poller = createPoller({
     fetch: (async () => new Response("x", { status: 500 })) as unknown as typeof fetch,
-    timer, now: () => 0, pollMs: 1, onUpdate: (s) => updates.push(s),
+    timer,
+    now: () => 0,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
   });
   await poller.refresh();
   assert.match(updates[0]!.error!, /HTTP 500/);

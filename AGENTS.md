@@ -4,8 +4,13 @@
 
 ```sh
 npm ci           # install from the lockfile
-npm run check    # typecheck, then tests
+npm run lint     # Biome format and lint check
+npm run format   # apply Biome fixes
+npm run check    # lint, typecheck, then tests
 ```
+
+A Lefthook pre-commit hook (installed by `npm ci` via `prepare`) runs `biome check` on staged
+files. HTML is excluded from Biome.
 
 ## Conventions
 

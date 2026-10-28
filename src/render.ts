@@ -33,10 +33,7 @@ export function renderChecks(checks: ChecksResponse): string {
   return `<ul class="checks">${items.join("")}</ul>`;
 }
 
-export function renderIncidents(
-  incidents: IncidentsResponse,
-  checks: ChecksResponse,
-): string {
+export function renderIncidents(incidents: IncidentsResponse, checks: ChecksResponse): string {
   const open = incidents.filter((incident) => incident.resolvedAt === null);
   if (open.length === 0) {
     return '<p class="empty">No open incidents.</p>';

@@ -1,11 +1,17 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { CheckWithState, Incident } from "@lorenzh/pulse-contract";
 import { renderBanner, renderChecks, renderIncidents } from "./render.ts";
 
 const base: CheckWithState = {
-  id: "a", name: "Site", url: "http://x.test/", intervalMs: 1000,
-  state: "up", consecutiveDown: 0, lastResultAt: 1, lastReason: null,
+  id: "a",
+  name: "Site",
+  url: "http://x.test/",
+  intervalMs: 1000,
+  state: "up",
+  consecutiveDown: 0,
+  lastResultAt: 1,
+  lastReason: null,
 };
 
 test("renders each state", () => {

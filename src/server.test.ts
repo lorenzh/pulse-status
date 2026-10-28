@@ -1,7 +1,7 @@
-import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { after, test } from "node:test";
 import { createStatusServer } from "./server.ts";
 
 const servers: Server[] = [];
@@ -10,7 +10,9 @@ async function listen(s: Server): Promise<string> {
   servers.push(s);
   return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
 }
-after(() => { for (const s of servers) s.close(); });
+after(() => {
+  for (const s of servers) s.close();
+});
 
 const api = createServer((req, res) => {
   res.setHeader("content-type", "application/json");

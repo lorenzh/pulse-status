@@ -25,15 +25,20 @@ Then open http://localhost:8080 (with the default `PORT`). Requests to `/api/*` 
 
 ## Settings
 
-| Env | Default | Meaning |
-| --- | --- | --- |
-| `PORT` | `8080` | Port of the status server |
+| Env             | Default                 | Meaning                                       |
+| --------------- | ----------------------- | --------------------------------------------- |
+| `PORT`          | `8080`                  | Port of the status server                     |
 | `PULSE_API_URL` | `http://localhost:3000` | pulse-api base URL; `/api/*` is proxied to it |
-| `POLL_MS` | `5000` | Page refresh interval in ms |
+| `POLL_MS`       | `5000`                  | Page refresh interval in ms                   |
 
 ## Development
 
 ```sh
-npm ci          # install from the lockfile
-npm run check   # typecheck and tests
+npm ci          # install from the lockfile (also installs the pre-commit hook)
+npm run lint    # Biome format and lint check
+npm run format  # apply Biome fixes
+npm run check   # lint, typecheck and tests
 ```
+
+A Lefthook pre-commit hook runs `biome check` on staged `.js`, `.ts` and `.json` files and
+blocks the commit if they are badly formatted or fail lint. `public/index.html` is not covered.
