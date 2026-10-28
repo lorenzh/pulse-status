@@ -46,3 +46,8 @@ npm run check   # lint, typecheck and tests
 
 A Lefthook pre-commit hook runs `biome check` on staged `.js`, `.ts` and `.json` files and
 blocks the commit if they are badly formatted or fail lint. `public/index.html` is not covered.
+
+## TLS checks
+
+A check with `type: "tls"` shows `host:port` instead of a URL and a `.cert-days` span with the
+days left on the certificate (`certificate expires in 5 days` while down, otherwise `N days`).

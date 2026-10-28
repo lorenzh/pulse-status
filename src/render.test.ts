@@ -157,3 +157,58 @@ test("location names never reach the output unescaped", () => {
   assert.doesNotMatch(html, /<script>/);
   assert.match(html, /1\/1 locations down/);
 });
+
+const tls: CheckWithState = {
+  id: "t",
+  name: "Cert",
+  type: "tls",
+  host: "example.test",
+  port: 443,
+  warnDays: 14,
+  intervalMs: 1000,
+  state: "up",
+  consecutiveDown: 0,
+  lastResultAt: 1,
+  lastReason: null,
+  locations: [],
+  certDaysLeft: 90,
+};
+
+test("tls up shows host:port and days left", () => {
+  const html = renderChecks([tls]);
+  assert.match(html, /<span class="url">example\.test:443<\/span>/);
+  assert.match(html, /<span class="cert-days">90 days<\/span>/);
+  assert.doesNotMatch(html, /class="reason"/);
+});
+
+test("tls down within threshold shows the reason as days left", () => {
+  const html = renderChecks([
+    { ...tls, state: "down", certDaysLeft: 5, lastReason: "certificate expires in 5 days" },
+  ]);
+  assert.match(html, /<span class="cert-days">certificate expires in 5 days<\/span>/);
+  assert.equal(html.split("certificate expires in 5 days").length, 2);
+});
+
+test("tls expired", () => {
+  const html = renderChecks([
+    { ...tls, state: "down", certDaysLeft: -2, lastReason: "certificate expired" },
+  ]);
+  assert.match(html, /<span class="cert-days">certificate expired<\/span>/);
+});
+
+test("tls without certificate shows only the reason; host is escaped", () => {
+  const html = renderChecks([
+    { ...tls, host: "<b>", state: "down", certDaysLeft: null, lastReason: "ECONNREFUSED" },
+  ]);
+  assert.doesNotMatch(html, /cert-days/);
+  assert.match(html, /&lt;b&gt;:443/);
+  assert.match(html, /<span class="reason">ECONNREFUSED<\/span>/);
+});
+
+test("http output is byte-identical", () => {
+  assert.equal(
+    renderChecks([base]),
+    '<ul class="checks"><li class="check state-up"><span class="state">up</span> ' +
+      '<span class="name">Site</span> <span class="url">http://x.test/</span> </li></ul>',
+  );
+});

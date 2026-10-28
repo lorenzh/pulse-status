@@ -47,6 +47,28 @@ test("serves page, modules, and proxies the API", async () => {
   assert.equal((await fetch(base + "/nothing")).status, 404);
 });
 
+test("proxies a TLS check from the API", async () => {
+  const tlsCheck = {
+    id: "t",
+    name: "Cert",
+    type: "tls",
+    host: "example.test",
+    port: 443,
+    warnDays: 14,
+    intervalMs: 1000,
+    certDaysLeft: 5,
+  };
+  const tlsApi = createServer((req, res) => {
+    res.setHeader("content-type", "application/json");
+    if (req.url === "/checks") res.end(JSON.stringify([tlsCheck]));
+    else res.end("[]");
+  });
+  const apiUrl = await listen(tlsApi);
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  const r = await fetch(base + "/api/checks");
+  assert.deepEqual(await r.json(), [tlsCheck]);
+});
+
 test("502 when the API is down", async () => {
   const dead = createServer();
   const deadUrl = await listen(dead);
