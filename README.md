@@ -1,5 +1,7 @@
 # pulse-status
 
+[![CI](https://github.com/lorenzh/pulse-status/actions/workflows/ci.yml/badge.svg)](https://github.com/lorenzh/pulse-status/actions/workflows/ci.yml)
+
 pulse is an uptime monitor with a status page. This repository is the status page: a small web server that shows every check with its state and the open incidents.
 
 It depends on [pulse-contract](https://github.com/lorenzh/pulse-contract) for the shared response types. At run time it reads [pulse-api](https://github.com/lorenzh/pulse-api) through its own `/api/*` proxy, so pulse-api must be running.
