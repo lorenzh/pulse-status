@@ -24,6 +24,8 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/space-grotesk": "^5.3.0",
     "@lorenzh/pulse-contract": "github:lorenzh/pulse-contract#78c86dcc3761dabcd57988da81b3270c75df12f0"
   },
   "workspaces": [

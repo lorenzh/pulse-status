@@ -183,3 +183,62 @@ test("a valid body yields the data with no error", async () => {
   assert.deepEqual(updates[0]!.checks, checks);
   assert.equal(updates[0]!.updatedAt, 5);
 });
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+test("resolved: requests status=resolved, keeps the last 7 days newest first", async () => {
+  const now = 100 * DAY_MS;
+  const inc = (id: number, resolvedAt: number | null) => ({
+    id,
+    checkId: "a",
+    openedAt: 0,
+    resolvedAt,
+    reason: null,
+  });
+  const urls: string[] = [];
+  const fakeFetch = (async (url: string) => {
+    urls.push(url);
+    if (url.endsWith("status=resolved")) {
+      return json([
+        inc(1, now - 8 * DAY_MS),
+        inc(2, now - 2 * DAY_MS),
+        inc(3, now - 1 * DAY_MS),
+        inc(4, now - 7 * DAY_MS),
+      ]);
+    }
+    return json([]);
+  }) as unknown as typeof fetch;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: fakeFetch,
+    timer: fakeTimer(),
+    now: () => now,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
+  });
+  await poller.refresh();
+  assert.ok(urls.includes("/api/incidents?status=resolved"));
+  assert.deepEqual(
+    updates[0]!.resolved.map((i) => i.id),
+    [3, 2, 4],
+  );
+});
+
+test("resolved: a failed or malformed request gives an empty list and no error", async () => {
+  for (const bad of [new Response("x", { status: 500 }), json({ nope: true })]) {
+    const fakeFetch = (async (url: string) =>
+      url.endsWith("status=resolved") ? bad : json([])) as unknown as typeof fetch;
+    const updates: PollerState[] = [];
+    const poller = createPoller({
+      fetch: fakeFetch,
+      timer: fakeTimer(),
+      now: () => 5,
+      pollMs: 1,
+      onUpdate: (s) => updates.push(s),
+    });
+    await poller.refresh();
+    assert.equal(updates[0]!.error, null);
+    assert.deepEqual(updates[0]!.resolved, []);
+    assert.equal(updates[0]!.updatedAt, 5);
+  }
+});

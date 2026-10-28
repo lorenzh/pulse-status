@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>pulse status</title>
+<title>{{name}} status</title>
+<link rel="stylesheet" href="/theme.css">
 <script>
   (function () {
     var t = "system";
@@ -18,85 +19,70 @@
   })();
 </script>
 <style>
-  :root {
-    color-scheme: light;
-    --bg: #ffffff;
-    --text: #1f2328;
-    --up: #1a7f37;
-    --degraded: #8a5a00;
-    --down: #cf222e;
-    --unknown: #636c76;
-    --maintenance: #9a6700;
-    --secondary: #57606a;
-    --border: #d0d7de;
-    --banner-bg: #ffebe9;
-    --banner-text: #1f2328;
-    --banner-border: #cf222e;
-  }
-  :root[data-theme="dark"] {
-    color-scheme: dark;
-    --bg: #0d1117;
-    --text: #e6edf3;
-    --up: #3fb950;
-    --degraded: #e3b341;
-    --down: #ff7b72;
-    --unknown: #8b949e;
-    --maintenance: #d29922;
-    --secondary: #9da7b3;
-    --border: #30363d;
-    --banner-bg: #3d1114;
-    --banner-text: #ffdcd7;
-    --banner-border: #ff7b72;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      color-scheme: dark;
-      --bg: #0d1117;
-      --text: #e6edf3;
-      --up: #3fb950;
-      --degraded: #e3b341;
-      --down: #ff7b72;
-      --unknown: #8b949e;
-      --maintenance: #d29922;
-      --secondary: #9da7b3;
-      --border: #30363d;
-      --banner-bg: #3d1114;
-      --banner-text: #ffdcd7;
-      --banner-border: #ff7b72;
-    }
-  }
-  body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; background: var(--bg); color: var(--text); }
-  header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
-  .theme-switch { border: 1px solid var(--border); border-radius: .25rem; padding: .25rem .5rem; margin: 0; color: var(--secondary); }
-  .theme-switch legend { padding: 0 .25rem; font-size: .8rem; }
-  .theme-switch label { margin-right: .5rem; cursor: pointer; }
-  .theme-switch label:has(input:checked) { font-weight: bold; color: var(--text); }
-  .theme-switch input:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
-  ul { list-style: none; padding: 0; }
-  li { padding: .5rem; border-bottom: 1px solid var(--border); }
-  .state { display: inline-block; min-width: 4.5rem; font-weight: bold; text-transform: uppercase; }
-  .state-up .state { color: var(--up); }
-  .state-degraded .state { color: var(--degraded); }
-  .state-down .state { color: var(--down); }
-  .state-unknown .state { color: var(--unknown); }
-  .state-maintenance .state { color: var(--maintenance); }
-  .url, .reason, .note, .cert-days { color: var(--secondary); }
-  .banner.error { background: var(--banner-bg); color: var(--banner-text); border: 1px solid var(--banner-border); padding: .75rem; margin-bottom: 1rem; }
-  .uptime { margin-top: .4rem; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
-  .bars { display: flex; gap: 1px; height: 1.5rem; }
-  .bar { position: relative; flex: 0 0 4px; border-radius: 1px; background: var(--unknown); opacity: .5; }
-  .bar.up { background: var(--up); opacity: 1; }
-  .bar.degraded { background: var(--degraded); opacity: 1; }
-  .bar.down { background: var(--down); opacity: 1; }
-  .bar:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; z-index: 2; }
-  .bar:hover::after, .bar:focus::after { content: attr(data-label); position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: .2rem .4rem; border-radius: .25rem; font-size: .75rem; background: var(--text); color: var(--bg); z-index: 3; pointer-events: none; }
-  .uptime-total { color: var(--secondary); font-size: .85rem; }
-  .empty { color: var(--secondary); }
+  @font-face { font-family: "Space Grotesk Variable"; font-style: normal; font-display: swap; font-weight: 300 700; src: url("/fonts/space-grotesk.woff2") format("woff2-variations"); }
+  @font-face { font-family: "JetBrains Mono Variable"; font-style: normal; font-display: swap; font-weight: 100 800; src: url("/fonts/jetbrains-mono.woff2") format("woff2-variations"); }
+  *, *::before, *::after { box-sizing: border-box; }
+  body { font-family: var(--font-sans); font-size: 1rem; line-height: 1.5; max-width: 48rem; margin: 0 auto; padding: 1.5rem 1rem 3rem; background: var(--bg); color: var(--text); overflow-wrap: break-word; overflow-x: clip; }
+  a, button, input, label, [tabindex] { transition: background-color 150ms cubic-bezier(0.2, 0, 0, 1), border-color 150ms cubic-bezier(0.2, 0, 0, 1), color 150ms cubic-bezier(0.2, 0, 0, 1), opacity 150ms cubic-bezier(0.2, 0, 0, 1); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  :focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .wordmark { font-family: var(--font-mono); font-size: 1.5rem; font-weight: 700; letter-spacing: -0.03em; display: inline-flex; align-items: center; gap: .3rem; }
+  .cursor { display: inline-block; width: .6em; height: 1.1em; background: var(--accent); }
+  .logo { display: block; max-height: 2.5rem; max-width: 12rem; }
+  h1 { margin: 0; font-size: 1.5rem; font-weight: 700; letter-spacing: -0.03em; }
+  h2, .eyebrow { margin: 2rem 0 .75rem; font-family: var(--font-mono); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  h3 { margin: 1.25rem 0 .5rem; font-size: 1rem; font-weight: 600; color: var(--lead); }
+  .theme-switch { display: flex; gap: .25rem; border: 1px solid var(--field-line); border-radius: var(--radius-pill); padding: .125rem; margin: 0; min-width: 0; }
+  .theme-switch legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .theme-switch label { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 0 1rem; border: 1px solid transparent; border-radius: var(--radius-pill); cursor: pointer; color: var(--lead); font-size: .9375rem; }
+  .theme-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .theme-switch label:has(input:checked) { background: var(--tint); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  .theme-switch label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .theme-switch input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-pill); }
+  ul { list-style: none; padding: 0; margin: 0; display: grid; gap: .75rem; }
+  li { padding: 1rem; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-md); min-width: 0; }
+  .summary { margin: 0; padding: 1rem 1.25rem; border-radius: var(--radius-md); border: 1px solid var(--line-strong); font-size: 1.125rem; font-weight: 600; letter-spacing: -0.01em; }
+  .summary.status-success { background: var(--success-tint); color: var(--success); border-color: var(--success); }
+  .summary.status-warning { background: var(--warning-tint); color: var(--warning); border-color: var(--warning); }
+  .summary.status-error { background: var(--error-tint); color: var(--error); border-color: var(--error); }
+  .summary.status-none { background: var(--surface); color: var(--muted); }
+  .check-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; }
+  .state { font-family: var(--font-mono); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; min-width: 5.5rem; }
+  .name { font-weight: 600; font-size: 1.0625rem; }
+  .state-up .state { color: var(--success); }
+  .state-degraded .state { color: var(--warning); }
+  .state-down .state { color: var(--error); }
+  .state-unknown .state { color: var(--muted); }
+  .state-maintenance .state { color: var(--info); }
+  .url { font-family: var(--font-mono); font-size: 13px; color: var(--lead); overflow-wrap: anywhere; margin-top: .25rem; }
+  .meta { display: flex; flex-wrap: wrap; gap: .25rem 1rem; margin-top: .5rem; color: var(--lead); font-size: .9375rem; }
+  .latency, .cert-days, .locations, .duration, .time { font-family: var(--font-mono); font-size: 13px; }
+  .locations { color: var(--error); }
+  .note { color: var(--info); }
+  .reason, .note, .cert-days { overflow-wrap: anywhere; }
+  .incident, .maintenance-window { display: flex; flex-wrap: wrap; gap: .25rem 1rem; align-items: baseline; }
+  .incident .reason, .maintenance-window .note { flex: 1 1 100%; color: var(--lead); }
+  .when { color: var(--lead); }
+  .time { position: relative; color: var(--text); cursor: default; }
+  .time:hover::after, .time:focus::after, .bar:hover::after, .bar:focus::after { content: attr(data-exact); position: absolute; bottom: calc(100% + .35rem); left: 0; width: max-content; max-width: min(18rem, 80vw); padding: .25rem .5rem; border-radius: var(--radius-sm); font-size: 12px; background: var(--text); color: var(--bg); z-index: 3; pointer-events: none; }
+  .banner.error { background: var(--error-tint); color: var(--error); border: 1px solid var(--error); border-radius: var(--radius-md); padding: .75rem 1rem; margin-bottom: 1rem; }
+  .uptime { margin-top: .75rem; }
+  .bars { display: flex; gap: 2px; height: 44px; }
+  .bar { position: relative; flex: 1 1 0; min-width: 0; border-radius: 1px; background: var(--muted); opacity: .4; }
+  .bar.up { background: var(--success); opacity: 1; }
+  .bar.degraded { background: var(--warning); opacity: 1; }
+  .bar.down { background: var(--error); opacity: 1; }
+  .bar:hover, .bar:focus { opacity: .8; }
+  .bar:nth-child(-n+20)::after { left: 0; }
+  .bar:nth-last-child(-n+20)::after { left: auto; right: 0; }
+  .uptime-total { display: block; margin-top: .35rem; font-family: var(--font-mono); font-size: 13px; color: var(--lead); }
+  .empty { margin: 0; color: var(--muted); }
 </style>
 </head>
 <body>
 <header>
-  <h1>pulse status</h1>
+  <h1>{{wordmark}}</h1>
   <fieldset class="theme-switch" id="theme-switch">
     <legend>Theme</legend>
     <label><input type="radio" name="theme" value="light"> Light</label>
@@ -105,11 +91,14 @@
   </fieldset>
 </header>
 <div id="banner"></div>
+<div id="summary"></div>
 <h2>Checks</h2>
 <div id="checks"><p class="empty">Loading…</p></div>
-<h2>Open incidents</h2>
+<h2>Incidents</h2>
 <div id="incidents"></div>
-<h2>Upcoming maintenance</h2>
+<h3>Resolved in the last 7 days</h3>
+<div id="resolved"></div>
+<h2>Maintenance</h2>
 <div id="maintenance"></div>
 <script type="module" src="/client.js"></script>
 </body>

@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CheckWithState, Incident, LocationResult } from "@lorenzh/pulse-contract";
 import {
+  formatDuration,
+  formatRelative,
   renderBanner,
   renderChecks,
   renderIncidents,
+  renderResolvedIncidents,
+  renderSummary,
   renderUpcomingMaintenance,
+  type TimeEnv,
 } from "./render.ts";
+
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
+const NOW = 1_000 * DAY;
+const env: TimeEnv = { now: NOW, formatExact: (ms) => `exact<${ms}>` };
 
 const base: CheckWithState = {
   id: "a",
@@ -38,20 +49,115 @@ test("empty checks", () => {
   assert.match(renderChecks([]), /No checks configured/);
 });
 
-test("open incidents with check name; resolved ignored", () => {
+test("open incidents: name, since <time>, reason; resolved ignored", () => {
   const incidents: Incident[] = [
-    { id: 1, checkId: "a", openedAt: 0, resolvedAt: null, reason: "HTTP 500" },
+    { id: 1, checkId: "a", openedAt: NOW - 3 * MIN, resolvedAt: null, reason: "HTTP 500" },
     { id: 2, checkId: "a", openedAt: 0, resolvedAt: 5, reason: "gone" },
   ];
-  const html = renderIncidents(incidents, [base]);
+  const html = renderIncidents(incidents, [base], env);
   assert.match(html, /Site/);
-  assert.match(html, /1970-01-01T00:00:00\.000Z/);
+  assert.match(
+    html,
+    /since <time class="time" datetime="[^"]+" tabindex="0"[^>]*>3 min ago<\/time>/,
+  );
+  assert.match(html, /data-exact="exact&lt;/);
   assert.match(html, /HTTP 500/);
   assert.doesNotMatch(html, /gone/);
 });
 
 test("empty incidents", () => {
-  assert.match(renderIncidents([], [base]), /No open incidents/);
+  assert.match(renderIncidents([], [base], env), /No open incidents/);
+});
+
+test("resolved incidents: duration, newest first, older than 7 days hidden", () => {
+  const incidents: Incident[] = [
+    {
+      id: 1,
+      checkId: "a",
+      openedAt: NOW - 3 * DAY,
+      resolvedAt: NOW - 3 * DAY + 12 * MIN,
+      reason: "old one",
+    },
+    { id: 2, checkId: "a", openedAt: NOW - 3 * HOUR, resolvedAt: NOW - HOUR, reason: "new one" },
+    { id: 3, checkId: "a", openedAt: NOW - 9 * DAY, resolvedAt: NOW - 8 * DAY, reason: "ancient" },
+    { id: 4, checkId: "a", openedAt: NOW, resolvedAt: null, reason: "open" },
+  ];
+  const html = renderResolvedIncidents(incidents, [base], env);
+  assert.ok(html.indexOf("new one") < html.indexOf("old one"));
+  assert.match(html, /2 h<\/span>/);
+  assert.match(html, /12 min<\/span>/);
+  assert.match(html, /resolved <time/);
+  assert.doesNotMatch(html, /ancient|open/);
+});
+
+test("resolved incidents: empty state", () => {
+  assert.match(renderResolvedIncidents([], [base], env), /No incidents resolved/);
+});
+
+test("formatRelative", () => {
+  assert.equal(formatRelative(NOW - 30_000, NOW), "just now");
+  assert.equal(formatRelative(NOW + 30_000, NOW), "just now");
+  assert.equal(formatRelative(NOW - 3 * MIN, NOW), "3 min ago");
+  assert.equal(formatRelative(NOW - 5 * HOUR, NOW), "5 h ago");
+  assert.equal(formatRelative(NOW - 2 * DAY, NOW), "2 d ago");
+  assert.equal(formatRelative(NOW + 3 * MIN, NOW), "in 3 min");
+  assert.equal(formatRelative(NOW + 5 * HOUR, NOW), "in 5 h");
+  assert.equal(formatRelative(NOW + 2 * DAY, NOW), "in 2 d");
+});
+
+test("formatDuration", () => {
+  assert.equal(formatDuration(59_000), "<1 min");
+  assert.equal(formatDuration(12 * MIN), "12 min");
+  assert.equal(formatDuration(2 * HOUR + 5 * MIN), "2 h 5 min");
+  assert.equal(formatDuration(2 * HOUR), "2 h");
+  assert.equal(formatDuration(3 * DAY + 2 * HOUR), "3 d 2 h");
+  assert.equal(formatDuration(3 * DAY), "3 d");
+});
+
+const withState = (state: CheckWithState["state"], id = "x"): CheckWithState => ({
+  ...base,
+  id,
+  state,
+});
+const openInc = (id: number): Incident => ({
+  id,
+  checkId: "a",
+  openedAt: 0,
+  resolvedAt: null,
+  reason: null,
+});
+
+test("summary: all operational", () => {
+  const html = renderSummary([withState("up"), withState("maintenance"), withState("unknown")], []);
+  assert.match(html, /status-success/);
+  assert.match(html, />All systems operational</);
+});
+
+test("summary: singular and plural, worst state wins", () => {
+  assert.match(
+    renderSummary([withState("up"), withState("degraded")], []),
+    /status-warning[^>]*>1 check degraded</,
+  );
+  assert.match(
+    renderSummary([withState("degraded"), withState("degraded")], []),
+    />2 checks degraded</,
+  );
+  assert.match(renderSummary([withState("down"), withState("degraded")], []), />1 check down</);
+});
+
+test("summary: down with open incidents", () => {
+  const html = renderSummary([withState("down"), withState("down")], [openInc(1)]);
+  assert.match(html, /status-error[^>]*>2 checks down · 1 incident open</);
+  assert.match(
+    renderSummary([withState("up")], [openInc(1), openInc(2)]),
+    /All systems operational · 2 incidents open/,
+  );
+  const resolved: Incident = { ...openInc(3), resolvedAt: 4 };
+  assert.doesNotMatch(renderSummary([withState("up")], [resolved]), /incident/);
+});
+
+test("summary: no checks", () => {
+  assert.match(renderSummary([], []), /No checks configured/);
 });
 
 test("escapes names, urls, reasons", () => {
@@ -62,7 +168,15 @@ test("escapes names, urls, reasons", () => {
   const inc = renderIncidents(
     [{ id: 1, checkId: "zz", openedAt: 0, resolvedAt: null, reason: evil }],
     [],
+    env,
   );
+  const res = renderResolvedIncidents(
+    [{ id: 1, checkId: evil, openedAt: NOW - MIN, resolvedAt: NOW, reason: evil }],
+    [],
+    env,
+  );
+  assert.doesNotMatch(res, /<script>/);
+  assert.doesNotMatch(renderSummary([{ ...base, name: evil }], []), /<script>/);
   assert.doesNotMatch(inc, /<script>/);
   assert.doesNotMatch(renderBanner(evil), /<script>/);
 });
@@ -82,6 +196,7 @@ test("maintenance row shows state and escaped note", () => {
   ]);
   assert.match(html, /state-maintenance/);
   assert.match(html, /<span class="state">maintenance<\/span>/);
+  assert.match(html, /<span class="note">&lt;b&gt;/);
   assert.match(html, /&lt;b&gt;db&lt;\/b&gt; upgrade/);
   assert.doesNotMatch(html, /<b>/);
 });
@@ -94,9 +209,13 @@ test("upcoming maintenance lists future windows sorted, skips active", () => {
       { checkId: "a", start: 50, end: 150, note: "active now" },
     ],
     [base],
-    100,
+    { ...env, now: 100 },
   );
   assert.match(html, /Site/);
+  assert.match(
+    html,
+    /<time class="time" datetime="1970-01-01T00:00:00\.200Z"[^>]*>just now<\/time>/,
+  );
   assert.match(html, /zzz/);
   assert.match(html, /later &lt;i&gt;/);
   assert.doesNotMatch(html, /active now/);
@@ -105,8 +224,14 @@ test("upcoming maintenance lists future windows sorted, skips active", () => {
 
 test("upcoming maintenance empty", () => {
   const w = [{ checkId: "a", start: 5, end: 9, note: "past" }];
-  assert.match(renderUpcomingMaintenance([], [base], 0), /No upcoming maintenance/);
-  assert.match(renderUpcomingMaintenance(w, [base], 100), /No upcoming maintenance/);
+  assert.match(
+    renderUpcomingMaintenance([], [base], { ...env, now: 0 }),
+    /No upcoming maintenance/,
+  );
+  assert.match(
+    renderUpcomingMaintenance(w, [base], { ...env, now: 100 }),
+    /No upcoming maintenance/,
+  );
 });
 
 function loc(
@@ -132,8 +257,8 @@ function loc(
   };
 }
 
-test("locations down: 0/1", () => {
-  assert.match(renderChecks([{ ...base, locations: [loc("a", "up")] }]), /0\/1 locations down/);
+test("locations down is hidden when none is down", () => {
+  assert.doesNotMatch(renderChecks([{ ...base, locations: [loc("a", "up")] }]), /locations down/);
 });
 
 test("locations down: 1/3 and 2/3", () => {
@@ -146,11 +271,10 @@ test("locations down: 1/3 and 2/3", () => {
 test("stale locations are not counted", () => {
   const locations = [loc("a", "down", true), loc("b", "down"), loc("c", "up")];
   assert.match(renderChecks([{ ...base, locations }]), /1\/2 locations down/);
-});
-
-test("all stale shows 0/0", () => {
-  const locations = [loc("a", "down", true)];
-  assert.match(renderChecks([{ ...base, locations }]), /0\/0 locations down/);
+  assert.doesNotMatch(
+    renderChecks([{ ...base, locations: [loc("a", "down", true)] }]),
+    /locations/,
+  );
 });
 
 test("no locations hides the count, also when the field is missing", () => {
@@ -184,8 +308,8 @@ const tls: CheckWithState = {
 
 test("tls up shows host:port and days left", () => {
   const html = renderChecks([tls]);
-  assert.match(html, /<span class="url">example\.test:443<\/span>/);
-  assert.match(html, /<span class="cert-days">90 days<\/span>/);
+  assert.match(html, /<div class="url">example\.test:443<\/div>/);
+  assert.match(html, /<span class="cert-days">90 days left<\/span>/);
   assert.doesNotMatch(html, /class="reason"/);
 });
 
@@ -213,11 +337,12 @@ test("tls without certificate shows only the reason; host is escaped", () => {
   assert.match(html, /<span class="reason">ECONNREFUSED<\/span>/);
 });
 
-test("http output is byte-identical", () => {
+test("http row structure: state, name, target; no meta line", () => {
   assert.equal(
     renderChecks([base]),
-    '<ul class="checks"><li class="check state-up"><span class="state">up</span> ' +
-      '<span class="name">Site</span> <span class="url">http://x.test/</span> </li></ul>',
+    '<ul class="checks"><li class="check state-up"><div class="check-head">' +
+      '<span class="state">up</span><span class="name">Site</span></div>' +
+      '<div class="url">http://x.test/</div></li></ul>',
   );
 });
 
@@ -225,8 +350,8 @@ test("degraded shows latency and objective from the newest result", () => {
   const locations = [loc("a", "up", false, 5, 100), loc("b", "degraded", false, 9, 850)];
   const html = renderChecks([{ ...base, state: "degraded", latencyObjectiveMs: 500, locations }]);
   assert.match(html, /<span class="state">degraded<\/span>/);
-  assert.match(html, /<span class="latency">850 ms \(objective 500 ms\)<\/span>/);
-  assert.match(html, /0\/2 locations down/);
+  assert.match(html, /<span class="latency">850 ms · objective 500 ms<\/span>/);
+  assert.doesNotMatch(html, /locations down/);
 });
 
 test("up shows latency without objective", () => {

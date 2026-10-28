@@ -4,12 +4,15 @@ import type {
   MaintenanceResponse,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
+import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { parseChecks, parseIncidents, parseMaintenance } from "./validate.ts";
 
 export interface PollerState {
   checks: ChecksResponse;
   incidents: IncidentsResponse;
   maintenance: MaintenanceResponse;
+  /** Incidents resolved within the last 7 days, newest first; empty when the request failed. */
+  resolved: IncidentsResponse;
   /** 90-day uptime; empty when the uptime request failed. */
   uptime: UptimeResponse;
   /** Set when the last refresh failed; data is from the last success. */
@@ -51,6 +54,7 @@ export function createPoller(options: PollerOptions): Poller {
     checks: [],
     incidents: [],
     maintenance: [],
+    resolved: [],
     uptime: [],
     error: null,
     updatedAt: null,
@@ -68,15 +72,39 @@ export function createPoller(options: PollerOptions): Poller {
     }
   }
 
+  /** Optional like uptime: a failed or malformed response yields an empty list. */
+  async function getResolved(): Promise<IncidentsResponse> {
+    try {
+      const incidents = parseIncidents(
+        await getJson(options.fetch, `${base}/incidents?status=resolved`),
+      );
+      const cutoff = options.now() - RESOLVED_WINDOW_MS;
+      return incidents
+        .filter((i) => i.resolvedAt !== null && i.resolvedAt >= cutoff)
+        .sort((a, b) => (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0));
+    } catch {
+      return [];
+    }
+  }
+
   async function refresh(): Promise<void> {
     try {
-      const [checks, incidents, maintenance, uptime] = await Promise.all([
+      const [checks, incidents, maintenance, resolved, uptime] = await Promise.all([
         getJson(options.fetch, `${base}/checks`).then(parseChecks),
         getJson(options.fetch, `${base}/incidents?status=open`).then(parseIncidents),
         getJson(options.fetch, `${base}/maintenance`).then(parseMaintenance),
+        getResolved(),
         getUptime(),
       ]);
-      state = { checks, incidents, maintenance, uptime, error: null, updatedAt: options.now() };
+      state = {
+        checks,
+        incidents,
+        maintenance,
+        resolved,
+        uptime,
+        error: null,
+        updatedAt: options.now(),
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state = { ...state, error: `Cannot reach the API: ${message}` };
