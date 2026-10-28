@@ -7,6 +7,7 @@ function storage() {
   try {
     return window.localStorage;
   } catch {
+    // Best-effort: accessing localStorage throws when storage is blocked.
     return null;
   }
 }

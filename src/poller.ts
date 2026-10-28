@@ -4,6 +4,7 @@ import type {
   MaintenanceResponse,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
+import { parseChecks, parseIncidents, parseMaintenance } from "./validate.ts";
 
 export interface PollerState {
   checks: ChecksResponse;
@@ -38,10 +39,10 @@ export interface Poller {
   refresh(): Promise<void>;
 }
 
-async function getJson<T>(f: typeof fetch, url: string): Promise<T> {
+async function getJson(f: typeof fetch, url: string): Promise<unknown> {
   const response = await f(url);
   if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  return (await response.json()) as T;
+  return await response.json();
 }
 
 export function createPoller(options: PollerOptions): Poller {
@@ -60,8 +61,8 @@ export function createPoller(options: PollerOptions): Poller {
   /** Bars are optional: a failed or malformed uptime response yields no bars. */
   async function getUptime(): Promise<UptimeResponse> {
     try {
-      const body = await getJson<UptimeResponse>(options.fetch, `${base}/uptime`);
-      return Array.isArray(body) ? body : [];
+      const body = await getJson(options.fetch, `${base}/uptime`);
+      return Array.isArray(body) ? (body as UptimeResponse) : [];
     } catch {
       return [];
     }
@@ -70,9 +71,9 @@ export function createPoller(options: PollerOptions): Poller {
   async function refresh(): Promise<void> {
     try {
       const [checks, incidents, maintenance, uptime] = await Promise.all([
-        getJson<ChecksResponse>(options.fetch, `${base}/checks`),
-        getJson<IncidentsResponse>(options.fetch, `${base}/incidents?status=open`),
-        getJson<MaintenanceResponse>(options.fetch, `${base}/maintenance`),
+        getJson(options.fetch, `${base}/checks`).then(parseChecks),
+        getJson(options.fetch, `${base}/incidents?status=open`).then(parseIncidents),
+        getJson(options.fetch, `${base}/maintenance`).then(parseMaintenance),
         getUptime(),
       ]);
       state = { checks, incidents, maintenance, uptime, error: null, updatedAt: options.now() };

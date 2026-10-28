@@ -11,7 +11,9 @@
     try {
       var v = localStorage.getItem("pulse-theme");
       if (v === "light" || v === "dark") t = v;
-    } catch (e) {}
+    } catch (e) {
+      // Best-effort: localStorage may be blocked; keep the system theme.
+    }
     document.documentElement.setAttribute("data-theme", t);
   })();
 </script>

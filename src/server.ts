@@ -57,6 +57,7 @@ export function createStatusServer(options: ServerOptions): Server {
         try {
           upstream = await doFetch(target);
         } catch {
+          // Any fetch failure means the upstream API is unreachable; answer 502.
           res
             .writeHead(502, { "content-type": "application/json" })
             .end(JSON.stringify({ error: "API unreachable" }));

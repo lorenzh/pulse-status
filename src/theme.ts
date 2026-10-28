@@ -19,6 +19,7 @@ export function loadTheme(storage: ThemeStorage | null | undefined): Theme {
   try {
     return parseTheme(storage?.getItem(THEME_KEY));
   } catch {
+    // Best-effort: storage may be blocked, so fall back to the system theme.
     return "system";
   }
 }
