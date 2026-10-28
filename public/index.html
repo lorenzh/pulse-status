@@ -1,25 +1,94 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="system">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>pulse status</title>
+<script>
+  (function () {
+    var t = "system";
+    try {
+      var v = localStorage.getItem("pulse-theme");
+      if (v === "light" || v === "dark") t = v;
+    } catch (e) {}
+    document.documentElement.setAttribute("data-theme", t);
+  })();
+</script>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+  :root {
+    color-scheme: light;
+    --bg: #ffffff;
+    --text: #1f2328;
+    --up: #1a7f37;
+    --down: #cf222e;
+    --unknown: #636c76;
+    --maintenance: #9a6700;
+    --secondary: #57606a;
+    --border: #d0d7de;
+    --banner-bg: #ffebe9;
+    --banner-text: #1f2328;
+    --banner-border: #cf222e;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --text: #e6edf3;
+    --up: #3fb950;
+    --down: #ff7b72;
+    --unknown: #8b949e;
+    --maintenance: #d29922;
+    --secondary: #9da7b3;
+    --border: #30363d;
+    --banner-bg: #3d1114;
+    --banner-text: #ffdcd7;
+    --banner-border: #ff7b72;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --text: #e6edf3;
+      --up: #3fb950;
+      --down: #ff7b72;
+      --unknown: #8b949e;
+      --maintenance: #d29922;
+      --secondary: #9da7b3;
+      --border: #30363d;
+      --banner-bg: #3d1114;
+      --banner-text: #ffdcd7;
+      --banner-border: #ff7b72;
+    }
+  }
+  body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .theme-switch { border: 1px solid var(--border); border-radius: .25rem; padding: .25rem .5rem; margin: 0; color: var(--secondary); }
+  .theme-switch legend { padding: 0 .25rem; font-size: .8rem; }
+  .theme-switch label { margin-right: .5rem; cursor: pointer; }
+  .theme-switch label:has(input:checked) { font-weight: bold; color: var(--text); }
+  .theme-switch input:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   ul { list-style: none; padding: 0; }
-  li { padding: .5rem; border-bottom: 1px solid #ddd; }
+  li { padding: .5rem; border-bottom: 1px solid var(--border); }
   .state { display: inline-block; min-width: 4.5rem; font-weight: bold; text-transform: uppercase; }
-  .state-up .state { color: #1a7f37; }
-  .state-down .state { color: #cf222e; }
-  .state-unknown .state { color: #6e7781; }
-  .state-maintenance .state { color: #9a6700; }
-  .url, .reason, .note { color: #57606a; }
-  .banner.error { background: #ffebe9; border: 1px solid #cf222e; padding: .75rem; margin-bottom: 1rem; }
-  .empty { color: #57606a; }
+  .state-up .state { color: var(--up); }
+  .state-down .state { color: var(--down); }
+  .state-unknown .state { color: var(--unknown); }
+  .state-maintenance .state { color: var(--maintenance); }
+  .url, .reason, .note { color: var(--secondary); }
+  .banner.error { background: var(--banner-bg); color: var(--banner-text); border: 1px solid var(--banner-border); padding: .75rem; margin-bottom: 1rem; }
+  .empty { color: var(--secondary); }
 </style>
 </head>
 <body>
-<h1>pulse status</h1>
+<header>
+  <h1>pulse status</h1>
+  <fieldset class="theme-switch" id="theme-switch">
+    <legend>Theme</legend>
+    <label><input type="radio" name="theme" value="light"> Light</label>
+    <label><input type="radio" name="theme" value="dark"> Dark</label>
+    <label><input type="radio" name="theme" value="system" checked> System</label>
+  </fieldset>
+</header>
 <div id="banner"></div>
 <h2>Checks</h2>
 <div id="checks"><p class="empty">Loading…</p></div>

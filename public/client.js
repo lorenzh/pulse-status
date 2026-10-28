@@ -1,6 +1,28 @@
 import { createPoller } from "/poller.js";
 import { renderBanner, renderChecks, renderIncidents, renderUpcomingMaintenance } from "/render.js";
 
+import { applyTheme, loadTheme, parseTheme, saveTheme } from "/theme.js";
+
+function storage() {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+const themeSwitch = document.getElementById("theme-switch");
+const initialTheme = loadTheme(storage());
+applyTheme(document.documentElement, initialTheme);
+for (const input of themeSwitch.querySelectorAll('input[name="theme"]')) {
+  input.checked = input.value === initialTheme;
+}
+themeSwitch.addEventListener("change", (event) => {
+  const theme = parseTheme(event.target.value);
+  applyTheme(document.documentElement, theme);
+  saveTheme(storage(), theme);
+});
+
 const pollMs = Number(document.body.dataset.pollMs) || 5000;
 
 createPoller({
