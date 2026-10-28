@@ -10,7 +10,8 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 
 ## What the page shows
 
-- Every check with its state (`up`, `down`, `unknown`, `maintenance`), name, URL and last reason.
+- Every check with its state (`up`, `degraded`, `down`, `unknown`, `maintenance`), name, URL and last reason.
+- `up` and `degraded` checks show the latency of the newest result, with the latency objective when the check has one. `degraded` means the check answered but slower than its objective.
 - A check inside a maintenance window shows the state `maintenance` with the window note.
 - Upcoming maintenance windows (start in the future), with the check, start, end and note. The page reads them from `/api/maintenance`.
 - Open incidents, with the check name, the time they opened and the reason.

@@ -38,6 +38,7 @@ function contrast(a: string, b: string): number {
 const textPairs: [string, string][] = [
   ["text", "bg"],
   ["up", "bg"],
+  ["degraded", "bg"],
   ["down", "bg"],
   ["unknown", "bg"],
   ["maintenance", "bg"],
@@ -58,6 +59,7 @@ for (const [name, palette] of [
       "bg",
       "text",
       "up",
+      "degraded",
       "down",
       "unknown",
       "maintenance",

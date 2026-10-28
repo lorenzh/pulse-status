@@ -21,7 +21,7 @@ const base: CheckWithState = {
 };
 
 test("renders each state", () => {
-  for (const state of ["up", "down", "unknown"] as const) {
+  for (const state of ["up", "degraded", "down", "unknown"] as const) {
     const html = renderChecks([{ ...base, state }]);
     assert.match(html, new RegExp(`state-${state}`));
     assert.match(html, /Site/);
@@ -109,17 +109,24 @@ test("upcoming maintenance empty", () => {
   assert.match(renderUpcomingMaintenance(w, [base], 100), /No upcoming maintenance/);
 });
 
-function loc(location: string, status: "up" | "down", stale = false): LocationResult {
+function loc(
+  location: string,
+  status: "up" | "degraded" | "down",
+  stale = false,
+  timestamp = 1,
+  latencyMs = 1,
+): LocationResult {
   return {
     location,
     stale,
     result: {
       checkId: "a",
-      timestamp: 1,
+      timestamp,
       status,
       statusCode: null,
-      latencyMs: 1,
+      latencyMs,
       reason: null,
+      attempts: 1,
       location,
     },
   };
@@ -211,4 +218,29 @@ test("http output is byte-identical", () => {
     '<ul class="checks"><li class="check state-up"><span class="state">up</span> ' +
       '<span class="name">Site</span> <span class="url">http://x.test/</span> </li></ul>',
   );
+});
+
+test("degraded shows latency and objective from the newest result", () => {
+  const locations = [loc("a", "up", false, 5, 100), loc("b", "degraded", false, 9, 850)];
+  const html = renderChecks([{ ...base, state: "degraded", latencyObjectiveMs: 500, locations }]);
+  assert.match(html, /<span class="state">degraded<\/span>/);
+  assert.match(html, /<span class="latency">850 ms \(objective 500 ms\)<\/span>/);
+  assert.match(html, /0\/2 locations down/);
+});
+
+test("up shows latency without objective", () => {
+  const html = renderChecks([{ ...base, locations: [loc("a", "up", false, 2, 42)] }]);
+  assert.match(html, /<span class="latency">42 ms<\/span>/);
+});
+
+test("no latency without a result", () => {
+  assert.doesNotMatch(renderChecks([base]), /latency/);
+});
+
+test("down shows no latency", () => {
+  const html = renderChecks([
+    { ...base, state: "down", locations: [loc("a", "down", false, 2, 42)] },
+  ]);
+  assert.doesNotMatch(html, /latency/);
+  assert.match(html, /1\/1 locations down/);
 });
