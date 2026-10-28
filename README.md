@@ -53,3 +53,5 @@ blocks the commit if they are badly formatted or fail lint. `public/index.html` 
 
 A check with `type: "tls"` shows `host:port` instead of a URL and a `.cert-days` span with the
 days left on the certificate (`certificate expires in 5 days` while down, otherwise `N days`).
+
+Licensed under the MIT licence, see [LICENSE](LICENSE).

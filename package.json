@@ -1,6 +1,7 @@
 {
   "name": "@lorenzh/pulse-status",
   "version": "0.0.0",
+  "license": "MIT",
   "description": "Status page and dashboard that reads pulse-api.",
   "type": "module",
   "private": true,
