@@ -33,7 +33,7 @@ test("refreshes on schedule, shows error, recovers, stops", async () => {
   const fakeFetch = (async (url: string) => {
     calls++;
     if (!apiUp) throw new Error("ECONNREFUSED");
-    return url.endsWith("/checks") ? json([{ id: "a" }]) : json([]);
+    return url.endsWith("/checks") ? json([{ id: "a", name: "A", state: "up" }]) : json([]);
   }) as unknown as typeof fetch;
   const updates: PollerState[] = [];
   let clock = 100;
@@ -124,7 +124,7 @@ test("stores uptime; an uptime failure still yields checks without error", async
     if (url.endsWith("/uptime")) {
       return uptimeOk ? json(uptime) : new Response("x", { status: 500 });
     }
-    return url.endsWith("/checks") ? json([{ id: "a" }]) : json([]);
+    return url.endsWith("/checks") ? json([{ id: "a", name: "A", state: "up" }]) : json([]);
   }) as unknown as typeof fetch;
   const updates: PollerState[] = [];
   const poller = createPoller({
@@ -143,4 +143,43 @@ test("stores uptime; an uptime failure still yields checks without error", async
   assert.equal(updates[1]!.checks.length, 1);
   assert.deepEqual(updates[1]!.uptime, []);
   assert.equal(updates[1]!.updatedAt, 5);
+});
+
+function malformedRun(checksBody: unknown) {
+  const fakeFetch = (async (url: string) =>
+    url.endsWith("/checks") ? json(checksBody) : json([])) as unknown as typeof fetch;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: fakeFetch,
+    timer: fakeTimer(),
+    now: () => 5,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
+  });
+  return { poller, updates };
+}
+
+test("a non-array body is a failed refresh that keeps the last good data", async () => {
+  const { poller, updates } = malformedRun({ checks: [] });
+  await poller.refresh();
+  assert.match(updates[0]!.error!, /checks: expected an array/);
+  assert.deepEqual(updates[0]!.checks, []);
+  assert.equal(updates[0]!.updatedAt, null);
+});
+
+test("an element with a wrong-typed field is a failed refresh", async () => {
+  const { poller, updates } = malformedRun([{ id: "a", name: 7, state: "up" }]);
+  await poller.refresh();
+  assert.match(updates[0]!.error!, /checks\[0\]: malformed entry/);
+  assert.deepEqual(updates[0]!.checks, []);
+  assert.equal(updates[0]!.updatedAt, null);
+});
+
+test("a valid body yields the data with no error", async () => {
+  const checks = [{ id: "a", name: "A", state: "up" }];
+  const { poller, updates } = malformedRun(checks);
+  await poller.refresh();
+  assert.equal(updates[0]!.error, null);
+  assert.deepEqual(updates[0]!.checks, checks);
+  assert.equal(updates[0]!.updatedAt, 5);
 });
