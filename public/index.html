@@ -12,7 +12,8 @@
   .state-up .state { color: #1a7f37; }
   .state-down .state { color: #cf222e; }
   .state-unknown .state { color: #6e7781; }
-  .url, .reason { color: #57606a; }
+  .state-maintenance .state { color: #9a6700; }
+  .url, .reason, .note { color: #57606a; }
   .banner.error { background: #ffebe9; border: 1px solid #cf222e; padding: .75rem; margin-bottom: 1rem; }
   .empty { color: #57606a; }
 </style>
@@ -24,6 +25,8 @@
 <div id="checks"><p class="empty">Loading…</p></div>
 <h2>Open incidents</h2>
 <div id="incidents"></div>
+<h2>Upcoming maintenance</h2>
+<div id="maintenance"></div>
 <script type="module" src="/client.js"></script>
 </body>
 </html>

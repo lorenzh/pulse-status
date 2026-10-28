@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CheckWithState, Incident } from "@lorenzh/pulse-contract";
-import { renderBanner, renderChecks, renderIncidents } from "./render.ts";
+import {
+  renderBanner,
+  renderChecks,
+  renderIncidents,
+  renderUpcomingMaintenance,
+} from "./render.ts";
 
 const base: CheckWithState = {
   id: "a",
@@ -64,4 +69,41 @@ test("escapes names, urls, reasons", () => {
 test("banner empty when no error", () => {
   assert.equal(renderBanner(null), "");
   assert.match(renderBanner("boom"), /boom/);
+});
+
+test("maintenance row shows state and escaped note", () => {
+  const html = renderChecks([
+    {
+      ...base,
+      state: "maintenance",
+      maintenance: { checkId: "a", start: 0, end: 10, note: "<b>db</b> upgrade" },
+    },
+  ]);
+  assert.match(html, /state-maintenance/);
+  assert.match(html, /<span class="state">maintenance<\/span>/);
+  assert.match(html, /&lt;b&gt;db&lt;\/b&gt; upgrade/);
+  assert.doesNotMatch(html, /<b>/);
+});
+
+test("upcoming maintenance lists future windows sorted, skips active", () => {
+  const html = renderUpcomingMaintenance(
+    [
+      { checkId: "a", start: 300, end: 400, note: "later <i>" },
+      { checkId: "zzz", start: 200, end: 250, note: "sooner" },
+      { checkId: "a", start: 50, end: 150, note: "active now" },
+    ],
+    [base],
+    100,
+  );
+  assert.match(html, /Site/);
+  assert.match(html, /zzz/);
+  assert.match(html, /later &lt;i&gt;/);
+  assert.doesNotMatch(html, /active now/);
+  assert.ok(html.indexOf("sooner") < html.indexOf("later"));
+});
+
+test("upcoming maintenance empty", () => {
+  const w = [{ checkId: "a", start: 5, end: 9, note: "past" }];
+  assert.match(renderUpcomingMaintenance([], [base], 0), /No upcoming maintenance/);
+  assert.match(renderUpcomingMaintenance(w, [base], 100), /No upcoming maintenance/);
 });

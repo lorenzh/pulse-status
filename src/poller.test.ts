@@ -86,3 +86,33 @@ test("non-ok response is an error", async () => {
   await poller.refresh();
   assert.match(updates[0]!.error!, /HTTP 500/);
 });
+
+test("fetches and stores maintenance windows; failure fails the refresh", async () => {
+  const windows = [{ checkId: "a", start: 10, end: 20, note: "upgrade" }];
+  const urls: string[] = [];
+  let maintenanceOk = true;
+  const fakeFetch = (async (url: string) => {
+    urls.push(url);
+    if (url.endsWith("/maintenance")) {
+      return maintenanceOk ? json(windows) : new Response("x", { status: 503 });
+    }
+    return json([]);
+  }) as unknown as typeof fetch;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: fakeFetch,
+    timer: fakeTimer(),
+    now: () => 5,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
+  });
+  await poller.refresh();
+  assert.ok(urls.includes("/api/maintenance"));
+  assert.deepEqual(updates[0]!.maintenance, windows);
+  assert.equal(updates[0]!.updatedAt, 5);
+
+  maintenanceOk = false;
+  await poller.refresh();
+  assert.match(updates[1]!.error!, /maintenance returned HTTP 503/);
+  assert.deepEqual(updates[1]!.maintenance, windows, "keeps last data");
+});

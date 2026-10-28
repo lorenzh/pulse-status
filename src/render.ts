@@ -1,4 +1,8 @@
-import type { ChecksResponse, IncidentsResponse } from "@lorenzh/pulse-contract";
+import type {
+  ChecksResponse,
+  IncidentsResponse,
+  MaintenanceResponse,
+} from "@lorenzh/pulse-contract";
 
 export function escapeHtml(text: string): string {
   return text
@@ -21,11 +25,15 @@ export function renderChecks(checks: ChecksResponse): string {
     const reason = check.lastReason
       ? `<span class="reason">${escapeHtml(check.lastReason)}</span>`
       : "";
+    const note = check.maintenance
+      ? `<span class="note">${escapeHtml(check.maintenance.note)}</span> `
+      : "";
     return (
       `<li class="check state-${check.state}">` +
       `<span class="state">${check.state}</span> ` +
       `<span class="name">${escapeHtml(check.name)}</span> ` +
       `<span class="url">${escapeHtml(check.url)}</span> ` +
+      note +
       reason +
       `</li>`
     );
@@ -58,4 +66,30 @@ export function renderIncidents(incidents: IncidentsResponse, checks: ChecksResp
 export function renderBanner(error: string | null): string {
   if (error === null) return "";
   return `<div class="banner error" role="alert">${escapeHtml(error)}</div>`;
+}
+
+export function renderUpcomingMaintenance(
+  maintenance: MaintenanceResponse,
+  checks: ChecksResponse,
+  now: number,
+): string {
+  const upcoming = maintenance
+    .filter((window) => window.start > now)
+    .sort((a, b) => a.start - b.start || a.checkId.localeCompare(b.checkId));
+  if (upcoming.length === 0) {
+    return '<p class="empty">No upcoming maintenance.</p>';
+  }
+  const names = new Map(checks.map((check) => [check.id, check.name]));
+  const items = upcoming.map((window) => {
+    const name = names.get(window.checkId) ?? window.checkId;
+    return (
+      `<li class="maintenance-window">` +
+      `<span class="name">${escapeHtml(name)}</span> ` +
+      `<time datetime="${formatTime(window.start)}">${formatTime(window.start)}</time> – ` +
+      `<time datetime="${formatTime(window.end)}">${formatTime(window.end)}</time> ` +
+      `<span class="note">${escapeHtml(window.note)}</span>` +
+      `</li>`
+    );
+  });
+  return `<ul class="maintenance">${items.join("")}</ul>`;
 }
