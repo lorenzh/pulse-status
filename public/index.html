@@ -80,6 +80,15 @@
   .state-maintenance .state { color: var(--maintenance); }
   .url, .reason, .note, .cert-days { color: var(--secondary); }
   .banner.error { background: var(--banner-bg); color: var(--banner-text); border: 1px solid var(--banner-border); padding: .75rem; margin-bottom: 1rem; }
+  .uptime { margin-top: .4rem; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+  .bars { display: flex; gap: 1px; height: 1.5rem; }
+  .bar { position: relative; flex: 0 0 4px; border-radius: 1px; background: var(--unknown); opacity: .5; }
+  .bar.up { background: var(--up); opacity: 1; }
+  .bar.degraded { background: var(--degraded); opacity: 1; }
+  .bar.down { background: var(--down); opacity: 1; }
+  .bar:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; z-index: 2; }
+  .bar:hover::after, .bar:focus::after { content: attr(data-label); position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); white-space: nowrap; padding: .2rem .4rem; border-radius: .25rem; font-size: .75rem; background: var(--text); color: var(--bg); z-index: 3; pointer-events: none; }
+  .uptime-total { color: var(--secondary); font-size: .85rem; }
   .empty { color: var(--secondary); }
 </style>
 </head>

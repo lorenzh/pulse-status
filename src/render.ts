@@ -4,6 +4,7 @@ import type {
   IncidentsResponse,
   LocationResult,
   MaintenanceResponse,
+  UptimeResponse,
 } from "@lorenzh/pulse-contract";
 
 export function escapeHtml(text: string): string {
@@ -42,11 +43,43 @@ export function renderLatency(check: CheckWithState): string {
   return `<span class="latency">${escapeHtml(`${newest.result.latencyMs} ms${objective}`)}</span> `;
 }
 
-export function renderChecks(checks: ChecksResponse): string {
+/** Colour class of a day: >= 99.9 up, >= 95 degraded, below down, null no data. */
+export function uptimeClass(uptime: number | null): string {
+  if (uptime === null) return "nodata";
+  if (uptime >= 99.9) return "up";
+  if (uptime >= 95) return "degraded";
+  return "down";
+}
+
+function formatPercent(uptime: number): string {
+  return `${uptime.toFixed(1)} %`;
+}
+
+export function renderUptime(entry: UptimeResponse[number]): string {
+  const total =
+    entry.uptime === null ? "no data" : `${formatPercent(entry.uptime)} uptime, 90 days`;
+  const groupLabel = entry.uptime === null ? "no data" : formatPercent(entry.uptime);
+  const bars = entry.days.map((day) => {
+    const label = escapeHtml(
+      `${day.date}: ${day.uptime === null ? "no data" : formatPercent(day.uptime)}`,
+    );
+    return `<span class="bar ${uptimeClass(day.uptime)}" tabindex="0" title="${label}" aria-label="${label}" data-label="${label}"></span>`;
+  });
+  return (
+    `<div class="uptime">` +
+    `<div class="bars" role="group" aria-label="90-day uptime ${escapeHtml(groupLabel)}">${bars.join("")}</div>` +
+    `<span class="uptime-total">${escapeHtml(total)}</span>` +
+    `</div>`
+  );
+}
+
+export function renderChecks(checks: ChecksResponse, uptime: UptimeResponse = []): string {
   if (checks.length === 0) {
     return '<p class="empty">No checks configured.</p>';
   }
+  const uptimeById = new Map(uptime.map((entry) => [entry.checkId, entry]));
   const items = checks.map((check) => {
+    const entry = uptimeById.get(check.id);
     const isTls = check.type === "tls";
     const days = isTls ? check.certDaysLeft : null;
     const daysInReason = days != null && check.state === "down" && Boolean(check.lastReason);
@@ -77,6 +110,7 @@ export function renderChecks(checks: ChecksResponse): string {
       renderLocations(check) +
       note +
       reason +
+      (entry ? renderUptime(entry) : "") +
       `</li>`
     );
   });

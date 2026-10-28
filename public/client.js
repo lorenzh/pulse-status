@@ -33,7 +33,7 @@ createPoller({
   onUpdate(state) {
     document.getElementById("banner").innerHTML = renderBanner(state.error);
     if (state.updatedAt !== null) {
-      document.getElementById("checks").innerHTML = renderChecks(state.checks);
+      document.getElementById("checks").innerHTML = renderChecks(state.checks, state.uptime);
       document.getElementById("incidents").innerHTML = renderIncidents(
         state.incidents,
         state.checks,

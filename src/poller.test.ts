@@ -116,3 +116,31 @@ test("fetches and stores maintenance windows; failure fails the refresh", async 
   assert.match(updates[1]!.error!, /maintenance returned HTTP 503/);
   assert.deepEqual(updates[1]!.maintenance, windows, "keeps last data");
 });
+
+test("stores uptime; an uptime failure still yields checks without error", async () => {
+  const uptime = [{ checkId: "a", days: [], uptime: null }];
+  let uptimeOk = true;
+  const fakeFetch = (async (url: string) => {
+    if (url.endsWith("/uptime")) {
+      return uptimeOk ? json(uptime) : new Response("x", { status: 500 });
+    }
+    return url.endsWith("/checks") ? json([{ id: "a" }]) : json([]);
+  }) as unknown as typeof fetch;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: fakeFetch,
+    timer: fakeTimer(),
+    now: () => 5,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
+  });
+  await poller.refresh();
+  assert.deepEqual(updates[0]!.uptime, uptime);
+
+  uptimeOk = false;
+  await poller.refresh();
+  assert.equal(updates[1]!.error, null);
+  assert.equal(updates[1]!.checks.length, 1);
+  assert.deepEqual(updates[1]!.uptime, []);
+  assert.equal(updates[1]!.updatedAt, 5);
+});

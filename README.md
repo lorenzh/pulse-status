@@ -13,6 +13,7 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 - Every check with its state (`up`, `degraded`, `down`, `unknown`, `maintenance`), name, URL and last reason.
 - `up` and `degraded` checks show the latency of the newest result, with the latency objective when the check has one. `degraded` means the check answered but slower than its objective.
 - A check inside a maintenance window shows the state `maintenance` with the window note.
+- Under each check, 90 daily uptime bars (oldest first, today last) from `/api/uptime` and the 90-day total. A day is green at >= 99.9 %, amber at >= 95 %, red below and grey without data. The percentage shows on hover and keyboard focus (bars are focusable, with `title` and `aria-label`). If `/api/uptime` fails or lacks a check, that check shows no bars and no banner appears.
 - Upcoming maintenance windows (start in the future), with the check, start, end and note. The page reads them from `/api/maintenance`.
 - Open incidents, with the check name, the time they opened and the reason.
 - The page refreshes itself every `POLL_MS`. If the API is unreachable it shows an error banner and keeps the last data it received.
