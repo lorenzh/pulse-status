@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>{{name}} status</title>
+<title>{{title}}</title>
 <link rel="stylesheet" href="/theme.css">
 <script>
   (function () {
@@ -77,6 +77,12 @@
   .bar:nth-child(-n+20)::after { left: 0; }
   .bar:nth-last-child(-n+20)::after { left: auto; right: 0; }
   .uptime-total { display: block; margin-top: .35rem; font-family: var(--font-mono); font-size: 13px; color: var(--lead); }
+  ul.resolved { gap: .25rem; }
+  ul.resolved li { padding: .25rem 0; background: none; border: 0; border-radius: 0; border-bottom: 1px solid var(--rule); gap: .25rem .75rem; }
+  .resolved .name { font-size: 1rem; }
+  .resolved .reason { flex: 1 1 12rem; min-width: 0; color: var(--lead); }
+  .more { margin: .5rem 0 0; color: var(--muted); }
+  .exact-span { font-family: var(--font-mono); font-size: 13px; color: var(--lead); }
   .empty { margin: 0; color: var(--muted); }
 </style>
 </head>

@@ -24,6 +24,15 @@ export interface TimeEnv {
   now: number;
   /** Exact local date-time text for the tooltip; made in the browser. */
   formatExact: (epochMs: number) => string;
+  /** Exact local start and end text of a window; made in the browser. */
+  formatExactSpan: (startMs: number, endMs: number) => ExactSpan;
+}
+
+export interface ExactSpan {
+  start: string;
+  /** Time only when the end is on the same local day as the start, else with its date. */
+  end: string;
+  isSameDay: boolean;
 }
 
 const MINUTE = 60_000;
@@ -210,6 +219,7 @@ export function renderIncidents(
 }
 
 export const RESOLVED_WINDOW_MS = 7 * DAY;
+export const RESOLVED_LIMIT = 10;
 
 export function renderResolvedIncidents(
   incidents: IncidentsResponse,
@@ -226,10 +236,10 @@ export function renderResolvedIncidents(
     return '<p class="empty">No incidents resolved in the last 7 days.</p>';
   }
   const names = checkNames(checks);
-  const items = recent.map((incident) => {
+  const items = recent.slice(0, RESOLVED_LIMIT).map((incident) => {
     const resolvedAt = incident.resolvedAt ?? incident.openedAt;
     return (
-      `<li class="incident resolved">` +
+      `<li class="incident">` +
       span("name", names.get(incident.checkId) ?? incident.checkId) +
       `<span class="when">resolved ${renderTime(resolvedAt, env)}</span>` +
       span("duration", formatDuration(resolvedAt - incident.openedAt)) +
@@ -237,12 +247,24 @@ export function renderResolvedIncidents(
       `</li>`
     );
   });
-  return `<ul class="incidents">${items.join("")}</ul>`;
+  const hidden = recent.length - RESOLVED_LIMIT;
+  const more = hidden > 0 ? `<p class="more">and ${hidden} more</p>` : "";
+  return `<ul class="incidents resolved">${items.join("")}</ul>${more}`;
 }
 
 export function renderBanner(error: string | null): string {
   if (error === null) return "";
   return `<div class="banner error" role="alert">${escapeHtml(error)}</div>`;
+}
+
+function renderExactSpan(window: MaintenanceResponse[number], env: TimeEnv): string {
+  const exact = env.formatExactSpan(window.start, window.end);
+  const separator = exact.isSameDay ? "–" : " – ";
+  const endText = escapeHtml(exact.end);
+  return (
+    `<span class="exact-span">${escapeHtml(exact.start)}${separator}` +
+    `<time datetime="${formatTime(window.end)}" title="${endText}">${endText}</time></span>`
+  );
 }
 
 export function renderUpcomingMaintenance(
@@ -261,7 +283,8 @@ export function renderUpcomingMaintenance(
     (window) =>
       `<li class="maintenance-window">` +
       span("name", names.get(window.checkId) ?? window.checkId) +
-      `<span class="when">${renderTime(window.start, env)} – ${renderTime(window.end, env)}</span>` +
+      `<span class="when">${renderTime(window.start, env)}</span>` +
+      renderExactSpan(window, env) +
       span("note", window.note) +
       `</li>`,
   );

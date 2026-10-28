@@ -121,8 +121,15 @@ test("a theme file changing only accent plus a name keeps every other default", 
   assert.match(css, /--bg:#271b32;/);
   assert.match(css, /--radius-pill:999px;/);
   const page = await (await fetch(base + "/")).text();
-  assert.match(page, /<title>Acme &lt;b&gt;&quot; status<\/title>/);
+  assert.match(page, /<title>Acme &lt;b&gt;&quot;<\/title>/);
   assert.doesNotMatch(page, /Acme <b>/);
+});
+
+test("a configured name is the whole title, even when it is the default name", async () => {
+  const base = await start({ name: "Acme status" });
+  assert.match(await (await fetch(base + "/")).text(), /<title>Acme status<\/title>/);
+  const plain = await start({ name: "pulse" });
+  assert.match(await (await fetch(plain + "/")).text(), /<title>pulse<\/title>/);
 });
 
 test("invalid settings stop the server before it listens", () => {
