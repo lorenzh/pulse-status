@@ -39,7 +39,7 @@ async function getJson<T>(f: typeof fetch, url: string): Promise<T> {
 export function createPoller(options: PollerOptions): Poller {
   const base = options.baseUrl ?? "/api";
   let state: PollerState = { checks: [], incidents: [], error: null, updatedAt: null };
-  let handle: unknown = undefined;
+  let handle: unknown;
   let running = false;
 
   async function refresh(): Promise<void> {

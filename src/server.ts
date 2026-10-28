@@ -1,5 +1,5 @@
-import { createServer, type Server } from "node:http";
 import { readFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { fileURLToPath } from "node:url";
 
