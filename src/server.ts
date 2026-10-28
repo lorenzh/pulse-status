@@ -22,7 +22,8 @@ const tsModules: Record<string, string> = {
 
 export function createStatusServer(options: ServerOptions): Server {
   const doFetch = options.fetch ?? fetch;
-  const apiBase = options.apiUrl.replace(/\/+$/, "");
+  let apiBase = options.apiUrl;
+  while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");

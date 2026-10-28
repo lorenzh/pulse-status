@@ -6,6 +6,7 @@ const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf
 
 function vars(block: string): Record<string, string> {
   const out: Record<string, string> = {};
+  // eslint-disable-next-line sonarjs/super-linear-regex -- test-only input, a small fixed CSS block
   for (const m of block.matchAll(/--([\w-]+):\s*(#[0-9a-fA-F]{6})\s*;/g)) out[m[1]] = m[2];
   return out;
 }
