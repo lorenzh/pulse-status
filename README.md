@@ -117,8 +117,12 @@ npm run check   # lint, typecheck and tests
 ```
 
 Quality checks: Biome, SonarJS via ESLint (cognitive complexity ≤ 15) with `npm run lint`, and
-line coverage ≥ 80 % with `npm test`. The SonarJS tooling lives in the `tools/sonarjs` workspace,
-which pins its own TypeScript 6 next to the root TypeScript 7.
+line coverage ≥ 80 % with `npm test`. The SonarJS tooling comes with `@lorenzh/pulse-config`, which
+installs its own TypeScript 6 nested next to the root TypeScript 7.
+
+## Shared tooling configuration
+
+The shared tooling configuration lives in `lorenzh/pulse-config`. The other pulse repositories use it through `extends` (Biome, TypeScript, Lefthook), a one-line ESLint config and `uses:` (CI). A rule change is made in `pulse-config` and reaches a target when its pin is updated. "Never weaken `biome.json`, `tsconfig.json` or CI" refers to the shared config.
 
 A Lefthook pre-commit hook runs `biome check` on staged `.js`, `.ts` and `.json` files and
 `eslint` on staged `.js` and `.ts` files, and blocks the commit if they fail. `public/index.html`
