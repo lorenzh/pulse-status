@@ -2,12 +2,15 @@ import type {
   ChecksResponse,
   IncidentsResponse,
   MaintenanceResponse,
+  UptimeResponse,
 } from "@lorenzh/pulse-contract";
 
 export interface PollerState {
   checks: ChecksResponse;
   incidents: IncidentsResponse;
   maintenance: MaintenanceResponse;
+  /** 90-day uptime; empty when the uptime request failed. */
+  uptime: UptimeResponse;
   /** Set when the last refresh failed; data is from the last success. */
   error: string | null;
   /** Clock time of the last successful refresh. */
@@ -47,20 +50,32 @@ export function createPoller(options: PollerOptions): Poller {
     checks: [],
     incidents: [],
     maintenance: [],
+    uptime: [],
     error: null,
     updatedAt: null,
   };
   let handle: unknown;
   let running = false;
 
+  /** Bars are optional: a failed or malformed uptime response yields no bars. */
+  async function getUptime(): Promise<UptimeResponse> {
+    try {
+      const body = await getJson<UptimeResponse>(options.fetch, `${base}/uptime`);
+      return Array.isArray(body) ? body : [];
+    } catch {
+      return [];
+    }
+  }
+
   async function refresh(): Promise<void> {
     try {
-      const [checks, incidents, maintenance] = await Promise.all([
+      const [checks, incidents, maintenance, uptime] = await Promise.all([
         getJson<ChecksResponse>(options.fetch, `${base}/checks`),
         getJson<IncidentsResponse>(options.fetch, `${base}/incidents?status=open`),
         getJson<MaintenanceResponse>(options.fetch, `${base}/maintenance`),
+        getUptime(),
       ]);
-      state = { checks, incidents, maintenance, error: null, updatedAt: options.now() };
+      state = { checks, incidents, maintenance, uptime, error: null, updatedAt: options.now() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state = { ...state, error: `Cannot reach the API: ${message}` };

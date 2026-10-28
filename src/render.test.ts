@@ -244,3 +244,45 @@ test("down shows no latency", () => {
   assert.doesNotMatch(html, /latency/);
   assert.match(html, /1\/1 locations down/);
 });
+
+function uptimeEntry(values: (number | null)[], total: number | null) {
+  const days = Array.from({ length: 90 }, (_, i) => ({
+    date: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`,
+    uptime: values[i] ?? null,
+    results: 1,
+  }));
+  return { checkId: "a", days, uptime: total };
+}
+
+test("uptime: 90 bars, classes at the boundaries, labels and total", () => {
+  const values: (number | null)[] = [100, 99.9, 99.89, 95, 94.99, 76, null];
+  const html = renderChecks([base], [uptimeEntry(values, 99.24)]);
+  assert.equal(html.match(/class="bar /g)?.length, 90);
+  const classes = [...html.matchAll(/class="bar (\w+)"/g)].map((m) => m[1]);
+  assert.deepEqual(classes.slice(0, 7), [
+    "up",
+    "up",
+    "degraded",
+    "degraded",
+    "down",
+    "down",
+    "nodata",
+  ]);
+  assert.match(html, /aria-label="2026-08-06: 76\.0 %"/);
+  assert.match(html, /title="2026-08-07: no data"/);
+  assert.match(html, /tabindex="0"/);
+  assert.match(html, /role="group" aria-label="90-day uptime 99\.2 %"/);
+  assert.match(html, /99\.2 % uptime, 90 days/);
+});
+
+test("uptime: total null reads no data; missing entry gives no bars; escaping", () => {
+  const html = renderChecks([base], [uptimeEntry([], null)]);
+  assert.match(html, /aria-label="90-day uptime no data"/);
+  assert.match(html, /<span class="uptime-total">no data<\/span>/);
+  assert.doesNotMatch(renderChecks([base]), /class="bar|uptime/);
+  assert.doesNotMatch(renderChecks([base], [{ ...uptimeEntry([], null), checkId: "z" }]), /bar/);
+  const evil = uptimeEntry([], null);
+  evil.days[0]!.date = '"><script>';
+  const escaped = renderChecks([base], [evil]);
+  assert.doesNotMatch(escaped, /<script>/);
+});
