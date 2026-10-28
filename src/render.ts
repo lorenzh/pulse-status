@@ -31,9 +31,23 @@ export function renderChecks(checks: ChecksResponse): string {
     return '<p class="empty">No checks configured.</p>';
   }
   const items = checks.map((check) => {
-    const reason = check.lastReason
-      ? `<span class="reason">${escapeHtml(check.lastReason)}</span>`
-      : "";
+    const isTls = check.type === "tls";
+    const days = isTls ? check.certDaysLeft : null;
+    const daysInReason = days != null && check.state === "down" && Boolean(check.lastReason);
+    const certDays =
+      days == null
+        ? ""
+        : `<span class="cert-days">${escapeHtml(
+            daysInReason ? (check.lastReason ?? "") : `${days} days`,
+          )}</span> `;
+    const reason =
+      check.lastReason && !daysInReason
+        ? `<span class="reason">${escapeHtml(check.lastReason)}</span>`
+        : "";
+    const target =
+      check.type === "tls"
+        ? `<span class="url">${escapeHtml(`${check.host}:${check.port}`)}</span> `
+        : `<span class="url">${escapeHtml(check.url)}</span> `;
     const note = check.maintenance
       ? `<span class="note">${escapeHtml(check.maintenance.note)}</span> `
       : "";
@@ -41,7 +55,8 @@ export function renderChecks(checks: ChecksResponse): string {
       `<li class="check state-${check.state}">` +
       `<span class="state">${check.state}</span> ` +
       `<span class="name">${escapeHtml(check.name)}</span> ` +
-      `<span class="url">${escapeHtml(check.url)}</span> ` +
+      target +
+      certDays +
       renderLocations(check) +
       note +
       reason +
