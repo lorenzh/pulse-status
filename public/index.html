@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pulse status</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+  ul { list-style: none; padding: 0; }
+  li { padding: .5rem; border-bottom: 1px solid #ddd; }
+  .state { display: inline-block; min-width: 4.5rem; font-weight: bold; text-transform: uppercase; }
+  .state-up .state { color: #1a7f37; }
+  .state-down .state { color: #cf222e; }
+  .state-unknown .state { color: #6e7781; }
+  .url, .reason { color: #57606a; }
+  .banner.error { background: #ffebe9; border: 1px solid #cf222e; padding: .75rem; margin-bottom: 1rem; }
+  .empty { color: #57606a; }
+</style>
+</head>
+<body>
+<h1>pulse status</h1>
+<div id="banner"></div>
+<h2>Checks</h2>
+<div id="checks"><p class="empty">Loading…</p></div>
+<h2>Open incidents</h2>
+<div id="incidents"></div>
+<script type="module" src="/client.js"></script>
+</body>
+</html>
