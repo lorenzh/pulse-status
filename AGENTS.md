@@ -4,13 +4,14 @@
 
 ```sh
 npm ci           # install from the lockfile
-npm run lint     # Biome format and lint check
+npm run lint     # Biome, then SonarJS via ESLint (cognitive complexity <= 15)
+npm test         # node:test with the 80 % line coverage gate
 npm run format   # apply Biome fixes
 npm run check    # lint, typecheck, then tests
 ```
 
-A Lefthook pre-commit hook (installed by `npm ci` via `prepare`) runs `biome check` on staged
-files. HTML is excluded from Biome.
+A Lefthook pre-commit hook (installed by `npm ci` via `prepare`) runs `biome check` and
+`eslint` (SonarJS, config in `tools/sonarjs/`) on staged files. HTML is excluded from Biome.
 
 ## Conventions
 

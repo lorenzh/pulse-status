@@ -1,0 +1,13 @@
+{
+  "name": "@lorenzh/sonarjs-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SonarJS ESLint tooling, isolated so it can use TypeScript 6 next to TypeScript 7 at the root.",
+  "devDependencies": {
+    "@typescript-eslint/parser": "8.72.1",
+    "eslint": "10.13.0",
+    "eslint-plugin-sonarjs": "4.2.2",
+    "typescript": "6.0.3"
+  }
+}

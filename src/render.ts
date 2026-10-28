@@ -40,7 +40,8 @@ export function renderLatency(check: CheckWithState): string {
     check.type !== "tls" && check.latencyObjectiveMs != null
       ? ` (objective ${check.latencyObjectiveMs} ms)`
       : "";
-  return `<span class="latency">${escapeHtml(`${newest.result.latencyMs} ms${objective}`)}</span> `;
+  const text = `${newest.result.latencyMs} ms${objective}`;
+  return `<span class="latency">${escapeHtml(text)}</span> `;
 }
 
 /** Colour class of a day: >= 99.9 up, >= 95 degraded, below down, null no data. */
@@ -56,13 +57,11 @@ function formatPercent(uptime: number): string {
 }
 
 export function renderUptime(entry: UptimeResponse[number]): string {
-  const total =
-    entry.uptime === null ? "no data" : `${formatPercent(entry.uptime)} uptime, 90 days`;
   const groupLabel = entry.uptime === null ? "no data" : formatPercent(entry.uptime);
+  const total = entry.uptime === null ? "no data" : `${groupLabel} uptime, 90 days`;
   const bars = entry.days.map((day) => {
-    const label = escapeHtml(
-      `${day.date}: ${day.uptime === null ? "no data" : formatPercent(day.uptime)}`,
-    );
+    const dayText = day.uptime === null ? "no data" : formatPercent(day.uptime);
+    const label = escapeHtml(`${day.date}: ${dayText}`);
     return `<span class="bar ${uptimeClass(day.uptime)}" tabindex="0" title="${label}" aria-label="${label}" data-label="${label}"></span>`;
   });
   return (
@@ -83,20 +82,15 @@ export function renderChecks(checks: ChecksResponse, uptime: UptimeResponse = []
     const isTls = check.type === "tls";
     const days = isTls ? check.certDaysLeft : null;
     const daysInReason = days != null && check.state === "down" && Boolean(check.lastReason);
-    const certDays =
-      days == null
-        ? ""
-        : `<span class="cert-days">${escapeHtml(
-            daysInReason ? (check.lastReason ?? "") : `${days} days`,
-          )}</span> `;
+    let certText = `${days} days`;
+    if (daysInReason) certText = check.lastReason ?? "";
+    const certDays = days == null ? "" : `<span class="cert-days">${escapeHtml(certText)}</span> `;
     const reason =
       check.lastReason && !daysInReason
         ? `<span class="reason">${escapeHtml(check.lastReason)}</span>`
         : "";
-    const target =
-      check.type === "tls"
-        ? `<span class="url">${escapeHtml(`${check.host}:${check.port}`)}</span> `
-        : `<span class="url">${escapeHtml(check.url)}</span> `;
+    const targetText = check.type === "tls" ? `${check.host}:${check.port}` : check.url;
+    const target = `<span class="url">${escapeHtml(targetText)}</span> `;
     const note = check.maintenance
       ? `<span class="note">${escapeHtml(check.maintenance.note)}</span> `
       : "";

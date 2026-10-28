@@ -41,13 +41,19 @@ Then open http://localhost:8080 (with the default `PORT`). Requests to `/api/*` 
 
 ```sh
 npm ci          # install from the lockfile (also installs the pre-commit hook)
-npm run lint    # Biome format and lint check
+npm run lint    # Biome plus SonarJS (ESLint) check
+npm test        # tests with the line coverage gate
 npm run format  # apply Biome fixes
 npm run check   # lint, typecheck and tests
 ```
 
+Quality checks: Biome, SonarJS via ESLint (cognitive complexity ≤ 15) with `npm run lint`, and
+line coverage ≥ 80 % with `npm test`. The SonarJS tooling lives in the `tools/sonarjs` workspace,
+which pins its own TypeScript 6 next to the root TypeScript 7.
+
 A Lefthook pre-commit hook runs `biome check` on staged `.js`, `.ts` and `.json` files and
-blocks the commit if they are badly formatted or fail lint. `public/index.html` is not covered.
+`eslint` on staged `.js` and `.ts` files, and blocks the commit if they fail. `public/index.html`
+is not covered.
 
 ## TLS checks
 

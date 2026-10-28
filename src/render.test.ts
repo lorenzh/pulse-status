@@ -155,7 +155,8 @@ test("all stale shows 0/0", () => {
 
 test("no locations hides the count, also when the field is missing", () => {
   assert.doesNotMatch(renderChecks([base]), /locations down/);
-  const { locations: _omit, ...legacy } = base;
+  const legacy: Partial<CheckWithState> = { ...base };
+  delete legacy.locations;
   assert.doesNotMatch(renderChecks([legacy as CheckWithState]), /locations down/);
 });
 
