@@ -1,5 +1,6 @@
 import type {
   ChecksResponse,
+  CheckWithState,
   IncidentsResponse,
   MaintenanceResponse,
 } from "@lorenzh/pulse-contract";
@@ -15,6 +16,14 @@ export function escapeHtml(text: string): string {
 
 export function formatTime(epochMs: number): string {
   return new Date(epochMs).toISOString();
+}
+
+export function renderLocations(check: Pick<CheckWithState, "locations">): string {
+  const locations = check.locations ?? [];
+  if (locations.length === 0) return "";
+  const active = locations.filter((entry) => !entry.stale);
+  const down = active.filter((entry) => entry.result.status === "down").length;
+  return `<span class="locations">${down}/${active.length} locations down</span> `;
 }
 
 export function renderChecks(checks: ChecksResponse): string {
@@ -33,6 +42,7 @@ export function renderChecks(checks: ChecksResponse): string {
       `<span class="state">${check.state}</span> ` +
       `<span class="name">${escapeHtml(check.name)}</span> ` +
       `<span class="url">${escapeHtml(check.url)}</span> ` +
+      renderLocations(check) +
       note +
       reason +
       `</li>`
