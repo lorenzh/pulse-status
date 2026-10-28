@@ -104,3 +104,7 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
   the module map. The rule above still applies to new code.
 - `public/` is plain HTML and JavaScript; Biome does not check HTML and `tsc` does not check `public/`.
 - Every interactive element is reachable by keyboard and has an accessible name. State is never shown by colour alone.
+
+## Shared tooling configuration
+
+The shared tooling configuration lives in `lorenzh/pulse-config`. The other pulse repositories use it through `extends` (Biome, TypeScript, Lefthook), a one-line ESLint config and `uses:` (CI). A rule change is made in `pulse-config` and reaches a target when its pin is updated. "Never weaken `biome.json`, `tsconfig.json` or CI" refers to the shared config.
