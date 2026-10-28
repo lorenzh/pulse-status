@@ -10,7 +10,9 @@ pulse is built by Paragon Factory agents from the issues in [pulse-meta](https:/
 
 ## What the page shows
 
-- Every check with its state (`up`, `down`, `unknown`), name, URL and last reason.
+- Every check with its state (`up`, `down`, `unknown`, `maintenance`), name, URL and last reason.
+- A check inside a maintenance window shows the state `maintenance` with the window note.
+- Upcoming maintenance windows (start in the future), with the check, start, end and note. The page reads them from `/api/maintenance`.
 - Open incidents, with the check name, the time they opened and the reason.
 - The page refreshes itself every `POLL_MS`. If the API is unreachable it shows an error banner and keeps the last data it received.
 

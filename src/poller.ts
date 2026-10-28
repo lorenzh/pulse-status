@@ -1,8 +1,13 @@
-import type { ChecksResponse, IncidentsResponse } from "@lorenzh/pulse-contract";
+import type {
+  ChecksResponse,
+  IncidentsResponse,
+  MaintenanceResponse,
+} from "@lorenzh/pulse-contract";
 
 export interface PollerState {
   checks: ChecksResponse;
   incidents: IncidentsResponse;
+  maintenance: MaintenanceResponse;
   /** Set when the last refresh failed; data is from the last success. */
   error: string | null;
   /** Clock time of the last successful refresh. */
@@ -38,17 +43,24 @@ async function getJson<T>(f: typeof fetch, url: string): Promise<T> {
 
 export function createPoller(options: PollerOptions): Poller {
   const base = options.baseUrl ?? "/api";
-  let state: PollerState = { checks: [], incidents: [], error: null, updatedAt: null };
+  let state: PollerState = {
+    checks: [],
+    incidents: [],
+    maintenance: [],
+    error: null,
+    updatedAt: null,
+  };
   let handle: unknown;
   let running = false;
 
   async function refresh(): Promise<void> {
     try {
-      const [checks, incidents] = await Promise.all([
+      const [checks, incidents, maintenance] = await Promise.all([
         getJson<ChecksResponse>(options.fetch, `${base}/checks`),
         getJson<IncidentsResponse>(options.fetch, `${base}/incidents?status=open`),
+        getJson<MaintenanceResponse>(options.fetch, `${base}/maintenance`),
       ]);
-      state = { checks, incidents, error: null, updatedAt: options.now() };
+      state = { checks, incidents, maintenance, error: null, updatedAt: options.now() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state = { ...state, error: `Cannot reach the API: ${message}` };

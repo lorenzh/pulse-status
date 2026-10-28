@@ -1,5 +1,5 @@
 import { createPoller } from "/poller.js";
-import { renderBanner, renderChecks, renderIncidents } from "/render.js";
+import { renderBanner, renderChecks, renderIncidents, renderUpcomingMaintenance } from "/render.js";
 
 const pollMs = Number(document.body.dataset.pollMs) || 5000;
 
@@ -15,6 +15,11 @@ createPoller({
       document.getElementById("incidents").innerHTML = renderIncidents(
         state.incidents,
         state.checks,
+      );
+      document.getElementById("maintenance").innerHTML = renderUpcomingMaintenance(
+        state.maintenance,
+        state.checks,
+        state.updatedAt,
       );
     }
   },
