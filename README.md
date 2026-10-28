@@ -46,7 +46,7 @@ The default look is losoft (warm paper, deep plum ink, one amethyst accent, Spac
 | Env                  | Default | Meaning                                                                                                                                                  |
 | -------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `PULSE_STATUS_THEME` | none    | Path to a JSON theme file, see below                                                                                                                     |
-| `PULSE_STATUS_NAME`  | `pulse` | Product name (1 to 60 characters) in the wordmark and the page title                                                                                     |
+| `PULSE_STATUS_NAME`  | `pulse` | Product name (1 to 60 characters). The wordmark shows it; the page title is the name as it is, and the default title is `pulse status`                   |
 | `PULSE_STATUS_LOGO`  | none    | Local file (`.svg`, `.png`, `.jpg`, `.webp`), served at `/logo`, or an `http(s)://` URL used as is. Shown in an `<img alt="<name>">` instead of the name |
 
 An unreadable file, invalid JSON or an invalid value stops the server at start and names the file and the key. There is no silent fallback.

@@ -14,7 +14,7 @@ export interface ServerOptions {
   fetch?: typeof fetch;
   /** Path to a JSON theme file (PULSE_STATUS_THEME). */
   themeFile?: string;
-  /** Product name (PULSE_STATUS_NAME), default "pulse". */
+  /** Product name (PULSE_STATUS_NAME), default "pulse"; also the whole page title when set. */
   name?: string;
   /** Logo: local file path (svg, png, jpg, webp) or http(s) URL (PULSE_STATUS_LOGO). */
   logo?: string;
@@ -81,6 +81,8 @@ const tsModules: Record<string, string> = {
 export function createStatusServer(options: ServerOptions): Server {
   // Invalid settings throw here, before the server can listen.
   const name = validateName(options.name ?? "pulse");
+  // A configured name is the whole title; only the default carries "status".
+  const title = options.name === undefined ? "pulse status" : name;
   const css = themeCss(loadTheme(options.themeFile));
   const logo = resolveLogo(options.logo);
   const mark = wordmark(name, logo);
@@ -98,7 +100,7 @@ export function createStatusServer(options: ServerOptions): Server {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = (await readFile(publicDir + "index.html", "utf8"))
           .replace("<body>", () => `<body data-poll-ms="${options.pollMs}">`)
-          .replaceAll("{{name}}", () => escapeHtml(name))
+          .replaceAll("{{title}}", () => escapeHtml(title))
           .replace("{{wordmark}}", () => mark);
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
         return;

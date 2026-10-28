@@ -17,7 +17,15 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 const NOW = 1_000 * DAY;
-const env: TimeEnv = { now: NOW, formatExact: (ms) => `exact<${ms}>` };
+const env: TimeEnv = {
+  now: NOW,
+  formatExact: (ms) => `exact<${ms}>`,
+  formatExactSpan: (start, end) => ({
+    start: `S${start}`,
+    end: end - start < DAY ? `E${end}` : `D${end}`,
+    isSameDay: end - start < DAY,
+  }),
+};
 
 const base: CheckWithState = {
   id: "a",
@@ -88,6 +96,39 @@ test("resolved incidents: duration, newest first, older than 7 days hidden", () 
   assert.match(html, /12 min<\/span>/);
   assert.match(html, /resolved <time/);
   assert.doesNotMatch(html, /ancient|open/);
+});
+
+function resolvedList(count: number): Incident[] {
+  return Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    checkId: "a",
+    openedAt: NOW - 2 * HOUR - i * MIN,
+    resolvedAt: NOW - HOUR - i * MIN,
+    reason: `r${i}`,
+  }));
+}
+
+test("resolved incidents: 12 render 10 compact lines and 'and 2 more'", () => {
+  const html = renderResolvedIncidents(resolvedList(12), [base], env);
+  assert.equal(html.match(/<li /g)?.length, 10);
+  assert.match(html, /<p class="more">and 2 more<\/p>/);
+  assert.doesNotMatch(html, /r10|r11/);
+});
+
+test("resolved incidents: 10 render no 'more' line", () => {
+  const html = renderResolvedIncidents(resolvedList(10), [base], env);
+  assert.equal(html.match(/<li /g)?.length, 10);
+  assert.doesNotMatch(html, /more/);
+});
+
+test("resolved incidents: order is name, time, duration, reason", () => {
+  const html = renderResolvedIncidents(resolvedList(1), [base], env);
+  const order = ["Site", "resolved <time", "1 h</span>", "r0"].map((s) => html.indexOf(s));
+  assert.deepEqual(
+    order,
+    [...order].sort((a, b) => a - b),
+  );
+  assert.ok(!order.includes(-1));
 });
 
 test("resolved incidents: empty state", () => {
@@ -220,6 +261,29 @@ test("upcoming maintenance lists future windows sorted, skips active", () => {
   assert.match(html, /later &lt;i&gt;/);
   assert.doesNotMatch(html, /active now/);
   assert.ok(html.indexOf("sooner") < html.indexOf("later"));
+});
+
+test("upcoming maintenance: relative start, exact start and end, two time elements", () => {
+  const html = renderUpcomingMaintenance(
+    [{ checkId: "a", start: NOW + HOUR, end: NOW + 2 * HOUR, note: "n" }],
+    [base],
+    env,
+  );
+  assert.match(html, /in 1 h<\/time>/);
+  assert.match(
+    html,
+    new RegExp(`S${NOW + HOUR}–<time datetime="[^"]+"[^>]*>E${NOW + 2 * HOUR}</time>`),
+  );
+  assert.equal(html.match(/<time /g)?.length, 2);
+});
+
+test("upcoming maintenance: end on another day carries its date", () => {
+  const html = renderUpcomingMaintenance(
+    [{ checkId: "a", start: NOW + HOUR, end: NOW + 2 * DAY, note: "n" }],
+    [base],
+    env,
+  );
+  assert.match(html, new RegExp(`S${NOW + HOUR} – <time[^>]*>D${NOW + 2 * DAY}</time>`));
 });
 
 test("upcoming maintenance empty", () => {
