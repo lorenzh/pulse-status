@@ -17,6 +17,7 @@ const srcDir = fileURLToPath(new URL("./", import.meta.url));
 const tsModules: Record<string, string> = {
   "/render.js": "render.ts",
   "/poller.js": "poller.ts",
+  "/theme.js": "theme.ts",
 };
 
 export function createStatusServer(options: ServerOptions): Server {

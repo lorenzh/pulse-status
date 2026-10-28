@@ -30,7 +30,7 @@ test("serves page, modules, and proxies the API", async () => {
   assert.match(page.headers.get("content-type")!, /text\/html/);
   assert.match(await page.text(), /data-poll-ms="1234"/);
 
-  for (const path of ["/client.js", "/render.js", "/poller.js"]) {
+  for (const path of ["/client.js", "/render.js", "/poller.js", "/theme.js"]) {
     const r = await fetch(base + path);
     assert.equal(r.status, 200, path);
     assert.match(r.headers.get("content-type")!, /javascript/);
