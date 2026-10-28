@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { CheckWithState, Incident } from "@lorenzh/pulse-contract";
+import type { CheckWithState, Incident, LocationResult } from "@lorenzh/pulse-contract";
 import {
   renderBanner,
   renderChecks,
@@ -17,6 +17,7 @@ const base: CheckWithState = {
   consecutiveDown: 0,
   lastResultAt: 1,
   lastReason: null,
+  locations: [],
 };
 
 test("renders each state", () => {
@@ -106,4 +107,53 @@ test("upcoming maintenance empty", () => {
   const w = [{ checkId: "a", start: 5, end: 9, note: "past" }];
   assert.match(renderUpcomingMaintenance([], [base], 0), /No upcoming maintenance/);
   assert.match(renderUpcomingMaintenance(w, [base], 100), /No upcoming maintenance/);
+});
+
+function loc(location: string, status: "up" | "down", stale = false): LocationResult {
+  return {
+    location,
+    stale,
+    result: {
+      checkId: "a",
+      timestamp: 1,
+      status,
+      statusCode: null,
+      latencyMs: 1,
+      reason: null,
+      location,
+    },
+  };
+}
+
+test("locations down: 0/1", () => {
+  assert.match(renderChecks([{ ...base, locations: [loc("a", "up")] }]), /0\/1 locations down/);
+});
+
+test("locations down: 1/3 and 2/3", () => {
+  const one = [loc("a", "down"), loc("b", "up"), loc("c", "up")];
+  assert.match(renderChecks([{ ...base, locations: one }]), /1\/3 locations down/);
+  const two = [loc("a", "down"), loc("b", "down"), loc("c", "up")];
+  assert.match(renderChecks([{ ...base, locations: two }]), /2\/3 locations down/);
+});
+
+test("stale locations are not counted", () => {
+  const locations = [loc("a", "down", true), loc("b", "down"), loc("c", "up")];
+  assert.match(renderChecks([{ ...base, locations }]), /1\/2 locations down/);
+});
+
+test("all stale shows 0/0", () => {
+  const locations = [loc("a", "down", true)];
+  assert.match(renderChecks([{ ...base, locations }]), /0\/0 locations down/);
+});
+
+test("no locations hides the count, also when the field is missing", () => {
+  assert.doesNotMatch(renderChecks([base]), /locations down/);
+  const { locations: _omit, ...legacy } = base;
+  assert.doesNotMatch(renderChecks([legacy as CheckWithState]), /locations down/);
+});
+
+test("location names never reach the output unescaped", () => {
+  const html = renderChecks([{ ...base, locations: [loc("<script>", "down")] }]);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /1\/1 locations down/);
 });
