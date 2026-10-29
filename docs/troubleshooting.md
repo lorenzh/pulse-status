@@ -33,7 +33,7 @@ Direct test of the proxy: `curl -i http://localhost:8080/api/checks`. A `502` wi
 
 ## The page says "Status may be outdated" or "Status unavailable"
 
-The last refresh failed or timed out (4 s). `Status may be outdated` keeps the last data and shows when it was updated (`Last updated ... · API unreachable`). `Status unavailable` means the first refresh failed, so there is no data yet. Follow the steps above. The proxy retries pulse-api at most once per `PULSE_STATUS_CACHE_MS`, so a recovery shows within about one cache period plus `POLL_MS`.
+The last refresh failed or timed out (the shorter of `POLL_MS` and 4000 ms). `Status may be outdated` keeps the last data and shows when it was updated (`Last updated ... · API unreachable`). `Status unavailable` means the first refresh failed, so there is no data yet. Follow the steps above. The proxy retries pulse-api at most once per `PULSE_STATUS_CACHE_MS`, so a recovery shows within about one cache period plus `POLL_MS`.
 
 ## The page is stale
 

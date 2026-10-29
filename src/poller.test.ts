@@ -319,21 +319,27 @@ test("resolved: requests status=resolved, keeps the last 7 days newest first", a
 });
 
 test("resolved: a failed or malformed request gives an empty list and no error", async () => {
-  for (const bad of [new Response("x", { status: 500 }), json({ nope: true })]) {
+  for (const [bad, isLogged] of [
+    [new Response("x", { status: 500 }), false],
+    [json({ nope: true }), true],
+  ] as const) {
     const fakeFetch = (async (url: string) =>
       url.endsWith("status=resolved") ? bad : json([])) as unknown as typeof fetch;
     const updates: PollerState[] = [];
+    const logs: string[] = [];
     const poller = createPoller({
       fetch: fakeFetch,
       timer: fakeTimer(),
       now: () => 5,
       pollMs: 1,
       onUpdate: (s) => updates.push(s),
+      log: (m) => logs.push(m),
     });
     await poller.refresh();
     assert.equal(updates[0]!.error, null);
     assert.deepEqual(updates[0]!.resolved, []);
     assert.equal(updates[0]!.updatedAt, 5);
+    assert.equal(logs.length, isLogged ? 1 : 0);
   }
 });
 
@@ -562,9 +568,11 @@ test("the first error stays published after the abort", async () => {
   let n = 0;
   const updates: PollerState[] = [];
   const poller = createPoller({
-    fetch: ((_url: string) => {
+    fetch: ((_url: string, init?: RequestInit) => {
       if (n++ === 0) return Promise.reject(new Error("boom"));
-      return new Promise<Response>(() => {});
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
     }) as unknown as typeof fetch,
     timer,
     now: () => 1,
@@ -582,7 +590,9 @@ test("a hidden tab aborts all pending requests", async () => {
   const poller = createPoller({
     fetch: ((_url: string, init?: RequestInit) => {
       if (init?.signal) signals.push(init.signal);
-      return new Promise<Response>(() => {});
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
     }) as unknown as typeof fetch,
     timer,
     now: () => 1,
@@ -595,6 +605,32 @@ test("a hidden tab aborts all pending requests", async () => {
   visibility.set(true);
   assert.equal(signals.length, 5);
   assert.ok(signals.every((s) => s.aborted));
+});
+
+test("hiding the tab after a failure keeps the first error", async () => {
+  const timer = fakeTimer();
+  const visibility = fakeVisibility(false);
+  const updates: PollerState[] = [];
+  let n = 0;
+  const poller = createPoller({
+    fetch: ((_url: string, init?: RequestInit) => {
+      if (n++ === 0) return Promise.reject(new Error("boom"));
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    visibility,
+    onUpdate: (s) => updates.push(s),
+  });
+  poller.start();
+  await flush();
+  visibility.set(true);
+  await flush();
+  assert.match(updates[0]?.error ?? "", /boom/);
+  assert.equal(updates.length, 1);
 });
 
 test("the default timeout is min(pollMs, 4000)", async () => {
