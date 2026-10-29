@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { stripTypeScriptTypes } from "node:module";
-import { extname } from "node:path";
+import { createRequire, stripTypeScriptTypes } from "node:module";
+import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
@@ -137,19 +137,50 @@ const tsModules: Record<string, string> = {
 
 // Runtime files of the contract package, served to the browser under /pulse-contract/.
 const contractDir = fileURLToPath(new URL("./", import.meta.resolve("@lorenzh/pulse-contract")));
-const contractModules = new Set(["index.js", "validate.js", "version.js"]);
+const contractModules = new Set(["index.js", "schema.js", "validate.js", "version.js"]);
+// The contract's zod package, found from the contract's own location. Its .js files are served under
+// /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
+const zodDir = dirname(
+  createRequire(fileURLToPath(import.meta.resolve("@lorenzh/pulse-contract"))).resolve(
+    "zod/package.json",
+  ),
+);
+const zodPrefix = "/pulse-contract/zod/";
+const zodEntry = `${zodPrefix}index.js`;
 
 const staticFiles: Record<string, { file: string; type: string }> = {
   "/theme-init.js": { file: "theme-init.js", type: "text/javascript; charset=utf-8" },
   "/page.css": { file: "page.css", type: "text/css; charset=utf-8" },
 };
 
-/** The source of a contract runtime file for a `/pulse-contract/<file>` path, else undefined. */
+/** Absolute path of a `.js` file inside the zod package for a served path, else undefined. */
+function zodFile(pathname: string): string | undefined {
+  if (!pathname.startsWith(zodPrefix) || extname(pathname) !== ".js") return undefined;
+  let relative: string;
+  try {
+    relative = decodeURIComponent(pathname.slice(zodPrefix.length));
+  } catch {
+    return undefined; // malformed percent-encoding is not a file
+  }
+  const file = resolve(zodDir, relative);
+  return file.startsWith(zodDir + sep) ? file : undefined;
+}
+
+/** The source of a contract runtime file (or a zod file) under `/pulse-contract/`, else undefined. */
 async function readContractModule(pathname: string): Promise<string | undefined> {
   const prefix = "/pulse-contract/";
   if (!pathname.startsWith(prefix)) return undefined;
+  const zod = zodFile(pathname);
+  if (zod !== undefined) {
+    try {
+      return await readFile(zod, "utf8");
+    } catch {
+      return undefined; // no such file in the zod package: answer 404
+    }
+  }
   const file = pathname.slice(prefix.length);
-  return contractModules.has(file) ? await readFile(contractDir + file, "utf8") : undefined;
+  if (!contractModules.has(file)) return undefined;
+  return (await readFile(contractDir + file, "utf8")).replace(/from "zod"/g, `from "${zodEntry}"`);
 }
 
 function contentSecurityPolicy(logoOrigin: string | undefined): string {

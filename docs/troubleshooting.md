@@ -30,7 +30,7 @@ The banner reads `Cannot reach the API. Showing the last known status.` The reas
 
 - `<url> returned HTTP <status>`: the page got an error status from the `/api/*` proxy. Usually pulse-api answered with an error. `returned HTTP 502` can also come from the status server itself: the proxy answers `502` with `{"error":"API unreachable"}` when it cannot reach the API at all (`src/server.ts`), so `returned HTTP <status>` does not always mean the API answered. For 502, follow the `fetch failed` step below. Check pulse-api, and that `PULSE_API_URL` points at it and not at another service.
 - `fetch failed` or similar: the API is not reachable from the status server. Check `curl <PULSE_API_URL>/checks` from the same host or container. In Docker, `localhost` is the container itself: use the service name or `host.docker.internal`.
-- `checks: expected an array` or `checks[<n>]: malformed entry` (also `incidents`, `maintenance`): the API answered with a different shape. Check that pulse-api and this page use compatible versions of [pulse-contract](https://github.com/lorenzh/pulse-contract).
+- `checks: expected an array` or `checks[<n>]: malformed entry` (also `incidents`, `maintenance`): the API answered with a different shape. Check that pulse-api and this page use compatible versions of [pulse-contract](https://github.com/lorenzh/pulse-contract). Ranges are enforced: for example `checks[0].intervalMs: must be an integer 1..2147483647` means the API sent a value outside the contract.
 
 Direct test of the proxy: `curl -i http://localhost:8080/api/checks`. A `502` with `{"error":"API unreachable"}` means the status server could not reach the API.
 

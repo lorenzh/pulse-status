@@ -101,7 +101,8 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
   their types at request time. They import only types, no `node:` modules and no relative runtime
   imports. A new browser module is added to the server's module map (`tsModules` in `src/server.ts`).
 - `src/poller.ts` also imports the contract's runtime validators. The server rewrites that import to
-  `/pulse-contract/index.js` and serves the contract's `dist` files from there.
+  `/pulse-contract/index.js` and serves the contract's `dist` files from there. The contract's `zod`
+  import is rewritten to `/pulse-contract/zod/index.js`; only `.js` files of the zod package are served.
 - `public/` is plain HTML and JavaScript; Biome does not check HTML and `tsc` does not check `public/`.
 - Every interactive element is reachable by keyboard and has an accessible name. State is never shown by colour alone.
 
