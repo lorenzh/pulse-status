@@ -1,11 +1,16 @@
-import type {
-  ChecksResponse,
-  IncidentsResponse,
-  MaintenanceResponse,
-  UptimeResponse,
+import {
+  type ChecksResponse,
+  checkWireVersion,
+  type IncidentsResponse,
+  type MaintenanceResponse,
+  type UptimeResponse,
+  validateChecksResponse,
+  validateIncidentsResponse,
+  validateMaintenanceResponse,
+  validateUptimeResponse,
+  WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
-import { parseChecks, parseIncidents, parseMaintenance } from "./validate.ts";
 
 export interface PollerState {
   checks: ChecksResponse;
@@ -66,11 +71,10 @@ function abortion(signal: AbortSignal): Promise<never> {
   return failed;
 }
 
-async function getJson(f: typeof fetch, url: string, signal: AbortSignal): Promise<unknown> {
-  const aborted = abortion(signal);
-  const response = await Promise.race([f(url, { signal }), aborted]);
-  if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-  return await Promise.race([response.json() as Promise<unknown>, aborted]);
+/** Unwraps a validation result: a failure throws its message, which names the path. */
+function valid<T>(result: { ok: true; value: T } | { ok: false; error: string }): T {
+  if (!result.ok) throw new Error(result.error);
+  return result.value;
 }
 
 export function createPoller(options: PollerOptions): Poller {
@@ -92,11 +96,28 @@ export function createPoller(options: PollerOptions): Poller {
   const timeoutMs = options.timeoutMs ?? Math.min(options.pollMs, 4000);
   const log = options.log ?? ((message, error) => console.error(message, error));
 
+  let hasLoggedMissingVersion = false;
+
+  async function getJson(url: string, signal: AbortSignal): Promise<unknown> {
+    const aborted = abortion(signal);
+    const response = await Promise.race([options.fetch(url, { signal }), aborted]);
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    const version = checkWireVersion(response.headers.get(WIRE_VERSION_HEADER));
+    if (version.status === "mismatch") throw new Error(`${url}: ${version.error}`);
+    if (version.status === "absent" && !hasLoggedMissingVersion) {
+      hasLoggedMissingVersion = true;
+      log(`${WIRE_VERSION_HEADER} header is missing; the API version is unchecked`, null);
+    }
+    return await Promise.race([response.json() as Promise<unknown>, aborted]);
+  }
+
   /** Bars are optional: a failed or malformed uptime response yields no bars. */
   async function getUptime(signal: AbortSignal): Promise<UptimeResponse> {
     try {
-      const body = await getJson(options.fetch, `${base}/uptime`, signal);
-      return Array.isArray(body) ? (body as UptimeResponse) : [];
+      const result = validateUptimeResponse(await getJson(`${base}/uptime`, signal), "uptime");
+      if (result.ok) return result.value;
+      log("uptime response is invalid", result.error);
+      return [];
     } catch {
       return [];
     }
@@ -105,8 +126,11 @@ export function createPoller(options: PollerOptions): Poller {
   /** Optional like uptime: a failed or malformed response yields an empty list. */
   async function getResolved(signal: AbortSignal): Promise<IncidentsResponse> {
     try {
-      const incidents = parseIncidents(
-        await getJson(options.fetch, `${base}/incidents?status=resolved`, signal),
+      const incidents = valid(
+        validateIncidentsResponse(
+          await getJson(`${base}/incidents?status=resolved`, signal),
+          "incidents",
+        ),
       );
       const cutoff = options.now() - RESOLVED_WINDOW_MS;
       return incidents
@@ -129,9 +153,13 @@ export function createPoller(options: PollerOptions): Poller {
   async function load(signal: AbortSignal): Promise<void> {
     try {
       const [checks, incidents, maintenance, resolved, uptime] = await Promise.all([
-        getJson(options.fetch, `${base}/checks`, signal).then(parseChecks),
-        getJson(options.fetch, `${base}/incidents?status=open`, signal).then(parseIncidents),
-        getJson(options.fetch, `${base}/maintenance`, signal).then(parseMaintenance),
+        getJson(`${base}/checks`, signal).then((b) => valid(validateChecksResponse(b, "checks"))),
+        getJson(`${base}/incidents?status=open`, signal).then((b) =>
+          valid(validateIncidentsResponse(b, "incidents")),
+        ),
+        getJson(`${base}/maintenance`, signal).then((b) =>
+          valid(validateMaintenanceResponse(b, "maintenance")),
+        ),
         getResolved(signal),
         getUptime(signal),
       ]);

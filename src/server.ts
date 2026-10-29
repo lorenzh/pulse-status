@@ -4,6 +4,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
 import { escapeHtml, RESOLVED_WINDOW_MS } from "./render.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
@@ -35,6 +36,8 @@ export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
 interface ProxyAnswer {
   status: number;
   body: string;
+  /** Wire version the api reported, forwarded so the browser can check it. */
+  wireVersion?: string;
 }
 
 interface CacheEntry {
@@ -117,13 +120,24 @@ const tsModules: Record<string, string> = {
   "/render.js": "render.ts",
   "/poller.js": "poller.ts",
   "/theme.js": "theme.ts",
-  "/validate.js": "validate.ts",
 };
+
+// Runtime files of the contract package, served to the browser under /pulse-contract/.
+const contractDir = fileURLToPath(new URL("./", import.meta.resolve("@lorenzh/pulse-contract")));
+const contractModules = new Set(["index.js", "validate.js", "version.js"]);
 
 const staticFiles: Record<string, { file: string; type: string }> = {
   "/theme-init.js": { file: "theme-init.js", type: "text/javascript; charset=utf-8" },
   "/page.css": { file: "page.css", type: "text/css; charset=utf-8" },
 };
+
+/** The source of a contract runtime file for a `/pulse-contract/<file>` path, else undefined. */
+async function readContractModule(pathname: string): Promise<string | undefined> {
+  const prefix = "/pulse-contract/";
+  if (!pathname.startsWith(prefix)) return undefined;
+  const file = pathname.slice(prefix.length);
+  return contractModules.has(file) ? await readFile(contractDir + file, "utf8") : undefined;
+}
 
 function contentSecurityPolicy(logoOrigin: string | undefined): string {
   const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
@@ -144,8 +158,10 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 }
 
-function answer(status: number, body: unknown): ProxyAnswer {
-  return { status, body: JSON.stringify(body) };
+function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswer {
+  return wireVersion === undefined
+    ? { status, body: JSON.stringify(body) }
+    : { status, body: JSON.stringify(body), wireVersion };
 }
 
 /** Rejects when the signal aborts, also if the fetch implementation ignores it. */
@@ -190,7 +206,7 @@ async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> 
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
   }
-  return answer(200, body);
+  return answer(200, body, upstream.headers.get(WIRE_VERSION_HEADER) ?? undefined);
 }
 
 function cachedAnswer(key: string, url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
@@ -221,9 +237,12 @@ async function proxyApi(
     return;
   }
   const result = await cachedAnswer(url.pathname + url.search, url, ctx);
-  res
-    .writeHead(result.status, { "content-type": "application/json", "cache-control": "no-store" })
-    .end(result.body);
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+  };
+  if (result.wireVersion !== undefined) headers[WIRE_VERSION_HEADER] = result.wireVersion;
+  res.writeHead(result.status, headers).end(result.body);
 }
 
 export function createStatusServer(options: ServerOptions): Server {
@@ -312,11 +331,15 @@ export function createStatusServer(options: ServerOptions): Server {
       const tsFile = tsModules[url.pathname];
       if (tsFile !== undefined) {
         // Relative ".ts" imports point at sibling modules served as ".js".
-        const js = stripTypeScriptTypes(await readFile(srcDir + tsFile, "utf8")).replace(
-          /from "\.\/([\w-]+)\.ts"/g,
-          'from "/$1.js"',
-        );
+        const js = stripTypeScriptTypes(await readFile(srcDir + tsFile, "utf8"))
+          .replace(/from "\.\/([\w-]+)\.ts"/g, 'from "/$1.js"')
+          .replace(/from "@lorenzh\/pulse-contract"/g, 'from "/pulse-contract/index.js"');
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(js);
+        return;
+      }
+      const contractJs = await readContractModule(url.pathname);
+      if (contractJs !== undefined) {
+        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(contractJs);
         return;
       }
       if (url.pathname.startsWith("/api/")) {

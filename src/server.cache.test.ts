@@ -151,3 +151,15 @@ test("invalid cache or timeout settings throw", () => {
   assert.throws(make({ cacheMs: -1 }), /PULSE_STATUS_CACHE_MS/);
   assert.throws(make({ upstreamTimeoutMs: 0 }), /PULSE_STATUS_UPSTREAM_TIMEOUT_MS/);
 });
+
+test("the proxy forwards the wire version header of the api", async () => {
+  const base = await start({}, async () =>
+    ok([]).headers.get("x") === null
+      ? new Response("[]", { headers: { ...JSON_HEADERS, "x-pulse-contract": "1" } })
+      : ok([]),
+  );
+  const withHeader = await fetch(`${base}/api/maintenance`);
+  assert.equal(withHeader.headers.get("x-pulse-contract"), "1");
+  const without = await start({}, async () => ok([]));
+  assert.equal((await fetch(`${without}/api/maintenance`)).headers.get("x-pulse-contract"), null);
+});
