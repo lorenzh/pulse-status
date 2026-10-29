@@ -53,15 +53,25 @@ test("20 parallel requests share one upstream call; a new one after the TTL", as
   assert.equal(res.headers.get("cache-control"), "no-store");
 });
 
-test("each path has its own cache entry", async () => {
+test("each path and query is one cache entry; a new call per path after the TTL", async () => {
+  let clock = 1000;
   const calls: string[] = [];
-  const base = await start({}, async (url) => {
+  const base = await start({ cacheMs: 2000, now: () => clock }, async (url) => {
     calls.push(url);
     return ok([]);
   });
-  await fetch(`${base}/api/checks`);
-  await fetch(`${base}/api/uptime`);
-  assert.equal(calls.length, 2);
+  const paths = [
+    "/api/checks",
+    "/api/uptime",
+    "/api/incidents?status=open",
+    "/api/incidents?status=resolved",
+  ];
+  for (let i = 0; i < 3; i++) for (const p of paths) await fetch(`${base}${p}`);
+  assert.equal(calls.length, paths.length);
+  assert.equal(new Set(calls).size, paths.length);
+  clock += 2000;
+  for (const p of paths) await fetch(`${base}${p}`);
+  assert.equal(calls.length, paths.length * 2);
 });
 
 test("cacheMs 0 turns the cache off", async () => {

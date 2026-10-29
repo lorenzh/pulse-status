@@ -34,7 +34,7 @@ export interface PollerOptions {
   /** Base path of the API, e.g. "/api". */
   baseUrl?: string;
   onUpdate: (state: PollerState) => void;
-  /** Time limit for one refresh, headers and body of every request; default 4000. */
+  /** Time limit for one refresh, headers and body of every request; default `min(pollMs, 4000)`. */
   timeoutMs?: number;
   /** Receives errors thrown by `onUpdate`; default `console.error`. */
   log?: (message: string, error: unknown) => void;
@@ -46,8 +46,6 @@ export interface Visibility {
   isHidden(): boolean;
   onChange(fn: () => void): void;
 }
-
-const DEFAULT_TIMEOUT_MS = 4000;
 
 export interface Poller {
   start(): void;
@@ -91,7 +89,7 @@ export function createPoller(options: PollerOptions): Poller {
   // Bumped by every pause, resume and stop: a late result of an older tick is dropped.
   let generation = 0;
   let inFlight: AbortController | undefined;
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? Math.min(options.pollMs, 4000);
   const log = options.log ?? ((message, error) => console.error(message, error));
 
   /** Bars are optional: a failed or malformed uptime response yields no bars. */
@@ -160,6 +158,8 @@ export function createPoller(options: PollerOptions): Poller {
     try {
       await load(controller.signal);
     } finally {
+      // A failed refresh leaves the other requests pending: cancel them so none outlive it.
+      if (state.error !== null) controller.abort();
       options.timer.clearTimeout(timeout);
       if (inFlight === controller) inFlight = undefined;
     }

@@ -426,3 +426,106 @@ test("hiding aborts the request in flight without a stuck poller", async () => {
   assert.equal(updates.length, 1);
   assert.equal(timer.pending.size, 1);
 });
+
+function recordingTimer() {
+  const timer = fakeTimer();
+  const delays: number[] = [];
+  return {
+    timer: {
+      pending: timer.pending,
+      setTimeout(fn: () => void, ms: number) {
+        delays.push(ms);
+        return timer.setTimeout(fn, ms);
+      },
+      clearTimeout: timer.clearTimeout,
+    },
+    delays,
+    fire: timer.fire,
+  };
+}
+
+test("a failed request aborts the other pending requests", async () => {
+  const timer = fakeTimer();
+  const signals: AbortSignal[] = [];
+  let n = 0;
+  const poller = createPoller({
+    fetch: ((_url: string, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      if (n++ === 0) return Promise.reject(new Error("boom"));
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    onUpdate: () => {},
+  });
+  await poller.refresh();
+  assert.equal(signals.length, 5);
+  assert.ok(signals.every((s) => s.aborted));
+});
+
+test("the first error stays published after the abort", async () => {
+  const timer = fakeTimer();
+  let n = 0;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: ((_url: string) => {
+      if (n++ === 0) return Promise.reject(new Error("boom"));
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    onUpdate: (s) => updates.push(s),
+  });
+  await poller.refresh();
+  assert.match(updates[0]?.error ?? "", /boom/);
+});
+
+test("a hidden tab aborts all pending requests", async () => {
+  const timer = fakeTimer();
+  const visibility = fakeVisibility(false);
+  const signals: AbortSignal[] = [];
+  const poller = createPoller({
+    fetch: ((_url: string, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    visibility,
+    onUpdate: () => {},
+  });
+  poller.start();
+  await flush();
+  visibility.set(true);
+  assert.equal(signals.length, 5);
+  assert.ok(signals.every((s) => s.aborted));
+});
+
+test("the default timeout is min(pollMs, 4000)", async () => {
+  for (const [pollMs, expected] of [
+    [1000, 1000],
+    [10_000, 4000],
+  ] as const) {
+    const rec = recordingTimer();
+    let signal: AbortSignal | undefined;
+    const poller = createPoller({
+      fetch: ((_url: string, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise<Response>(() => {});
+      }) as unknown as typeof fetch,
+      timer: rec.timer,
+      now: () => 1,
+      pollMs,
+      onUpdate: () => {},
+    });
+    const done = poller.refresh();
+    await flush();
+    assert.equal(rec.delays[0], expected);
+    await rec.fire();
+    await done;
+    assert.equal(signal?.aborted, true);
+  }
+});

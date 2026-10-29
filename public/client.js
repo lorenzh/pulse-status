@@ -65,7 +65,6 @@ function show(id, html) {
   document.getElementById(id).innerHTML = html;
 }
 
-const UPSTREAM_TIMEOUT_MS = 4000;
 const TICK_MS = 30_000;
 
 function makeEnv() {
@@ -101,7 +100,6 @@ createPoller({
   timer: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h) },
   now: () => Date.now(),
   pollMs,
-  timeoutMs: UPSTREAM_TIMEOUT_MS,
   visibility: {
     isHidden: () => document.visibilityState === "hidden",
     onChange: (fn) => document.addEventListener("visibilitychange", fn),
