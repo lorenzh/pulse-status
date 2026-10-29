@@ -17,9 +17,10 @@ The process prints `pulse-status: <message>` and exits with code 2.
 | `theme file <file>: <key>: invalid value`                    | A colour, font or radius breaks its rule (`light.accent`, `font-sans`, `radius-md`) | See [theming.md](theming.md#colours) for the allowed values |
 | `PULSE_STATUS_LOGO: extension must be svg, png, jpg or webp` | The local logo file has another extension                                           | Convert the logo                                            |
 | `PULSE_STATUS_LOGO: cannot read <file>`                      | The logo file does not exist                                                        | Fix the path. In Docker, mount the file                     |
+| `PULSE_API_URL is not a valid URL`                           | The value does not parse as a URL (the value is not printed)                        | Use a full URL such as `http://localhost:3000`              |
+| `cannot listen on <host>:<port> (PORT): <reason>`            | The port is in use (`EADDRINUSE`) or not allowed (`EACCES`)                         | Set another `PORT`                                          |
 | `PULSE_STATUS_LOGO: invalid URL <url>`                       | The `http(s)://` value is not a valid URL                                           | Fix the URL                                                 |
 
-`EADDRINUSE` means another process uses `PORT`. Set another `PORT`.
 
 ## The page shows "Cannot reach the API"
 

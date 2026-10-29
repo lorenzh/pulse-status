@@ -21,6 +21,8 @@ export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): St
   const port = parseMs("PORT", env.PORT, 8080, 0);
   if (port > 65535) throw new Error("PORT: must be an integer <= 65535");
   const apiUrl = env.PULSE_API_URL || "http://localhost:3000";
+  // Never echo the value: it may carry credentials.
+  if (!URL.canParse(apiUrl)) throw new Error("PULSE_API_URL is not a valid URL");
   const pollMs = parseMs("POLL_MS", env.POLL_MS, 5000, 1);
   const themeFile = env.PULSE_STATUS_THEME || undefined;
   const name = env.PULSE_STATUS_NAME || undefined;

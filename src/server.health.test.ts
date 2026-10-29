@@ -71,8 +71,15 @@ test("/healthz and /metrics bypass the render cache and API proxy", async () => 
     res.writeHead(200, { "content-type": "application/json" }).end("[]");
   });
   const apiUrl = await listen(upstream);
-  const base = await listen(createStatusServer({ apiUrl, pollMs: 5000 }));
-  await fetch(`${base}/healthz`);
-  await fetch(`${base}/metrics`);
+  const metrics = createMetrics({ now: Date.now, pollMs: 5000 });
+  metrics.recordPoll("ok");
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 5000, metrics }));
+  const health = await fetch(`${base}/healthz`);
+  assert.equal(health.status, 200);
+  assert.equal(await health.text(), "ok\n");
+  const scrape = await fetch(`${base}/metrics`);
+  assert.equal(scrape.status, 200);
+  assert.match(scrape.headers.get("content-type") ?? "", /text\/plain; version=0\.0\.4/);
+  assert.match(await scrape.text(), /pulse_up/);
   assert.equal(hits, 0);
 });

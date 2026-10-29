@@ -37,8 +37,11 @@ process.on("SIGTERM", () => shutdown.onSignal("SIGTERM"));
 try {
   const { server, port, apiUrl, pollMs, metrics, startPolling } = startFromEnv(process.env);
   server.on("error", (err) => {
+    if (!server.listening) {
+      fatal(`cannot listen on 0.0.0.0:${port} (PORT): ${err.message}`, EXIT_STARTUP);
+    }
     log("error", "server error", { error: err.message });
-    process.exit(server.listening ? EXIT_RUNTIME : EXIT_STARTUP);
+    process.exit(EXIT_RUNTIME);
   });
   server.listen(port, () => {
     const stop = startPolling();
