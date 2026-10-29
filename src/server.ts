@@ -233,27 +233,29 @@ async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> 
   if (!result.ok) {
     switch (result.error.kind) {
       case "http":
-        // The upstream body is never forwarded.
-        return answer(result.error.status, { error: "API error" });
+        // Only the body is withheld; the wire header is forwarded as received.
+        return answer(result.error.status, { error: "API error" }, wireHeader);
       case "wire-mismatch":
         // The page poller reads the header and shows the version error; the body is not read.
         return answer(200, { error: "API version mismatch" }, wireHeader);
       case "too-large":
       case "invalid-json":
       case "validation":
-        return answer(502, { error: "invalid API response" });
+        return answer(502, { error: "invalid API response" }, wireHeader);
       case "timeout":
       case "aborted":
       case "network":
-        return answer(502, { error: "API unreachable" });
+        return answer(502, { error: "API unreachable" }, wireHeader);
       default: {
         const unreachable: never = result.error;
-        return answer(502, { error: String(unreachable) });
+        return answer(502, { error: String(unreachable) }, wireHeader);
       }
     }
   }
   const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
-  if (mediaType !== "application/json") return answer(502, { error: "invalid API response" });
+  if (mediaType !== "application/json") {
+    return answer(502, { error: "invalid API response" }, wireHeader);
+  }
   let body = filterApiBody(url.pathname, result.value, ctx.isHidden);
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
