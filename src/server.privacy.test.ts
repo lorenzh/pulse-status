@@ -254,3 +254,36 @@ test("/logo is sandboxed", async () => {
   );
   assert.equal(r.headers.get("x-content-type-options"), "nosniff");
 });
+
+const heartbeatCheck = {
+  id: "hb",
+  name: "Backup",
+  type: "heartbeat",
+  period: 60_000,
+  grace: 5000,
+  secret: "should-never-appear-0123456789",
+  url: "http://leak.example/",
+  host: "leak.internal",
+  state: "up",
+  lastResultAt: 5,
+  lastReason: null,
+  locations: [],
+};
+
+test("a heartbeat check never shows secret, url or host, and hide-details drops period and grace", async () => {
+  for (const isHidden of [true, false]) {
+    const { base } = await start(
+      { hideDetails: isHidden },
+      { body: JSON.stringify([heartbeatCheck]) },
+    );
+    const r = await fetch(`${base}/api/checks`);
+    const text = await r.text();
+    assert.doesNotMatch(text, /should-never-appear/);
+    const [item] = JSON.parse(text) as Record<string, unknown>[];
+    assert.equal("secret" in (item ?? {}), false);
+    assert.equal("host" in (item ?? {}), false);
+    assert.equal("period" in (item ?? {}), !isHidden);
+    assert.equal("grace" in (item ?? {}), !isHidden);
+    assert.equal(item?.lastResultAt, 5);
+  }
+});

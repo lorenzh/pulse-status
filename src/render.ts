@@ -156,7 +156,7 @@ export function renderLatency(check: CheckWithState): string {
   );
   if (newest === null) return "";
   const objective =
-    check.type !== "tls" && check.latencyObjectiveMs != null
+    check.type !== "tls" && check.type !== "heartbeat" && check.latencyObjectiveMs != null
       ? ` · objective ${check.latencyObjectiveMs} ms`
       : "";
   const text = `${newest.result.latencyMs} ms${objective}`;
@@ -195,11 +195,18 @@ function span(cls: string, text: string): string {
   return `<span class="${cls}">${escapeHtml(text)}</span>`;
 }
 
-function renderMeta(check: CheckWithState): string {
+function renderLastPing(check: CheckWithState, env: TimeEnv | undefined): string {
+  if (check.type !== "heartbeat") return "";
+  if (check.lastResultAt == null) return span("last-ping", "no ping yet");
+  if (env === undefined) return "";
+  return `<span class="last-ping">last ping ${renderTime(check.lastResultAt, env)}</span>`;
+}
+
+function renderMeta(check: CheckWithState, env: TimeEnv | undefined): string {
   const days = check.type === "tls" ? check.certDaysLeft : null;
   const reasonIsDays = days != null && check.state === "down" && Boolean(check.lastReason);
-  const parts = [renderLatency(check)];
-  if (check.type !== "tls" && check.keyword)
+  const parts = [renderLatency(check), renderLastPing(check, env)];
+  if (check.type !== "tls" && check.type !== "heartbeat" && check.keyword)
     parts.push(span("keyword", `keyword "${check.keyword}"`));
   if (days != null) {
     parts.push(span("cert-days", reasonIsDays ? (check.lastReason ?? "") : `${days} days left`));
@@ -213,30 +220,39 @@ function renderMeta(check: CheckWithState): string {
 
 /** Empty when the server hides the target. */
 function targetOf(check: CheckWithState): string {
+  if (check.type === "heartbeat") return "";
   if (check.type !== "tls") return check.url ?? "";
   if (check.host == null) return "";
   return check.port == null ? check.host : `${check.host}:${check.port}`;
 }
 
-function renderCheck(check: CheckWithState, entry: UptimeResponse[number] | undefined): string {
+function renderCheck(
+  check: CheckWithState,
+  entry: UptimeResponse[number] | undefined,
+  env: TimeEnv | undefined,
+): string {
   const targetText = targetOf(check);
   return (
     `<li class="check state-${check.state}">` +
     `<div class="check-head"><span class="state">${check.state}</span>` +
     `<span class="name">${escapeHtml(check.name)}</span></div>` +
     (targetText === "" ? "" : `<div class="url">${escapeHtml(targetText)}</div>`) +
-    renderMeta(check) +
+    renderMeta(check, env) +
     (entry ? renderUptime(entry) : "") +
     `</li>`
   );
 }
 
-export function renderChecks(checks: ChecksResponse, uptime: UptimeResponse = []): string {
+export function renderChecks(
+  checks: ChecksResponse,
+  uptime: UptimeResponse = [],
+  env?: TimeEnv,
+): string {
   if (checks.length === 0) {
     return '<p class="empty">No checks configured.</p>';
   }
   const uptimeById = new Map(uptime.map((entry) => [entry.checkId, entry]));
-  const items = checks.map((check) => renderCheck(check, uptimeById.get(check.id)));
+  const items = checks.map((check) => renderCheck(check, uptimeById.get(check.id), env));
   return `<ul class="checks">${items.join("")}</ul>`;
 }
 

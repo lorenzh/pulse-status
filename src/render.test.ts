@@ -581,3 +581,42 @@ test("updated: after an error the last good time stays", () => {
 test("updated: nothing before the first success", () => {
   assert.equal(renderUpdated(null, "boom", env), "");
 });
+
+const heartbeat: CheckWithState = {
+  id: "hb",
+  name: "Nightly backup",
+  type: "heartbeat",
+  period: 60_000,
+  grace: 5000,
+  state: "up",
+  consecutiveDown: 0,
+  lastResultAt: NOW - 5 * MIN,
+  lastReason: null,
+  locations: [],
+};
+
+test("heartbeat card shows the last ping, no target and no undefined", () => {
+  for (const state of ["up", "down", "unknown", "maintenance"] as const) {
+    const html = renderChecks([{ ...heartbeat, state }], [], env);
+    assert.match(html, new RegExp(`state-${state}`));
+    assert.match(html, /Nightly backup/);
+    assert.match(html, /last ping <time[^>]*>5 min ago<\/time>/);
+    assert.doesNotMatch(html, /class="url"|undefined|keyword|ms/);
+  }
+});
+
+test("heartbeat card without a ping says no ping yet", () => {
+  const html = renderChecks([{ ...heartbeat, state: "unknown", lastResultAt: null }], [], env);
+  assert.match(html, /no ping yet/);
+  assert.doesNotMatch(html, /last ping/);
+});
+
+test("heartbeat card escapes the name and the reason", () => {
+  const evil = '<img src=x onerror="1">';
+  const html = renderChecks(
+    [{ ...heartbeat, name: evil, state: "down", lastReason: evil }],
+    [],
+    env,
+  );
+  assert.doesNotMatch(html, /<img/);
+});
