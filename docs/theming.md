@@ -115,14 +115,15 @@ The page reads pulse-api through this server, so the browser needs no direct acc
 
 ## Other routes
 
-| Path                                                                  | Answer                                                                                |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `/` and `/index.html`                                                 | The page, with the title and wordmark filled in                                       |
-| `/theme.css`                                                          | The merged theme                                                                      |
-| `/logo`                                                               | The local logo file, only when `PULSE_STATUS_LOGO` is a file, sent with a sandbox CSP |
-| `/page.css`, `/theme-init.js`                                         | The page style and the theme bootstrap script                                         |
-| `/fonts/space-grotesk.woff2`, `/fonts/jetbrains-mono.woff2`           | The bundled fonts                                                                     |
-| `/client.js`, `/render.js`, `/poller.js`, `/theme.js`, `/validate.js` | Browser code                                                                          |
-| anything else                                                         | `404` with `{"error":"not found"}`                                                    |
+| Path                                                                  | Answer                                                                                                                |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `/` and `/index.html`                                                 | The page, with the title and wordmark filled in                                                                       |
+| `/theme.css`                                                          | The merged theme                                                                                                      |
+| `/feed.atom`, `/badge/<check id>.svg`                                 | Atom feed (needs `PULSE_STATUS_PUBLIC_URL`) and SVG uptime badge, see [Feed and badges](operation.md#feed-and-badges) |
+| `/logo`                                                               | The local logo file, only when `PULSE_STATUS_LOGO` is a file, sent with a sandbox CSP                                 |
+| `/page.css`, `/theme-init.js`                                         | The page style and the theme bootstrap script                                                                         |
+| `/fonts/space-grotesk.woff2`, `/fonts/jetbrains-mono.woff2`           | The bundled fonts                                                                                                     |
+| `/client.js`, `/render.js`, `/poller.js`, `/theme.js`, `/validate.js` | Browser code                                                                                                          |
+| anything else                                                         | `404` with `{"error":"not found"}`                                                                                    |
 
 An unexpected error while serving answers `500` with an `error` field.

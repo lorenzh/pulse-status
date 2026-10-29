@@ -86,6 +86,14 @@ test("PULSE_STATUS_LOGO over http fails startup, https is accepted", () => {
   assert.ok(startFromEnv({ PULSE_STATUS_LOGO: "https://x.test/logo.png" }).server);
 });
 
+test("invalid PULSE_STATUS_PUBLIC_URL fails startup, a valid one is accepted", () => {
+  assert.throws(
+    () => startFromEnv({ PULSE_STATUS_PUBLIC_URL: "https://u:p@x.test" }),
+    /PULSE_STATUS_PUBLIC_URL/,
+  );
+  assert.ok(startFromEnv({ PULSE_STATUS_PUBLIC_URL: "https://x.test/" }).server);
+});
+
 test("an unbalanced font quote in the theme file fails startup", () => {
   const dir = mkdtempSync(join(tmpdir(), "status-start-"));
   try {

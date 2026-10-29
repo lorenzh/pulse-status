@@ -66,7 +66,15 @@ The page loads `/api/checks`, `/api/incidents?status=open`, `/api/maintenance`, 
 
 If the checks, open incidents or maintenance request fails, or an answer does not have the expected shape, the page shows an error banner with a fixed sentence (`Cannot reach the API. Showing the last known status.`, `The API sent an unexpected answer.` or `The status page and the API versions do not match.`; the reason goes only to the browser console) and keeps the last data it received. The banner goes away at the next successful refresh.
 
-### Caching
+### Feed and badges
+
+Both are public, need no login and are built from the same cached answers as the page, so they cause no extra calls to pulse-api. Only `GET` and `HEAD` work. RSS is not offered, only Atom.
+
+- **`/feed.atom`** is an Atom feed of open incidents and those resolved in the last 7 days, newest first. It exists only when `PULSE_STATUS_PUBLIC_URL` is set (otherwise it answers `404` like any unknown path), because links in the feed are built from that setting and never from the `Host` header. Each entry has the check name and `Open` or `Resolved` in the title, a stable `tag:` id from the host of the public URL and the incident id (it changes if you change the host), the last change as `updated`, a link to the page, and a text summary with the times and, only when `PULSE_STATUS_HIDE_DETAILS=false`, the reason. Incidents of checks that are no longer listed are skipped. Targets and URLs never appear. The page links the feed with `<link rel="alternate">` when the public URL is set. Subscribe by adding `https://status.example.com/feed.atom` to a feed reader.
+- **`/badge/<check id>.svg`** is an SVG badge with the check name on the left and the state and 90-day uptime on the right, for example `up 99.95%` (`up no data` without uptime data). It needs no public URL. `?label=Text` replaces the left text (at most 32 characters, no control characters, else `400 invalid label`). Other parameters are ignored. Embed it in Markdown: `![status](https://status.example.com/badge/<check id>.svg)`. The text states the state in words, so colour is not the only signal. Very long text is squeezed to a width of 200 px per part. Unknown, removed or malformed ids all answer the same `404 not found`.
+- Success answers send `Cache-Control: public, max-age=N` with `N` = the larger of `PULSE_STATUS_CACHE_MS` and `POLL_MS`, in seconds, at least 1. If a needed answer from pulse-api is missing or invalid, the answer is `503 unavailable` with `no-store`. If only `/api/uptime` fails, the badge shows `no data`.
+
+## Caching
 
 The proxy keeps the final answer (after allow-list, redaction and the 7-day window) per path and query for `PULSE_STATUS_CACHE_MS` (default 2000 ms), so every viewer gets the same bytes and pulse-api sees about one request per path per period. Concurrent requests share one upstream call. Error answers (`502`, upstream error status) are cached for the same period only. Stale data is never served after a failure: the page gets the error and shows its banner. The cache is per server instance. Answers carry `cache-control: no-store`.
 

@@ -23,6 +23,8 @@ Then open http://localhost:8080. Set `PULSE_API_URL` if pulse-api is not on `htt
 
 Also served: `GET /healthz` (liveness: `200 ok` while the server runs, never depends on the API), `GET /readyz` (readiness: `200 ok` after a recent successful API poll, else `503` with a reason such as `API version mismatch`) and `GET /metrics` (Prometheus text). Settings: `PULSE_LOG_LEVEL` (default `info`). Exit codes: `0` clean stop, `2` startup error, `1` runtime failure. `/healthz` changed meaning: it used to be readiness. Orchestrators that route traffic must use `/readyz`. `POLL_MS` must be >= 1000. See [docs/operation.md](docs/operation.md).
 
+Also served, public and read-only: `GET /feed.atom` (Atom feed of open and recently resolved incidents; only when `PULSE_STATUS_PUBLIC_URL` is set, else `404`; RSS is not offered) and `GET /badge/<check id>.svg` (SVG badge with state and 90-day uptime, optional `?label=`). Both reuse the proxy cache. Setting: `PULSE_STATUS_PUBLIC_URL` (default none; an `http(s)` URL without credentials, query or fragment). See [docs/operation.md](docs/operation.md#feed-and-badges).
+
 ## Docker
 
 ```sh

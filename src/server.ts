@@ -9,6 +9,7 @@ import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filt
 import type { Logger } from "./log.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { escapeHtml, RESOLVED_WINDOW_MS } from "./render.ts";
+import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 
 export interface ServerOptions {
@@ -22,6 +23,8 @@ export interface ServerOptions {
   name?: string | undefined;
   /** Logo: local file path (svg, png, jpg, webp) or https URL (PULSE_STATUS_LOGO). */
   logo?: string | undefined;
+  /** Public URL of the status page (PULSE_STATUS_PUBLIC_URL), already normalized; enables /feed.atom. */
+  publicUrl?: string | undefined;
   /** Hide check targets, keywords and reasons in proxied JSON (PULSE_STATUS_HIDE_DETAILS), default true. */
   hideDetails?: boolean | undefined;
   /** How long a proxied answer, error answers included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
@@ -319,8 +322,33 @@ export function createStatusServer(options: ServerOptions): Server {
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
   ctx.apiBase = apiBase;
 
+  const syndicate = createSyndication({
+    read: (path) => cachedAnswer(path, new URL(path, "http://localhost"), ctx),
+    publicUrl: options.publicUrl,
+    name,
+    maxAgeSeconds: Math.max(1, Math.ceil(Math.max(ctx.cacheMs, options.pollMs) / 1000)),
+  });
+  const feedLink =
+    options.publicUrl === undefined
+      ? ""
+      : '<link rel="alternate" type="application/atom+xml" href="/feed.atom">';
+
   const log: Logger = options.log ?? (() => {});
   const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
+
+  const renderIndex = async (): Promise<string> =>
+    (await readFile(publicDir + "index.html", "utf8"))
+      .replace(
+        "<body>",
+        () =>
+          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}">`,
+      )
+      .replaceAll("{{title}}", () => escapeHtml(title))
+      .replace("{{wordmark}}", () => mark)
+      .replace("{{feedLink}}", () => feedLink);
+
+  const serveGenerated = async (url: URL, res: ServerResponse): Promise<boolean> =>
+    serveOps(url.pathname, res, metrics) || (await syndicate(url, res));
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -333,16 +361,9 @@ export function createStatusServer(options: ServerOptions): Server {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;
       }
-      if (serveOps(url.pathname, res, metrics)) return;
+      if (await serveGenerated(url, res)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
-        const html = (await readFile(publicDir + "index.html", "utf8"))
-          .replace(
-            "<body>",
-            () =>
-              `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}">`,
-          )
-          .replaceAll("{{title}}", () => escapeHtml(title))
-          .replace("{{wordmark}}", () => mark);
+        const html = await renderIndex();
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
         return;
       }

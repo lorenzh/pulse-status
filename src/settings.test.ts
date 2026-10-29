@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseHideDetails, parseMs } from "./settings.ts";
+import { parseHideDetails, parseMs, parsePublicUrl } from "./settings.ts";
 
 test("PULSE_STATUS_HIDE_DETAILS: default and empty hide details", () => {
   assert.equal(parseHideDetails(undefined), true);
@@ -27,5 +27,27 @@ test("parseMs: default, value, and invalid input", () => {
   assert.equal(parseMs("X", "250", 7, 1), 250);
   for (const bad of ["abc", "-1", "1.5", "0"]) {
     assert.throws(() => parseMs("X", bad, 7, 1), /X: must be/, bad);
+  }
+});
+
+test("PULSE_STATUS_PUBLIC_URL: unset or empty is off; trailing slash is removed", () => {
+  assert.equal(parsePublicUrl(undefined), undefined);
+  assert.equal(parsePublicUrl(""), undefined);
+  assert.equal(parsePublicUrl("https://status.example.com/"), "https://status.example.com");
+  assert.equal(parsePublicUrl("http://h.example:8080/pulse/"), "http://h.example:8080/pulse");
+});
+
+test("PULSE_STATUS_PUBLIC_URL: rejects other schemes, userinfo, query, fragment and junk", () => {
+  for (const bad of [
+    "ftp://x.example",
+    "javascript:alert(1)",
+    "https://u:p@x.example",
+    "https://x.example/?a=1",
+    "https://x.example/?",
+    "https://x.example/#f",
+    "https://x.example#",
+    "not a url",
+  ]) {
+    assert.throws(() => parsePublicUrl(bad), /PULSE_STATUS_PUBLIC_URL/, bad);
   }
 });

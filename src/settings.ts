@@ -20,3 +20,23 @@ export function parseMs(
   }
   return ms;
 }
+
+/**
+ * Parses PULSE_STATUS_PUBLIC_URL: an http(s) URL without userinfo, query or fragment. Empty or
+ * unset means no feed. Returns the URL without a trailing slash. The value is never echoed.
+ */
+export function parsePublicUrl(value: string | undefined): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  const bad = (): Error =>
+    new Error(
+      "PULSE_STATUS_PUBLIC_URL: must be an http(s) URL without credentials, query or fragment",
+    );
+  if (!URL.canParse(value)) throw bad();
+  const url = new URL(value);
+  const isHttp = url.protocol === "http:" || url.protocol === "https:";
+  if (!isHttp || url.username !== "" || url.password !== "") throw bad();
+  if (value.includes("?") || value.includes("#")) throw bad();
+  let href = url.href;
+  while (href.endsWith("/")) href = href.slice(0, -1);
+  return href;
+}
