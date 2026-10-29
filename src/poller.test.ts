@@ -272,3 +272,157 @@ test("poller requests only allow-listed API paths", async () => {
   for (const url of requested)
     assert.ok((ALLOWED_API_PATHS as readonly string[]).includes(url), url);
 });
+
+const flush = () => new Promise((r) => setImmediate(r));
+
+const okFetch = (() => Promise.resolve(json([]))) as unknown as typeof fetch;
+
+test("a throwing onUpdate is logged and the next poll still runs", async () => {
+  const timer = fakeTimer();
+  const logged: unknown[] = [];
+  let updates = 0;
+  const poller = createPoller({
+    fetch: okFetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    log: (_m, e) => logged.push(e),
+    onUpdate: () => {
+      updates++;
+      throw new Error("render broke");
+    },
+  });
+  poller.start();
+  await flush();
+  assert.equal(logged.length, 1);
+  assert.equal(timer.pending.size, 1);
+  await timer.fire();
+  assert.equal(updates, 2);
+  await poller.refresh();
+  assert.equal(updates, 3);
+});
+
+test("a hanging request (headers) times out as a failed refresh", async () => {
+  const timer = fakeTimer();
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: (() => new Promise<Response>(() => {})) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    onUpdate: (s) => updates.push(s),
+  });
+  poller.start();
+  await flush();
+  assert.equal(updates.length, 0);
+  await timer.fire();
+  assert.equal(updates.length, 1);
+  assert.match(updates[0]?.error ?? "", /Cannot reach the API/);
+  assert.equal(timer.pending.size, 1);
+});
+
+test("a hanging json body times out as a failed refresh", async () => {
+  const timer = fakeTimer();
+  const updates: PollerState[] = [];
+  const hangingBody = {
+    ok: true,
+    json: () => new Promise<unknown>(() => {}),
+  } as unknown as Response;
+  const poller = createPoller({
+    fetch: (() => Promise.resolve(hangingBody)) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    onUpdate: (s) => updates.push(s),
+  });
+  poller.start();
+  await flush();
+  await timer.fire();
+  assert.equal(updates.length, 1);
+  assert.notEqual(updates[0]?.error, null);
+});
+
+function fakeVisibility(initialHidden: boolean) {
+  let hidden = initialHidden;
+  let listener: () => void = () => {};
+  return {
+    isHidden: () => hidden,
+    onChange: (fn: () => void) => {
+      listener = fn;
+    },
+    set(next: boolean) {
+      hidden = next;
+      listener();
+    },
+  };
+}
+
+test("hidden: no requests; visible: immediate refresh and the chain resumes", async () => {
+  const timer = fakeTimer();
+  const visibility = fakeVisibility(true);
+  let calls = 0;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: (() => {
+      calls++;
+      return Promise.resolve(json([]));
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    visibility,
+    onUpdate: (s) => updates.push(s),
+  });
+  poller.start();
+  await flush();
+  assert.equal(calls, 0);
+  assert.equal(timer.pending.size, 0);
+
+  visibility.set(false);
+  await flush();
+  assert.equal(updates.length, 1);
+  assert.equal(timer.pending.size, 1);
+
+  visibility.set(false);
+  await flush();
+  assert.equal(timer.pending.size, 1);
+
+  visibility.set(true);
+  assert.equal(timer.pending.size, 0);
+  const before = calls;
+  await timer.fire();
+  assert.equal(calls, before);
+});
+
+test("hiding aborts the request in flight without a stuck poller", async () => {
+  const timer = fakeTimer();
+  const visibility = fakeVisibility(false);
+  let signal: AbortSignal | undefined;
+  let hang = true;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: ((_url: string, init?: RequestInit) => {
+      if (!hang) return Promise.resolve(json([]));
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(() => {});
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    visibility,
+    onUpdate: (s) => updates.push(s),
+  });
+  poller.start();
+  await flush();
+  visibility.set(true);
+  await flush();
+  assert.equal(signal?.aborted, true);
+  assert.equal(updates.length, 0);
+  assert.equal(timer.pending.size, 0);
+
+  hang = false;
+  visibility.set(false);
+  await flush();
+  assert.equal(updates.length, 1);
+  assert.equal(timer.pending.size, 1);
+});

@@ -9,7 +9,9 @@ import {
   renderIncidents,
   renderResolvedIncidents,
   renderSummary,
+  renderUnavailable,
   renderUpcomingMaintenance,
+  renderUpdated,
   type TimeEnv,
 } from "./render.ts";
 
@@ -522,4 +524,60 @@ test("hidden details: no target line, TLS days still shown", () => {
   const http = renderChecks([hiddenHttp as CheckWithState]);
   assert.doesNotMatch(http, /class="url"|undefined|keyword|class="reason"/);
   assert.match(http, /class="name"/);
+});
+
+test("summary: all unknown reads Status unknown, never operational", () => {
+  const html = renderSummary([withState("unknown"), withState("unknown")], []);
+  assert.match(html, /status-unknown/);
+  assert.match(html, />Status unknown</);
+  assert.doesNotMatch(html, /operational/);
+});
+
+test("summary: unknown and maintenance without up reads Status unknown", () => {
+  assert.match(
+    renderSummary([withState("unknown"), withState("maintenance")], []),
+    />Status unknown</,
+  );
+});
+
+test("summary: only maintenance keeps the operational text", () => {
+  assert.match(renderSummary([withState("maintenance")], []), />All systems operational</);
+});
+
+test("summary: an error replaces operational with a warning", () => {
+  const html = renderSummary([withState("up")], [], "Cannot reach the API: x");
+  assert.match(html, /status-warning/);
+  assert.match(html, />Status may be outdated</);
+  assert.doesNotMatch(html, /operational/);
+});
+
+test("summary: an error keeps a down state visible", () => {
+  assert.match(renderSummary([withState("down")], [], "x"), />1 check down</);
+});
+
+test("summary: failed first fetch reads Status unavailable", () => {
+  const html = renderSummary([], [], "Cannot reach the API: x", false);
+  assert.match(html, />Status unavailable</);
+  assert.equal(renderSummary([], [], null, false), "");
+});
+
+test("unavailable: shows the escaped error", () => {
+  assert.match(renderUnavailable("a <b>"), /a &lt;b&gt;/);
+});
+
+test("updated: last updated time with exact tooltip", () => {
+  const html = renderUpdated(NOW - 3 * MIN, null, env);
+  assert.match(html, /Last updated <time/);
+  assert.match(html, /3 min ago/);
+  assert.match(html, /title="exact&lt;/);
+  assert.doesNotMatch(html, /unreachable/);
+});
+
+test("updated: after an error the last good time stays", () => {
+  const html = renderUpdated(NOW - 3 * MIN, "boom", env);
+  assert.match(html, /3 min ago<\/time> · API unreachable/);
+});
+
+test("updated: nothing before the first success", () => {
+  assert.equal(renderUpdated(null, "boom", env), "");
 });

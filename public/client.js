@@ -5,7 +5,9 @@ import {
   renderIncidents,
   renderResolvedIncidents,
   renderSummary,
+  renderUnavailable,
   renderUpcomingMaintenance,
+  renderUpdated,
 } from "/render.js";
 
 import { applyTheme, loadTheme, parseTheme, saveTheme } from "/theme.js";
@@ -63,20 +65,51 @@ function show(id, html) {
   document.getElementById(id).innerHTML = html;
 }
 
+const UPSTREAM_TIMEOUT_MS = 4000;
+const TICK_MS = 30_000;
+
+function makeEnv() {
+  // Relative times are recomputed from the current clock.
+  return { now: Date.now(), formatExact, formatExactSpan };
+}
+
+let lastState = null;
+
+function showUpdated(state) {
+  show("updated", renderUpdated(state.updatedAt, state.error, makeEnv()));
+}
+
+function draw(state) {
+  lastState = state;
+  show("banner", renderBanner(state.error));
+  const hasData = state.updatedAt !== null;
+  show("summary", renderSummary(state.checks, state.incidents, state.error, hasData));
+  showUpdated(state);
+  if (!hasData) {
+    if (state.error !== null) show("checks", renderUnavailable(state.error));
+    return;
+  }
+  const env = makeEnv();
+  show("checks", renderChecks(state.checks, state.uptime));
+  show("incidents", renderIncidents(state.incidents, state.checks, env));
+  show("resolved", renderResolvedIncidents(state.resolved, state.checks, env));
+  show("maintenance", renderUpcomingMaintenance(state.maintenance, state.checks, env));
+}
+
 createPoller({
   fetch: (...args) => fetch(...args),
   timer: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h) },
   now: () => Date.now(),
   pollMs,
-  onUpdate(state) {
-    show("banner", renderBanner(state.error));
-    if (state.updatedAt === null) return;
-    // Relative times are recomputed on every poll from the current clock.
-    const env = { now: Date.now(), formatExact, formatExactSpan };
-    show("summary", renderSummary(state.checks, state.incidents));
-    show("checks", renderChecks(state.checks, state.uptime));
-    show("incidents", renderIncidents(state.incidents, state.checks, env));
-    show("resolved", renderResolvedIncidents(state.resolved, state.checks, env));
-    show("maintenance", renderUpcomingMaintenance(state.maintenance, state.checks, env));
+  timeoutMs: UPSTREAM_TIMEOUT_MS,
+  visibility: {
+    isHidden: () => document.visibilityState === "hidden",
+    onChange: (fn) => document.addEventListener("visibilitychange", fn),
   },
+  onUpdate: draw,
 }).start();
+
+// Lets "Last updated" tick between polls.
+setInterval(() => {
+  if (lastState !== null) showUpdated(lastState);
+}, TICK_MS);

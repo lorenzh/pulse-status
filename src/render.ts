@@ -77,25 +77,67 @@ function countWord(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-/** One sentence, worst state wins. Maintenance and unknown checks do not count as problems. */
-export function renderSummary(checks: ChecksResponse, incidents: IncidentsResponse): string {
+function summaryLine(status: string, text: string): string {
+  return `<p class="summary status-${status}" role="status">${escapeHtml(text)}</p>`;
+}
+
+/** Healthy text only when something is up, or all checks are in maintenance. */
+function quietSummary(checks: ChecksResponse): { status: string; text: string } {
+  const hasUp = checks.some((check) => check.state === "up");
+  const hasUnknown = checks.some((check) => check.state === "unknown");
+  if (!hasUp && hasUnknown) return { status: "unknown", text: "Status unknown" };
+  return { status: "success", text: "All systems operational" };
+}
+
+/**
+ * One sentence, worst state wins. Maintenance does not count as a problem; unknown checks never
+ * count as healthy. After a failed poll the page never says "operational": the data may be stale.
+ * `hasData` is false until the first successful poll.
+ */
+export function renderSummary(
+  checks: ChecksResponse,
+  incidents: IncidentsResponse,
+  error: string | null = null,
+  hasData = true,
+): string {
+  if (!hasData) {
+    return error === null ? "" : summaryLine("warning", "Status unavailable");
+  }
   if (checks.length === 0) {
     return '<p class="summary status-none" role="status">No checks configured</p>';
   }
   const down = checks.filter((check) => check.state === "down").length;
   const degraded = checks.filter((check) => check.state === "degraded").length;
-  let status = "success";
-  let text = "All systems operational";
+  let { status, text } = quietSummary(checks);
   if (down > 0) {
     status = "error";
     text = `${countWord(down, "check")} down`;
   } else if (degraded > 0) {
     status = "warning";
     text = `${countWord(degraded, "check")} degraded`;
+  } else if (error !== null) {
+    status = "warning";
+    text = "Status may be outdated";
   }
   const open = incidents.filter((incident) => incident.resolvedAt === null).length;
   if (open > 0) text += ` · ${countWord(open, "incident")} open`;
-  return `<p class="summary status-${status}" role="status">${escapeHtml(text)}</p>`;
+  return summaryLine(status, text);
+}
+
+/** Time of the last successful poll; after an error the last good time stays visible. */
+export function renderUpdated(
+  updatedAt: number | null,
+  error: string | null,
+  env: TimeEnv,
+): string {
+  if (updatedAt === null) return "";
+  const suffix = error === null ? "" : " · API unreachable";
+  return `<p class="updated">Last updated ${renderTime(updatedAt, env)}${suffix}</p>`;
+}
+
+/** Shown in place of the checks when the first poll failed. */
+export function renderUnavailable(error: string): string {
+  return `<p class="empty">${escapeHtml(error)}</p>`;
 }
 
 export function renderLocations(check: Pick<CheckWithState, "locations">): string {

@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import { createStatusServer } from "./server.ts";
-import { parseHideDetails } from "./settings.ts";
+import { parseHideDetails, parseMs } from "./settings.ts";
 
 export interface StartedServer {
   server: Server;
@@ -17,6 +17,13 @@ export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): St
   const name = env.PULSE_STATUS_NAME || undefined;
   const logo = env.PULSE_STATUS_LOGO || undefined;
   const hideDetails = parseHideDetails(env.PULSE_STATUS_HIDE_DETAILS);
+  const cacheMs = parseMs("PULSE_STATUS_CACHE_MS", env.PULSE_STATUS_CACHE_MS, 2000, 0);
+  const upstreamTimeoutMs = parseMs(
+    "PULSE_STATUS_UPSTREAM_TIMEOUT_MS",
+    env.PULSE_STATUS_UPSTREAM_TIMEOUT_MS,
+    4000,
+    1,
+  );
   const server = createStatusServer({
     apiUrl,
     pollMs,
@@ -24,6 +31,8 @@ export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): St
     name,
     logo,
     hideDetails,
+    cacheMs,
+    upstreamTimeoutMs,
     fetch: doFetch,
   });
   return { server, port, apiUrl, pollMs };

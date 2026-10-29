@@ -92,3 +92,17 @@ export function filterApiBody(pathname: string, body: unknown, isHidden: boolean
   if (clean === undefined) return body;
   return body.map((item: unknown) => (isObject(item) ? clean(item, isHidden) : item));
 }
+
+/**
+ * Keeps incidents resolved at or after `cutoff`, newest first. Other shapes pass through, and so
+ * does an incident without `resolvedAt` (the API sends none for status=resolved; the poller
+ * filters again).
+ */
+export function limitResolvedWindow(body: unknown, cutoff: number): unknown {
+  if (!Array.isArray(body)) return body;
+  const resolvedAt = (item: unknown): number | null =>
+    isObject(item) && typeof item.resolvedAt === "number" ? item.resolvedAt : null;
+  return body
+    .filter((item: unknown) => (resolvedAt(item) ?? Number.POSITIVE_INFINITY) >= cutoff)
+    .sort((a: unknown, b: unknown) => (resolvedAt(b) ?? 0) - (resolvedAt(a) ?? 0));
+}

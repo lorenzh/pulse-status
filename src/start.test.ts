@@ -57,3 +57,11 @@ test("PULSE_STATUS_HIDE_DETAILS=false shows details", async () => {
 test("invalid PULSE_STATUS_HIDE_DETAILS throws", () => {
   assert.throws(() => startFromEnv({ PULSE_STATUS_HIDE_DETAILS: "maybe" }));
 });
+
+test("invalid PULSE_STATUS_CACHE_MS and PULSE_STATUS_UPSTREAM_TIMEOUT_MS throw", () => {
+  assert.throws(() => startFromEnv({ PULSE_STATUS_CACHE_MS: "-1" }), /PULSE_STATUS_CACHE_MS/);
+  assert.throws(
+    () => startFromEnv({ PULSE_STATUS_UPSTREAM_TIMEOUT_MS: "0" }),
+    /PULSE_STATUS_UPSTREAM_TIMEOUT_MS/,
+  );
+});
