@@ -1,11 +1,50 @@
+import { createLogger, type LogLevel, parseLogLevel } from "./log.ts";
+import { createShutdown } from "./shutdown.ts";
 import { startFromEnv } from "./start.ts";
 
+const EXIT_STARTUP = 2;
+const EXIT_RUNTIME = 1;
+
+function fatal(message: string, code: number): never {
+  console.error(`pulse-status: ${message.split("\n").join(" ")}`);
+  return process.exit(code);
+}
+
+// A bad level is reported below by startFromEnv; until then log at info.
+let level: LogLevel = "info";
 try {
-  const { server, port, apiUrl, pollMs } = startFromEnv(process.env);
+  level = parseLogLevel(process.env.PULSE_LOG_LEVEL);
+} catch (err) {
+  fatal(err instanceof Error ? err.message : String(err), EXIT_STARTUP);
+}
+const log = createLogger({
+  level,
+  now: Date.now,
+  stdout: (line) => console.log(line),
+  stderr: (line) => console.error(line),
+});
+
+// Signal handlers come first, before config loading.
+const shutdown = createShutdown({
+  log,
+  exit: (code) => process.exit(code),
+  setTimeout: (fn, ms) => setTimeout(fn, ms),
+  clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout | undefined),
+});
+process.on("SIGINT", () => shutdown.onSignal("SIGINT"));
+process.on("SIGTERM", () => shutdown.onSignal("SIGTERM"));
+
+try {
+  const { server, port, apiUrl, pollMs, metrics, startPolling } = startFromEnv(process.env);
+  server.on("error", (err) => {
+    log("error", "server error", { error: err.message });
+    process.exit(server.listening ? EXIT_RUNTIME : EXIT_STARTUP);
+  });
   server.listen(port, () => {
-    console.log(`pulse-status listening on :${port}, API ${apiUrl}, poll ${pollMs}ms`);
+    const stop = startPolling();
+    shutdown.attach({ server, setShuttingDown: metrics.setShuttingDown, stop });
+    log("info", "pulse-status listening", { port, apiUrl: new URL(apiUrl).origin, pollMs });
   });
 } catch (err) {
-  console.error(`pulse-status: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
+  fatal(err instanceof Error ? err.message : String(err), EXIT_STARTUP);
 }

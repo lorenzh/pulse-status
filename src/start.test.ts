@@ -65,3 +65,13 @@ test("invalid PULSE_STATUS_CACHE_MS and PULSE_STATUS_UPSTREAM_TIMEOUT_MS throw",
     /PULSE_STATUS_UPSTREAM_TIMEOUT_MS/,
   );
 });
+
+for (const [name, env] of [
+  ["PORT", { PORT: "abc" }],
+  ["POLL_MS", { POLL_MS: "abc" }],
+  ["PULSE_LOG_LEVEL", { PULSE_LOG_LEVEL: "loud" }],
+] as const) {
+  test(`${name} that is invalid names the variable`, () => {
+    assert.throws(() => startFromEnv({ ...env }), new RegExp(`^Error: ${name}:`));
+  });
+}

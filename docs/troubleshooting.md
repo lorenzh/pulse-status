@@ -2,7 +2,7 @@
 
 ## The server exits at start
 
-The process prints `pulse-status: <message>` and exits with code 1.
+The process prints `pulse-status: <message>` and exits with code 2.
 
 | Message                                                      | Cause                                                                               | Action                                                      |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
