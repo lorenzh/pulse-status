@@ -47,7 +47,7 @@ For `/api/incidents?status=resolved` the proxy keeps only incidents resolved in 
 
 ### Timeouts
 
-The proxy gives up on pulse-api after `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` (default 4000 ms), headers and body together, and answers `502` `API unreachable`. The page gives up on a refresh after 4000 ms and counts it as a failed refresh.
+The proxy gives up on pulse-api after `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` (default 4000 ms), headers and body together, and answers `502` `API unreachable`. The page gives up on a refresh after the poll interval or 4000 ms, whichever is shorter, and counts it as a failed refresh.
 
 ### Freshness
 
