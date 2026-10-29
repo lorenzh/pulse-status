@@ -1,0 +1,143 @@
+import assert from "node:assert/strict";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { after, test } from "node:test";
+import type { IncidentsResponse } from "@lorenzh/pulse-contract";
+import { createStatusServer, type ServerOptions } from "./server.ts";
+
+const servers: Server[] = [];
+after(() => {
+  for (const s of servers) s.close();
+});
+
+const DAY = 24 * 60 * 60 * 1000;
+const JSON_HEADERS = { "content-type": "application/json" };
+
+async function start(
+  options: Partial<ServerOptions>,
+  upstream: (url: string, signal: AbortSignal | undefined) => Promise<Response>,
+): Promise<string> {
+  const doFetch = (async (input: string, init?: RequestInit) =>
+    upstream(String(input), init?.signal ?? undefined)) as unknown as typeof fetch;
+  const server = createStatusServer({
+    apiUrl: "http://api.test",
+    pollMs: 5000,
+    fetch: doFetch,
+    ...options,
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  servers.push(server);
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+const ok = (body: unknown): Response =>
+  new Response(JSON.stringify(body), { headers: JSON_HEADERS });
+
+test("20 parallel requests share one upstream call; a new one after the TTL", async () => {
+  let clock = 1000;
+  const calls: string[] = [];
+  const base = await start({ cacheMs: 2000, now: () => clock }, async (url) => {
+    calls.push(url);
+    return ok([{ id: "a" }]);
+  });
+  const answers = await Promise.all(
+    Array.from({ length: 20 }, () => fetch(`${base}/api/checks`).then((r) => r.text())),
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(new Set(answers).size, 1);
+  await fetch(`${base}/api/checks`);
+  assert.equal(calls.length, 1);
+  clock += 2000;
+  const res = await fetch(`${base}/api/checks`);
+  assert.equal(calls.length, 2);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+});
+
+test("each path has its own cache entry", async () => {
+  const calls: string[] = [];
+  const base = await start({}, async (url) => {
+    calls.push(url);
+    return ok([]);
+  });
+  await fetch(`${base}/api/checks`);
+  await fetch(`${base}/api/uptime`);
+  assert.equal(calls.length, 2);
+});
+
+test("cacheMs 0 turns the cache off", async () => {
+  let calls = 0;
+  const base = await start({ cacheMs: 0 }, async () => {
+    calls++;
+    return ok([]);
+  });
+  await fetch(`${base}/api/checks`);
+  await fetch(`${base}/api/checks`);
+  assert.equal(calls, 2);
+});
+
+test("an upstream error is cached for the period only, then retried", async () => {
+  let clock = 0;
+  let calls = 0;
+  let isUp = false;
+  const base = await start({ cacheMs: 2000, now: () => clock }, async () => {
+    calls++;
+    if (!isUp) throw new Error("down");
+    return ok([]);
+  });
+  assert.equal((await fetch(`${base}/api/checks`)).status, 502);
+  assert.equal((await fetch(`${base}/api/checks`)).status, 502);
+  assert.equal(calls, 1);
+  isUp = true;
+  clock = 2000;
+  assert.equal((await fetch(`${base}/api/checks`)).status, 200);
+  assert.equal(calls, 2);
+});
+
+test("resolved incidents: only the last 7 days, newest first", async () => {
+  const now = 100 * DAY;
+  const incident = (id: number, resolvedAt: number) => ({
+    id,
+    checkId: "a",
+    openedAt: 0,
+    resolvedAt,
+    reason: null,
+  });
+  const base = await start({ now: () => now }, async () =>
+    ok([
+      incident(1, now - 8 * DAY),
+      incident(2, now - 2 * DAY),
+      incident(3, now - 1 * DAY),
+      incident(4, now - 7 * DAY),
+    ]),
+  );
+  const body = (await (
+    await fetch(`${base}/api/incidents?status=resolved`)
+  ).json()) as IncidentsResponse;
+  assert.deepEqual(
+    body.map((i) => i.id),
+    [3, 2, 4],
+  );
+});
+
+test("a hanging upstream (headers) is aborted: 502", async () => {
+  const base = await start({ upstreamTimeoutMs: 20 }, () => new Promise<Response>(() => {}));
+  const res = await fetch(`${base}/api/checks`);
+  assert.equal(res.status, 502);
+  assert.deepEqual(await res.json(), { error: "API unreachable" });
+});
+
+test("a hanging upstream body is aborted: 502", async () => {
+  const base = await start({ upstreamTimeoutMs: 20 }, async () => {
+    const stream = new ReadableStream({ start() {} });
+    return new Response(stream, { headers: JSON_HEADERS });
+  });
+  const res = await fetch(`${base}/api/checks`);
+  assert.equal(res.status, 502);
+});
+
+test("invalid cache or timeout settings throw", () => {
+  const make = (o: Partial<ServerOptions>) => () =>
+    createStatusServer({ apiUrl: "https://x.test", pollMs: 1, ...o });
+  assert.throws(make({ cacheMs: -1 }), /PULSE_STATUS_CACHE_MS/);
+  assert.throws(make({ upstreamTimeoutMs: 0 }), /PULSE_STATUS_UPSTREAM_TIMEOUT_MS/);
+});

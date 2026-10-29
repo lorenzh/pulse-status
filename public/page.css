@@ -190,6 +190,16 @@ li {
   color: var(--error);
   border-color: var(--error);
 }
+.summary.status-unknown {
+  background: var(--surface);
+  color: var(--muted);
+  border-style: dashed;
+}
+.updated {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
 .summary.status-none {
   background: var(--surface);
   color: var(--muted);

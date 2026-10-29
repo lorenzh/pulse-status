@@ -7,6 +7,8 @@ The process prints `pulse-status: <message>` and exits with code 1.
 | Message                                                      | Cause                                                                               | Action                                                      |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | `PULSE_STATUS_HIDE_DETAILS: must be true, false, 1 or 0`     | The value is something else (for example `yes`)                                     | Use `true`, `false`, `1`, `0` or leave it empty             |
+| `PULSE_STATUS_CACHE_MS: must be an integer >= 0`             | The value is negative or not an integer                                             | Use whole milliseconds, `0` turns the cache off             |
+| `PULSE_STATUS_UPSTREAM_TIMEOUT_MS: must be an integer >= 1`  | The value is zero, negative or not an integer                                       | Use whole milliseconds                                      |
 | `PULSE_STATUS_NAME must be 1 to 60 characters`               | The name is longer than 60 characters                                               | Shorten it. An empty value counts as not set                |
 | `theme file <file>: cannot read: <reason>`                   | The path is wrong or the file is not readable                                       | Fix the path. In Docker, mount the file                     |
 | `theme file <file>: invalid JSON: <reason>`                  | The theme file is not valid JSON                                                    | Fix the JSON                                                |
@@ -28,6 +30,10 @@ The banner text is `Cannot reach the API: <reason>`.
 - `checks: expected an array` or `checks[<n>]: malformed entry` (also `incidents`, `maintenance`): the API answered with a different shape. Check that pulse-api and this page use compatible versions of [pulse-contract](https://github.com/lorenzh/pulse-contract).
 
 Direct test of the proxy: `curl -i http://localhost:8080/api/checks`. A `502` with `{"error":"API unreachable"}` means the status server could not reach the API.
+
+## The page says "Status may be outdated" or "Status unavailable"
+
+The last refresh failed or timed out (4 s). `Status may be outdated` keeps the last data and shows when it was updated (`Last updated ... · API unreachable`). `Status unavailable` means the first refresh failed, so there is no data yet. Follow the steps above. The proxy retries pulse-api at most once per `PULSE_STATUS_CACHE_MS`, so a recovery shows within about one cache period plus `POLL_MS`.
 
 ## The page is stale
 

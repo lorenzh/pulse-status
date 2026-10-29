@@ -39,4 +39,24 @@ The page loads `/api/checks`, `/api/incidents?status=open`, `/api/maintenance`, 
 
 If the checks, open incidents or maintenance request fails, or an answer does not have the expected shape, the page shows an error banner `Cannot reach the API: <reason>` and keeps the last data it received. The banner goes away at the next successful refresh.
 
+### Caching
+
+The proxy keeps the final answer (after allow-list, redaction and the 7-day window) per path and query for `PULSE_STATUS_CACHE_MS` (default 2000 ms), so every viewer gets the same bytes and pulse-api sees about one request per path per period. Concurrent requests share one upstream call. Error answers (`502`, upstream error status) are cached for the same period only. Stale data is never served after a failure: the page gets the error and shows its banner. The cache is per server instance. Answers carry `cache-control: no-store`.
+
+For `/api/incidents?status=resolved` the proxy keeps only incidents resolved in the last 7 days, newest first. The page filters again.
+
+### Timeouts
+
+The proxy gives up on pulse-api after `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` (default 4000 ms), headers and body together, and answers `502` `API unreachable`. The page gives up on a refresh after 4000 ms and counts it as a failed refresh.
+
+### Freshness
+
+Under the summary the page shows `Last updated <time>`; hover or focus the time for the exact value. It also updates every 30 seconds without a request. After a failed refresh the last successful time stays, with `· API unreachable`, and the summary reads `Status may be outdated` instead of `All systems operational`. If the first refresh fails, the checks area shows the error and the summary reads `Status unavailable`.
+
+When every check is `unknown` (or `unknown` and `maintenance`, with nothing up), the summary reads `Status unknown`.
+
+### Hidden tabs
+
+A hidden tab makes no requests and aborts the one in flight. When the tab is visible again the page refreshes at once and resumes the schedule. An error while drawing is logged to the browser console and does not stop the polling.
+
 The response shapes come from [pulse-contract](https://github.com/lorenzh/pulse-contract). The page checks them in the browser and rejects a malformed answer.

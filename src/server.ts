@@ -4,8 +4,8 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { filterApiBody, isAllowedApiPath } from "./api-filter.ts";
-import { escapeHtml } from "./render.ts";
+import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
+import { escapeHtml, RESOLVED_WINDOW_MS } from "./render.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 
 export interface ServerOptions {
@@ -21,6 +21,43 @@ export interface ServerOptions {
   logo?: string;
   /** Hide check targets, keywords and reasons in proxied JSON (PULSE_STATUS_HIDE_DETAILS), default true. */
   hideDetails?: boolean;
+  /** How long a proxied answer, error answers included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
+  cacheMs?: number;
+  /** Time limit for one upstream request, headers and body (PULSE_STATUS_UPSTREAM_TIMEOUT_MS). */
+  upstreamTimeoutMs?: number;
+  /** Clock for the cache and the resolved window. */
+  now?: () => number;
+}
+
+export const DEFAULT_CACHE_MS = 2000;
+export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
+
+interface ProxyAnswer {
+  status: number;
+  body: string;
+}
+
+interface CacheEntry {
+  answer: Promise<ProxyAnswer>;
+  /** Null while the upstream call is in flight. */
+  expiresAt: number | null;
+}
+
+interface ProxyContext {
+  apiBase: string;
+  doFetch: typeof fetch;
+  isHidden: boolean;
+  cacheMs: number;
+  timeoutMs: number;
+  now: () => number;
+  cache: Map<string, CacheEntry>;
+}
+
+function checkMs(name: string, value: number, min: number): number {
+  if (!Number.isFinite(value) || value < min) {
+    throw new Error(`${name}: must be a number >= ${min}`);
+  }
+  return value;
 }
 
 const LOGO_TYPES: Record<string, string> = {
@@ -107,50 +144,86 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 }
 
+function answer(status: number, body: unknown): ProxyAnswer {
+  return { status, body: JSON.stringify(body) };
+}
+
+/** Rejects when the signal aborts, also if the fetch implementation ignores it. */
+function abortion(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    signal.addEventListener("abort", () => reject(new Error("upstream timeout")), { once: true });
+  });
+}
+
+async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
+  const signal = AbortSignal.timeout(ctx.timeoutMs);
+  const timedOut = abortion(signal);
+  timedOut.catch(() => {
+    // Handled by the race below; this only avoids an unhandled rejection after success.
+  });
+  let upstream: Response;
+  let text: string;
+  try {
+    const target = ctx.apiBase + url.pathname.slice("/api".length) + url.search;
+    upstream = await Promise.race([ctx.doFetch(target, { signal }), timedOut]);
+    text = await Promise.race([upstream.text(), timedOut]);
+  } catch {
+    // Any fetch failure or timeout means the upstream API is unreachable; answer 502.
+    return answer(502, { error: "API unreachable" });
+  }
+  if (!upstream.ok) {
+    // The upstream body is never forwarded.
+    return answer(upstream.status, { error: "API error" });
+  }
+  const mediaType = (upstream.headers.get("content-type") ?? "")
+    .split(";")[0]
+    ?.trim()
+    .toLowerCase();
+  if (mediaType !== "application/json") return answer(502, { error: "invalid API response" });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return answer(502, { error: "invalid API response" });
+  }
+  let body = filterApiBody(url.pathname, parsed, ctx.isHidden);
+  if (url.pathname + url.search === "/api/incidents?status=resolved") {
+    body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
+  }
+  return answer(200, body);
+}
+
+function cachedAnswer(key: string, url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
+  if (ctx.cacheMs === 0) return fetchUpstream(url, ctx);
+  const entry = ctx.cache.get(key);
+  if (entry !== undefined && (entry.expiresAt === null || ctx.now() < entry.expiresAt)) {
+    return entry.answer;
+  }
+  const fresh: CacheEntry = {
+    answer: fetchUpstream(url, ctx).finally(() => {
+      fresh.expiresAt = ctx.now() + ctx.cacheMs;
+    }),
+    expiresAt: null,
+  };
+  ctx.cache.set(key, fresh);
+  return fresh.answer;
+}
+
 async function proxyApi(
   res: ServerResponse,
   rawUrl: string,
   url: URL,
-  apiBase: string,
-  doFetch: typeof fetch,
-  isHidden: boolean,
+  ctx: ProxyContext,
 ): Promise<void> {
   // The raw target must equal the parsed one: a bare "?" is not the allow-listed form.
   if (rawUrl !== url.pathname + url.search || !isAllowedApiPath(url.pathname, url.search)) {
     sendJson(res, 404, { error: "not found" });
     return;
   }
-  let upstream: Response;
-  let text: string;
-  try {
-    upstream = await doFetch(apiBase + url.pathname.slice("/api".length) + url.search);
-    text = await upstream.text();
-  } catch {
-    // Any fetch failure means the upstream API is unreachable; answer 502.
-    sendJson(res, 502, { error: "API unreachable" });
-    return;
-  }
-  if (!upstream.ok) {
-    // The upstream body is never forwarded.
-    sendJson(res, upstream.status, { error: "API error" });
-    return;
-  }
-  const mediaType = (upstream.headers.get("content-type") ?? "")
-    .split(";")[0]
-    ?.trim()
-    .toLowerCase();
-  if (mediaType !== "application/json") {
-    sendJson(res, 502, { error: "invalid API response" });
-    return;
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    sendJson(res, 502, { error: "invalid API response" });
-    return;
-  }
-  sendJson(res, 200, filterApiBody(url.pathname, parsed, isHidden));
+  const result = await cachedAnswer(url.pathname + url.search, url, ctx);
+  res
+    .writeHead(result.status, { "content-type": "application/json", "cache-control": "no-store" })
+    .end(result.body);
 }
 
 export function createStatusServer(options: ServerOptions): Server {
@@ -163,9 +236,22 @@ export function createStatusServer(options: ServerOptions): Server {
   const mark = wordmark(name, logo);
   const isHidden = options.hideDetails ?? true;
   const csp = contentSecurityPolicy(logo?.origin);
-  const doFetch = options.fetch ?? fetch;
+  const ctx: ProxyContext = {
+    apiBase: "",
+    doFetch: options.fetch ?? fetch,
+    isHidden,
+    cacheMs: checkMs("PULSE_STATUS_CACHE_MS", options.cacheMs ?? DEFAULT_CACHE_MS, 0),
+    timeoutMs: checkMs(
+      "PULSE_STATUS_UPSTREAM_TIMEOUT_MS",
+      options.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS,
+      1,
+    ),
+    now: options.now ?? Date.now,
+    cache: new Map(),
+  };
   let apiBase = options.apiUrl;
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
+  ctx.apiBase = apiBase;
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -234,7 +320,7 @@ export function createStatusServer(options: ServerOptions): Server {
         return;
       }
       if (url.pathname.startsWith("/api/")) {
-        await proxyApi(res, req.url ?? "", url, apiBase, doFetch, isHidden);
+        await proxyApi(res, req.url ?? "", url, ctx);
         return;
       }
       res
