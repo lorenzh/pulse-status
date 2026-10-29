@@ -181,3 +181,68 @@ test("a wire version mismatch of the api reaches the page with the original head
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("x-pulse-contract"), "99");
 });
+
+const ERROR_ANSWERS: {
+  name: string;
+  wire: string;
+  make: (h: Record<string, string>) => Response;
+  status: number;
+  error: string;
+}[] = [
+  {
+    name: "http error",
+    wire: "99",
+    make: (h) => new Response('{"secret":1}', { status: 503, headers: { ...JSON_HEADERS, ...h } }),
+    status: 503,
+    error: "API error",
+  },
+  {
+    name: "invalid json",
+    wire: "1",
+    make: (h) => new Response("{nope", { headers: { ...JSON_HEADERS, ...h } }),
+    status: 502,
+    error: "invalid API response",
+  },
+  {
+    name: "too large body",
+    wire: "1",
+    make: (h) =>
+      new Response(`[${" ".repeat(5 * 1024 * 1024 + 1)}]`, { headers: { ...JSON_HEADERS, ...h } }),
+    status: 502,
+    error: "invalid API response",
+  },
+  {
+    name: "wrong media type",
+    wire: "1",
+    make: (h) => new Response("[]", { headers: { "content-type": "text/plain", ...h } }),
+    status: 502,
+    error: "invalid API response",
+  },
+];
+
+for (const c of ERROR_ANSWERS) {
+  test(`the proxy forwards the wire header on a ${c.name} answer`, async () => {
+    const base = await start({}, async () => c.make({ "x-pulse-contract": c.wire }));
+    const res = await fetch(`${base}/api/checks`);
+    assert.equal(res.status, c.status);
+    assert.deepEqual(await res.json(), { error: c.error });
+    assert.equal(res.headers.get("x-pulse-contract"), c.wire);
+  });
+
+  test(`the proxy sends no wire header on a ${c.name} answer without one`, async () => {
+    const base = await start({}, async () => c.make({}));
+    const res = await fetch(`${base}/api/checks`);
+    assert.equal(res.status, c.status);
+    assert.equal(res.headers.get("x-pulse-contract"), null);
+  });
+}
+
+test("the proxy sends no wire header when the api is unreachable", async () => {
+  const base = await start({}, async () => {
+    throw new Error("down");
+  });
+  const res = await fetch(`${base}/api/checks`);
+  assert.equal(res.status, 502);
+  assert.deepEqual(await res.json(), { error: "API unreachable" });
+  assert.equal(res.headers.get("x-pulse-contract"), null);
+});
