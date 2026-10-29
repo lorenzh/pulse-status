@@ -242,3 +242,13 @@ test("resolved: a failed or malformed request gives an empty list and no error",
     assert.equal(updates[0]!.updatedAt, 5);
   }
 });
+
+test("a keyword is passed through and a non-string keyword is malformed", async () => {
+  const checks = [{ id: "a", name: "A", state: "up", keyword: "ok" }];
+  const good = malformedRun(checks);
+  await good.poller.refresh();
+  assert.deepEqual(good.updates[0]?.checks, checks);
+  const bad = malformedRun([{ id: "a", name: "A", state: "up", keyword: 5 }]);
+  await bad.poller.refresh();
+  assert.match(bad.updates[0]?.error ?? "", /checks\[0\]: malformed entry/);
+});

@@ -435,6 +435,34 @@ test("down shows no latency", () => {
   assert.match(html, /1\/1 locations down/);
 });
 
+test("keyword is shown next to the latency and escaped", () => {
+  const html = renderChecks([
+    { ...base, keyword: "<b>ok</b>", locations: [loc("a", "up", false, 2, 42)] },
+  ]);
+  assert.match(
+    html,
+    /<span class="latency">42 ms<\/span><span class="keyword">keyword &quot;&lt;b&gt;ok&lt;\/b&gt;&quot;<\/span>/,
+  );
+});
+
+test("down check shows keyword and reason", () => {
+  const html = renderChecks([
+    {
+      ...base,
+      state: "down",
+      keyword: "ok",
+      lastReason: 'keyword "ok" not found',
+      locations: [loc("a", "down", false, 2, 42)],
+    },
+  ]);
+  assert.match(html, /<span class="keyword">keyword &quot;ok&quot;<\/span>/);
+  assert.match(html, /<span class="reason">keyword &quot;ok&quot; not found<\/span>/);
+});
+
+test("no keyword renders no keyword span", () => {
+  assert.doesNotMatch(renderChecks([base]), /keyword/);
+});
+
 function uptimeEntry(values: (number | null)[], total: number | null) {
   const days = Array.from({ length: 90 }, (_, i) => ({
     date: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`,

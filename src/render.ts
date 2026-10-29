@@ -157,6 +157,8 @@ function renderMeta(check: CheckWithState): string {
   const days = check.type === "tls" ? check.certDaysLeft : null;
   const reasonIsDays = days != null && check.state === "down" && Boolean(check.lastReason);
   const parts = [renderLatency(check)];
+  if (check.type !== "tls" && check.keyword)
+    parts.push(span("keyword", `keyword "${check.keyword}"`));
   if (days != null) {
     parts.push(span("cert-days", reasonIsDays ? (check.lastReason ?? "") : `${days} days left`));
   }
