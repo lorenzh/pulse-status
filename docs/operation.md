@@ -23,12 +23,12 @@ pulse-status keeps no state on disk. It has no database and no files to back up.
 
 `GET /metrics` returns Prometheus text. Counters reset on restart.
 
-| Series                                             | Type    | Meaning                                      |
-| -------------------------------------------------- | ------- | -------------------------------------------- |
-| `pulse_up`                                         | gauge   | `1` when ready, else `0`                     |
-| `pulse_status_polls_total{outcome}`                | counter | API polls, `outcome` is `ok` or `error`      |
-| `pulse_status_last_poll_success_timestamp_seconds` | gauge   | Unix time of the last good poll, `0` if none |
-| `pulse_status_http_requests_total{code}`           | counter | Responses by HTTP status code                |
+| Series                                             | Type    | Meaning                                             |
+| -------------------------------------------------- | ------- | --------------------------------------------------- |
+| `pulse_up`                                         | gauge   | `1` when ready, else `0`                            |
+| `pulse_status_polls_total{outcome}`                | counter | API polls, `outcome` is `ok`, `error` or `mismatch` |
+| `pulse_status_last_poll_success_timestamp_seconds` | gauge   | Unix time of the last good poll, `0` if none        |
+| `pulse_status_http_requests_total{code}`           | counter | Responses by HTTP status code                       |
 
 Both paths are not page content, bypass the cache and the API proxy, and carry no check ids, URLs or keywords. They are unauthenticated: do not publish the port to the internet if that matters to you.
 
@@ -64,7 +64,7 @@ The page and its `/api/*` proxy are meant to be reachable by anyone who can reac
 
 The page loads `/api/checks`, `/api/incidents?status=open`, `/api/maintenance`, `/api/incidents?status=resolved` and `/api/uptime` through the [proxy](theming.md#the-api-proxy) every `POLL_MS`.
 
-If the checks, open incidents or maintenance request fails, or an answer does not have the expected shape, the page shows an error banner `Cannot reach the API: <reason>` and keeps the last data it received. The banner goes away at the next successful refresh.
+If the checks, open incidents or maintenance request fails, or an answer does not have the expected shape, the page shows an error banner with a fixed sentence (`Cannot reach the API. Showing the last known status.`, `The API sent an unexpected answer.` or `The status page and the API versions do not match.`; the reason goes only to the browser console) and keeps the last data it received. The banner goes away at the next successful refresh.
 
 ### Caching
 
