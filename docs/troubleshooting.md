@@ -6,6 +6,7 @@ The process prints `pulse-status: <message>` and exits with code 1.
 
 | Message                                                      | Cause                                                                               | Action                                                      |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `PULSE_STATUS_HIDE_DETAILS: must be true, false, 1 or 0`     | The value is something else (for example `yes`)                                     | Use `true`, `false`, `1`, `0` or leave it empty             |
 | `PULSE_STATUS_NAME must be 1 to 60 characters`               | The name is longer than 60 characters                                               | Shorten it. An empty value counts as not set                |
 | `theme file <file>: cannot read: <reason>`                   | The path is wrong or the file is not readable                                       | Fix the path. In Docker, mount the file                     |
 | `theme file <file>: invalid JSON: <reason>`                  | The theme file is not valid JSON                                                    | Fix the JSON                                                |

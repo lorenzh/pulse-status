@@ -69,7 +69,7 @@ test("proxies a TLS check from the API", async () => {
     else res.end("[]");
   });
   const apiUrl = await listen(tlsApi);
-  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1, hideDetails: false }));
   const r = await fetch(base + "/api/checks");
   assert.deepEqual(await r.json(), [tlsCheck]);
 });
@@ -101,7 +101,7 @@ test("defaults: name pulse, losoft theme, theme.css linked first", async () => {
   const page = await (await fetch(base + "/")).text();
   assert.match(page, /<title>pulse status<\/title>/);
   assert.match(page, /<span class="wordmark">pulse<span class="cursor"/);
-  assert.ok(page.indexOf('href="/theme.css"') < page.indexOf("<style>"));
+  assert.ok(page.indexOf('href="/theme.css"') < page.indexOf('href="/page.css"'));
   const css = await fetch(base + "/theme.css");
   assert.match(css.headers.get("content-type") ?? "", /text\/css/);
   const text = await css.text();
@@ -207,5 +207,7 @@ test("no external URL in the served page or CSS", async () => {
   const css = await (await fetch(base + "/theme.css")).text();
   assert.doesNotMatch(page, /https?:\/\//);
   assert.doesNotMatch(css, /https?:\/\//);
-  assert.match(page, /url\("\/fonts\/space-grotesk\.woff2"\)/);
+  const pageCss = await (await fetch(base + "/page.css")).text();
+  assert.doesNotMatch(pageCss, /https?:\/\//);
+  assert.match(pageCss, /url\("\/fonts\/space-grotesk\.woff2"\)/);
 });

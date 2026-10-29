@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ALLOWED_API_PATHS } from "./api-filter.ts";
 import { createPoller, type PollerState } from "./poller.ts";
 
 function fakeTimer() {
@@ -251,4 +252,22 @@ test("a keyword is passed through and a non-string keyword is malformed", async 
   const bad = malformedRun([{ id: "a", name: "A", state: "up", keyword: 5 }]);
   await bad.poller.refresh();
   assert.match(bad.updates[0]?.error ?? "", /checks\[0\]: malformed entry/);
+});
+
+test("poller requests only allow-listed API paths", async () => {
+  const requested: string[] = [];
+  const poller = createPoller({
+    fetch: async (input) => {
+      requested.push(String(input));
+      return new Response("[]");
+    },
+    timer: { setTimeout: () => 0, clearTimeout: () => undefined },
+    now: () => 0,
+    pollMs: 1,
+    onUpdate: () => undefined,
+  });
+  await poller.refresh();
+  assert.ok(requested.length >= 5);
+  for (const url of requested)
+    assert.ok((ALLOWED_API_PATHS as readonly string[]).includes(url), url);
 });

@@ -107,19 +107,22 @@ The page title is `Acme status`, the wordmark is an `<img class="logo" src="/log
 The page reads pulse-api through this server, so the browser needs no direct access to the API.
 
 - `GET` and `HEAD` are the only methods. Any other method answers `405` with `allow: GET, HEAD`.
-- `/api/<path>?<query>` becomes `GET <PULSE_API_URL>/<path>?<query>`. For example `/api/checks` becomes `GET <PULSE_API_URL>/checks`.
-- The status code, body and `content-type` of the API answer are passed on unchanged. No auth header is added.
+- Only five reads are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open` and `/api/incidents?status=resolved`. Each becomes `GET <PULSE_API_URL>/<path>?<query>`, for example `/api/checks` becomes `GET <PULSE_API_URL>/checks`. Any other path or query answers `404` with `{"error":"not found"}` and does not reach the API. No auth header is added.
+- The JSON is filtered before it is sent, see [What is public](operation.md#what-is-public).
+- If the API answers with an error status, the proxy sends the same status with `{"error":"API error"}`. The API body is not passed on.
+- If the API answer is not valid JSON, the proxy answers `502` with `{"error":"invalid API response"}`.
 - If the API cannot be reached, the proxy answers `502` with `{"error":"API unreachable"}`.
 
 ## Other routes
 
-| Path                                                                  | Answer                                                       |
-| --------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `/` and `/index.html`                                                 | The page, with the title and wordmark filled in              |
-| `/theme.css`                                                          | The merged theme                                             |
-| `/logo`                                                               | The local logo file, only when `PULSE_STATUS_LOGO` is a file |
-| `/fonts/space-grotesk.woff2`, `/fonts/jetbrains-mono.woff2`           | The bundled fonts                                            |
-| `/client.js`, `/render.js`, `/poller.js`, `/theme.js`, `/validate.js` | Browser code                                                 |
-| anything else                                                         | `404` with `{"error":"not found"}`                           |
+| Path                                                                  | Answer                                                                                |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `/` and `/index.html`                                                 | The page, with the title and wordmark filled in                                       |
+| `/theme.css`                                                          | The merged theme                                                                      |
+| `/logo`                                                               | The local logo file, only when `PULSE_STATUS_LOGO` is a file, sent with a sandbox CSP |
+| `/page.css`, `/theme-init.js`                                         | The page style and the theme bootstrap script                                         |
+| `/fonts/space-grotesk.woff2`, `/fonts/jetbrains-mono.woff2`           | The bundled fonts                                                                     |
+| `/client.js`, `/render.js`, `/poller.js`, `/theme.js`, `/validate.js` | Browser code                                                                          |
+| anything else                                                         | `404` with `{"error":"not found"}`                                                    |
 
 An unexpected error while serving answers `500` with an `error` field.

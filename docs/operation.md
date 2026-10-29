@@ -21,6 +21,18 @@ pulse-status keeps no state on disk. It has no database and no files to back up.
 - Times are relative ("3 min ago", "in 2 h") in a `<time datetime>` element. The exact local time shows on hover and keyboard focus.
 - A TLS check (`type: "tls"`) shows `host:port` instead of a URL and a `.cert-days` span with the days left on the certificate (`certificate expires in 5 days` while down, otherwise `N days left`).
 
+## What is public
+
+The page and its `/api/*` proxy are meant to be reachable by anyone who can reach this server. They expose only what the page needs.
+
+- **Five API reads** are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open` and `/api/incidents?status=resolved`. Everything else under `/api/` answers `404` without calling pulse-api. Only `GET` and `HEAD` work.
+- **Always shown:** check name, state, latency, locations down, TLS days left, incident ids and times, maintenance windows with their notes, and the 90-day uptime. Names, incident times and maintenance notes are written by the operator, so they stay public.
+- **URLs are always sanitized:** userinfo (`user:pass@`), query string and fragment are removed from every check URL and from every `http(s)://` URL inside a reason. A check URL that cannot be parsed is left out.
+- **Details are hidden by default** (`PULSE_STATUS_HIDE_DETAILS=true`). Target URLs, hosts, ports, keywords and probe error text can name internal systems, so the proxied JSON then has no `url`, `host`, `port` or `keyword`, and `lastReason` and incident `reason` are `null`. The page shows the check without a target line. This changed with the setting: earlier versions showed these fields. Set `PULSE_STATUS_HIDE_DETAILS=false` to show them again.
+- **Reasons caveat:** with `false`, reasons are shown with their URLs sanitized, but hosts and IP addresses in them stay visible (for example `connect ECONNREFUSED 10.0.0.5:5432`). The sanitizing of URLs inside free text is best effort.
+- **Security headers** are sent on every response: `Content-Security-Policy` (`default-src 'none'`, scripts, styles, fonts and requests only from this origin, images from this origin and `data:`, plus the origin of a remote `PULSE_STATUS_LOGO`; no `unsafe-inline`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY` and `Referrer-Policy: no-referrer`.
+- **Logo sandbox:** `/logo` also sends `Content-Security-Policy: sandbox; default-src 'none'; style-src 'unsafe-inline'`. An SVG logo still renders in the page's `<img>`, but opening `/logo` directly cannot run script in the page origin.
+
 ## Refresh and errors
 
 The page loads `/api/checks`, `/api/incidents?status=open`, `/api/maintenance`, `/api/incidents?status=resolved` and `/api/uptime` through the [proxy](theming.md#the-api-proxy) every `POLL_MS`.

@@ -169,13 +169,20 @@ function renderMeta(check: CheckWithState): string {
   return filled.length === 0 ? "" : `<div class="meta">${filled.join("")}</div>`;
 }
 
+/** Empty when the server hides the target. */
+function targetOf(check: CheckWithState): string {
+  if (check.type !== "tls") return check.url ?? "";
+  if (check.host == null) return "";
+  return check.port == null ? check.host : `${check.host}:${check.port}`;
+}
+
 function renderCheck(check: CheckWithState, entry: UptimeResponse[number] | undefined): string {
-  const targetText = check.type === "tls" ? `${check.host}:${check.port}` : check.url;
+  const targetText = targetOf(check);
   return (
     `<li class="check state-${check.state}">` +
     `<div class="check-head"><span class="state">${check.state}</span>` +
     `<span class="name">${escapeHtml(check.name)}</span></div>` +
-    `<div class="url">${escapeHtml(targetText ?? "")}</div>` +
+    (targetText === "" ? "" : `<div class="url">${escapeHtml(targetText)}</div>`) +
     renderMeta(check) +
     (entry ? renderUptime(entry) : "") +
     `</li>`

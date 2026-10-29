@@ -1,17 +1,18 @@
 # Configuration
 
-pulse-status reads six environment variables, all in `src/main.ts`. It has no config file other than the optional theme file.
+pulse-status reads seven environment variables, all in `src/main.ts`. It has no config file other than the optional theme file.
 
-| Env                  | Default                 | Meaning                                                                      |
-| -------------------- | ----------------------- | ---------------------------------------------------------------------------- |
-| `PORT`               | `8080`                  | Port of the status server                                                    |
-| `PULSE_API_URL`      | `http://localhost:3000` | pulse-api base URL. `/api/*` on this server is proxied to it                 |
-| `POLL_MS`            | `5000`                  | Page refresh interval in milliseconds                                        |
-| `PULSE_STATUS_THEME` | none                    | Path to a JSON theme file, see [theming.md](theming.md#theme-file)           |
-| `PULSE_STATUS_NAME`  | `pulse`                 | Product name, 1 to 60 characters, see [theming.md](theming.md#name-and-logo) |
-| `PULSE_STATUS_LOGO`  | none                    | Logo file or `http(s)://` URL, see [theming.md](theming.md#name-and-logo)    |
+| Env                         | Default                 | Meaning                                                                                                                   |
+| --------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                      | `8080`                  | Port of the status server                                                                                                 |
+| `PULSE_API_URL`             | `http://localhost:3000` | pulse-api base URL. `/api/*` on this server is proxied to it                                                              |
+| `POLL_MS`                   | `5000`                  | Page refresh interval in milliseconds                                                                                     |
+| `PULSE_STATUS_THEME`        | none                    | Path to a JSON theme file, see [theming.md](theming.md#theme-file)                                                        |
+| `PULSE_STATUS_NAME`         | `pulse`                 | Product name, 1 to 60 characters, see [theming.md](theming.md#name-and-logo)                                              |
+| `PULSE_STATUS_LOGO`         | none                    | Logo file or `http(s)://` URL, see [theming.md](theming.md#name-and-logo)                                                 |
+| `PULSE_STATUS_HIDE_DETAILS` | `true`                  | `true`, `false`, `1` or `0`. Hides check targets, keywords and reasons, see [What is public](operation.md#what-is-public) |
 
-An empty `PULSE_STATUS_THEME`, `PULSE_STATUS_NAME` or `PULSE_STATUS_LOGO` counts as not set.
+An empty `PULSE_STATUS_THEME`, `PULSE_STATUS_NAME`, `PULSE_STATUS_LOGO` or `PULSE_STATUS_HIDE_DETAILS` counts as not set. Any other value of `PULSE_STATUS_HIDE_DETAILS` stops the server at start.
 
 `PORT` and `POLL_MS` are converted with `Number()` and are not checked. Use plain numbers.
 
