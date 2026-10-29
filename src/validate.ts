@@ -33,7 +33,8 @@ export function parseChecks(body: unknown): ChecksResponse {
       typeof c.id === "string" &&
       typeof c.name === "string" &&
       typeof c.state === "string" &&
-      CHECK_STATES.includes(c.state),
+      CHECK_STATES.includes(c.state) &&
+      (c.keyword === undefined || typeof c.keyword === "string"),
   );
 }
 
