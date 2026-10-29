@@ -21,6 +21,8 @@ npm start
 
 Then open http://localhost:8080. Set `PULSE_API_URL` if pulse-api is not on `http://localhost:3000`.
 
+Also served: `GET /healthz` (`200 ok` or `503` with a reason) and `GET /metrics` (Prometheus text). Settings: `PULSE_LOG_LEVEL` (default `info`). Exit codes: `0` clean stop, `2` startup error, `1` runtime failure. See [docs/operation.md](docs/operation.md).
+
 ## Docker
 
 ```sh

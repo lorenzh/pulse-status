@@ -1,4 +1,7 @@
 import type { Server } from "node:http";
+import { startApiPoll } from "./api-poll.ts";
+import { type LogLevel, parseLogLevel } from "./log.ts";
+import { createMetrics, type Metrics } from "./metrics.ts";
 import { createStatusServer } from "./server.ts";
 import { parseHideDetails, parseMs } from "./settings.ts";
 
@@ -7,12 +10,18 @@ export interface StartedServer {
   port: number;
   apiUrl: string;
   pollMs: number;
+  logLevel: LogLevel;
+  metrics: Metrics;
+  /** Starts the background API poll behind readiness; returns its stop function. */
+  startPolling: () => () => void;
 }
 
 export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): StartedServer {
-  const port = Number(env.PORT ?? 8080);
-  const apiUrl = env.PULSE_API_URL ?? "http://localhost:3000";
-  const pollMs = Number(env.POLL_MS ?? 5000);
+  const logLevel = parseLogLevel(env.PULSE_LOG_LEVEL);
+  const port = parseMs("PORT", env.PORT, 8080, 0);
+  if (port > 65535) throw new Error("PORT: must be an integer <= 65535");
+  const apiUrl = env.PULSE_API_URL || "http://localhost:3000";
+  const pollMs = parseMs("POLL_MS", env.POLL_MS, 5000, 1);
   const themeFile = env.PULSE_STATUS_THEME || undefined;
   const name = env.PULSE_STATUS_NAME || undefined;
   const logo = env.PULSE_STATUS_LOGO || undefined;
@@ -24,6 +33,7 @@ export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): St
     4000,
     1,
   );
+  const metrics = createMetrics({ now: Date.now, pollMs });
   const server = createStatusServer({
     apiUrl,
     pollMs,
@@ -34,6 +44,17 @@ export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): St
     cacheMs,
     upstreamTimeoutMs,
     fetch: doFetch,
+    metrics,
   });
-  return { server, port, apiUrl, pollMs };
+  const startPolling = (): (() => void) =>
+    startApiPoll({
+      apiUrl,
+      pollMs,
+      timeoutMs: upstreamTimeoutMs,
+      metrics,
+      doFetch: doFetch ?? fetch,
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout | undefined),
+    });
+  return { server, port, apiUrl, pollMs, logLevel, metrics, startPolling };
 }

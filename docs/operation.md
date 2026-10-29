@@ -4,12 +4,33 @@ pulse-status keeps no state on disk. It has no database and no files to back up.
 
 ## Start, stop and upgrade
 
-- The server logs one line at start: `pulse-status listening on :<port>, API <url>, poll <ms>ms`.
-- If a setting is invalid it logs `pulse-status: <message>` to stderr and exits with code 1.
+- The server logs one JSON line at start (`"msg":"pulse-status listening"`).
+- If a setting is invalid it prints one line `pulse-status: <message>` to stderr, without a stack, and exits with code 2.
+- Exit codes: `0` clean stop, `2` configuration or startup error, `1` unexpected runtime failure.
 - It does not log requests.
 - Start pulse-api first. The page still starts without it and shows an error banner until the API answers.
 - To upgrade, stop the server, update the code or image, and start it again. Settings are read only at start, so restart after any change.
-- In Docker, `HEALTHCHECK` calls `GET /` every 30 seconds. It checks this server only, not pulse-api.
+- On `SIGINT` or `SIGTERM` the server stops accepting connections, closes idle ones, stops polling and exits 0. Open requests get 5 seconds; after that the connections are closed, a `warn` line is logged and it still exits 0. Handlers are registered before any setting is read.
+- In Docker, `HEALTHCHECK` fetches `GET /healthz` every 30 seconds.
+
+## Health and metrics
+
+`GET /healthz` returns `200 ok` when the server polled pulse-api successfully within the last `max(3 x POLL_MS, 30 s)`. Otherwise, and while shutting down, it returns `503` with a short reason as `text/plain`. The server polls `GET /checks` on pulse-api every `POLL_MS` for this, whether or not anyone views the page.
+
+`GET /metrics` returns Prometheus text. Counters reset on restart.
+
+| Series                                             | Type    | Meaning                                      |
+| -------------------------------------------------- | ------- | -------------------------------------------- |
+| `pulse_up`                                         | gauge   | `1` when ready, else `0`                     |
+| `pulse_status_polls_total{outcome}`                | counter | API polls, `outcome` is `ok` or `error`      |
+| `pulse_status_last_poll_success_timestamp_seconds` | gauge   | Unix time of the last good poll, `0` if none |
+| `pulse_status_http_requests_total{code}`           | counter | Responses by HTTP status code                |
+
+Both paths are not page content, bypass the cache and the API proxy, and carry no check ids, URLs or keywords. They are unauthenticated: do not publish the port to the internet if that matters to you.
+
+## Log format
+
+Logs are JSON lines: `{"time":"<ISO 8601>","level":"info","msg":"...", ...fields}`. `warn` and `error` go to stderr, the rest to stdout. `PULSE_LOG_LEVEL` (`debug`, `info`, `warn`, `error`; default `info`) sets the minimum level.
 
 ## What the page shows
 

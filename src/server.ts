@@ -6,6 +6,7 @@ import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
+import { createMetrics, type Metrics } from "./metrics.ts";
 import { escapeHtml, RESOLVED_WINDOW_MS } from "./render.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 
@@ -28,6 +29,8 @@ export interface ServerOptions {
   upstreamTimeoutMs?: number;
   /** Clock for the cache and the resolved window. */
   now?: () => number;
+  /** State behind /healthz and /metrics; without it both report not ready. */
+  metrics?: Metrics | undefined;
 }
 
 export const DEFAULT_CACHE_MS = 2000;
@@ -245,6 +248,24 @@ async function proxyApi(
   res.writeHead(result.status, headers).end(result.body);
 }
 
+/** Serves /healthz and /metrics straight from memory; true when the path was one of them. */
+function serveOps(pathname: string, res: ServerResponse, metrics: Metrics): boolean {
+  if (pathname === "/healthz") {
+    const reason = metrics.notReadyReason();
+    res
+      .writeHead(reason === undefined ? 200 : 503, { "content-type": "text/plain" })
+      .end(reason === undefined ? "ok\n" : `${reason}\n`);
+    return true;
+  }
+  if (pathname === "/metrics") {
+    res
+      .writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" })
+      .end(metrics.render());
+    return true;
+  }
+  return false;
+}
+
 export function createStatusServer(options: ServerOptions): Server {
   // Invalid settings throw here, before the server can listen.
   const name = validateName(options.name ?? "pulse");
@@ -272,6 +293,8 @@ export function createStatusServer(options: ServerOptions): Server {
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
   ctx.apiBase = apiBase;
 
+  const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
     res.setHeader("content-security-policy", csp);
@@ -283,6 +306,7 @@ export function createStatusServer(options: ServerOptions): Server {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;
       }
+      if (serveOps(url.pathname, res, metrics)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = (await readFile(publicDir + "index.html", "utf8"))
           .replace("<body>", () => `<body data-poll-ms="${options.pollMs}">`)
@@ -357,6 +381,7 @@ export function createStatusServer(options: ServerOptions): Server {
   };
 
   return createServer((req, res) => {
+    res.on("finish", () => metrics.recordHttp(res.statusCode));
     handle(req, res).catch((err: unknown) => {
       // The error response itself failed (for example headers already sent): drop the socket.
       res.destroy(err instanceof Error ? err : new Error(String(err)));
