@@ -16,6 +16,8 @@ after(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+const byName = (a: string, b: string): number => a.localeCompare(b);
+
 const IP = ["10", "0", "0", "5"].join(".");
 
 const httpCheck = {
@@ -285,5 +287,189 @@ test("a heartbeat check never shows secret, url or host, and hide-details drops 
     assert.equal("period" in (item ?? {}), !isHidden);
     assert.equal("grace" in (item ?? {}), !isHidden);
     assert.equal(item?.lastResultAt, 5);
+  }
+});
+
+const FUTURE = {
+  retries: 3,
+  retryDelayMs: 100,
+  timeoutMs: 500,
+  warnDays: 14,
+  intervalMs: 1000,
+  consecutiveDown: 2,
+  futureField: "never-served",
+  secret: "should-never-appear",
+};
+const upstreamLocation = {
+  location: "eu-secret-name",
+  stale: false,
+  futureField: "never-served",
+  result: {
+    checkId: "x",
+    timestamp: 9,
+    status: "up",
+    statusCode: 200,
+    latencyMs: 12,
+    reason: null,
+    location: "eu-secret-name",
+    attempts: 2,
+    futureField: "never-served",
+  },
+};
+const COMMON_KEYS = [
+  "certDaysLeft",
+  "id",
+  "lastReason",
+  "lastResultAt",
+  "locations",
+  "name",
+  "state",
+  "type",
+].sort(byName);
+const stateFields = {
+  state: "up",
+  lastResultAt: 5,
+  lastReason: "ok",
+  certDaysLeft: 3,
+  locations: [upstreamLocation],
+  ...FUTURE,
+};
+
+interface KeyCase {
+  label: string;
+  check: Record<string, unknown>;
+  hidden: string[];
+  shown: string[];
+}
+const keyCases: KeyCase[] = [
+  {
+    label: "http",
+    check: {
+      id: "h",
+      name: "H",
+      type: "http",
+      url: "https://x.test/p?q=1",
+      latencyObjectiveMs: 300,
+      ...stateFields,
+    },
+    hidden: [...COMMON_KEYS, "latencyObjectiveMs"],
+    shown: [...COMMON_KEYS, "latencyObjectiveMs", "url"],
+  },
+  {
+    label: "keyword http (type absent)",
+    check: {
+      id: "k",
+      name: "K",
+      url: "https://x.test/",
+      keyword: "word",
+      latencyObjectiveMs: 300,
+      ...stateFields,
+    },
+    hidden: [...COMMON_KEYS.filter((k) => k !== "type"), "latencyObjectiveMs"],
+    shown: [...COMMON_KEYS.filter((k) => k !== "type"), "keyword", "latencyObjectiveMs", "url"],
+  },
+  {
+    label: "tls",
+    check: { id: "t", name: "T", type: "tls", host: "db.test", port: 5432, ...stateFields },
+    hidden: COMMON_KEYS,
+    shown: [...COMMON_KEYS, "host", "port"],
+  },
+  {
+    label: "heartbeat",
+    check: {
+      id: "b",
+      name: "B",
+      type: "heartbeat",
+      period: 60_000,
+      grace: 5000,
+      url: "https://never.test/",
+      host: "never",
+      port: 1,
+      keyword: "never",
+      ...stateFields,
+    },
+    hidden: COMMON_KEYS,
+    shown: [...COMMON_KEYS, "grace", "period"],
+  },
+  {
+    label: "unknown type",
+    check: { id: "u", name: "U", type: "quic", url: "https://x.test/", ...stateFields },
+    hidden: COMMON_KEYS,
+    shown: COMMON_KEYS,
+  },
+];
+
+test("checks: the served keys equal the allow-list per type and hide mode", async () => {
+  for (const isHidden of [true, false]) {
+    for (const c of keyCases) {
+      const { base } = await start(
+        { hideDetails: isHidden },
+        { body: JSON.stringify([{ ...c.check, maintenance: { ...maintenance, futureField: 1 } }]) },
+      );
+      const text = await fetch(`${base}/api/checks`).then((r) => r.text());
+      assert.doesNotMatch(text, /never-served|should-never-appear|eu-secret-name/, c.label);
+      const [item] = JSON.parse(text) as Record<string, unknown>[];
+      const expected = [...(isHidden ? c.hidden : c.shown), "maintenance"].sort(byName);
+      assert.deepEqual(
+        Object.keys(item ?? {}).sort(byName),
+        expected,
+        `${c.label} hidden=${isHidden}`,
+      );
+      const [loc] = (item?.locations ?? []) as Record<string, unknown>[];
+      assert.deepEqual(Object.keys(loc ?? {}).sort(byName), ["result", "stale"], c.label);
+      assert.deepEqual(
+        Object.keys((loc?.result ?? {}) as object).sort(byName),
+        ["latencyMs", "reason", "status", "timestamp"],
+        c.label,
+      );
+      assert.deepEqual(
+        Object.keys((item?.maintenance ?? {}) as object).sort(byName),
+        ["checkId", "end", "note", "start"],
+        c.label,
+      );
+    }
+  }
+});
+
+const maintenance = { checkId: "x", start: 1, end: 2, note: "n" };
+
+test("non-object items are dropped from the lists", async () => {
+  const { base } = await start({}, { body: JSON.stringify([1, null, "x", maintenance]) });
+  const served = await fetch(`${base}/api/maintenance`).then((r) => r.json());
+  assert.deepEqual(served, [maintenance]);
+});
+
+test("incidents, maintenance and uptime serve only their allow-listed keys", async () => {
+  const cases: Array<[string, unknown, unknown]> = [
+    [
+      "/api/incidents?status=open",
+      { ...incident, resolvedAt: null, futureField: 1, retries: 2 },
+      { ...incident, reason: null, resolvedAt: null },
+    ],
+    ["/api/maintenance", { ...maintenance, futureField: 1, id: 4 }, maintenance],
+    [
+      "/api/uptime",
+      {
+        checkId: "x",
+        uptime: 99.5,
+        futureField: 1,
+        days: [{ date: "2026-01-01", uptime: 100, results: 7, futureField: 1 }],
+      },
+      { checkId: "x", uptime: 99.5, days: [{ date: "2026-01-01", uptime: 100 }] },
+    ],
+  ];
+  for (const isHidden of [true, false]) {
+    for (const [path, item, hiddenExpected] of cases) {
+      const { base } = await start({ hideDetails: isHidden }, { body: JSON.stringify([item]) });
+      const served = (await fetch(base + path).then((r) => r.json())) as Record<string, unknown>[];
+      assert.equal(served.length, 1, path);
+      const keys = Object.keys(served[0] ?? {}).sort(byName);
+      assert.deepEqual(
+        keys,
+        Object.keys(hiddenExpected as object).sort(byName),
+        `${path} ${isHidden}`,
+      );
+      assert.doesNotMatch(JSON.stringify(served), /futureField|retries/);
+    }
   }
 });

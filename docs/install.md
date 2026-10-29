@@ -21,7 +21,7 @@ Open http://localhost:8080 (the default `PORT`).
 
 ## With Docker
 
-The image is built from `Dockerfile` (multi-stage, `node:24-alpine`). It holds the production dependencies (including the two bundled fonts), `src` without tests, and `public`. It runs as the non-root `node` user, exposes port `8080` and has a `HEALTHCHECK` on `GET /`.
+The image is built from `Dockerfile` (multi-stage, `node:24-alpine`). It holds the production dependencies (including the two bundled fonts), `src` without tests, and `public`. It runs as the non-root `node` user, exposes port `8080` and has a `HEALTHCHECK` on `GET /healthz` (liveness; use `GET /readyz` for traffic readiness).
 
 ```sh
 docker build --tag pulse-status:local .

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, test } from "node:test";
 import type { ChecksResponse } from "@lorenzh/pulse-contract";
 import { startFromEnv } from "./start.ts";
@@ -32,7 +35,7 @@ async function fetchChecks(hideValue: string | undefined): Promise<string> {
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([check]));
   });
   const apiUrl = await listen(upstream);
-  const env: NodeJS.ProcessEnv = { PULSE_API_URL: apiUrl, POLL_MS: "1" };
+  const env: NodeJS.ProcessEnv = { PULSE_API_URL: apiUrl, POLL_MS: "1000" };
   if (hideValue !== undefined) env.PULSE_STATUS_HIDE_DETAILS = hideValue;
   const started = startFromEnv(env);
   const base = await listen(started.server);
@@ -64,6 +67,34 @@ test("invalid PULSE_STATUS_CACHE_MS and PULSE_STATUS_UPSTREAM_TIMEOUT_MS throw",
     () => startFromEnv({ PULSE_STATUS_UPSTREAM_TIMEOUT_MS: "0" }),
     /PULSE_STATUS_UPSTREAM_TIMEOUT_MS/,
   );
+});
+
+test("POLL_MS below 1000 fails startup, 1000 is accepted", () => {
+  assert.throws(
+    () => startFromEnv({ POLL_MS: "999" }),
+    /^Error: POLL_MS: must be an integer >= 1000$/,
+  );
+  assert.throws(() => startFromEnv({ POLL_MS: "1" }), /POLL_MS/);
+  assert.equal(startFromEnv({ POLL_MS: "1000" }).pollMs, 1000);
+});
+
+test("PULSE_STATUS_LOGO over http fails startup, https is accepted", () => {
+  assert.throws(
+    () => startFromEnv({ PULSE_STATUS_LOGO: ["http:", "//x.test/logo.png"].join("") }),
+    /PULSE_STATUS_LOGO: URL must use https/,
+  );
+  assert.ok(startFromEnv({ PULSE_STATUS_LOGO: "https://x.test/logo.png" }).server);
+});
+
+test("an unbalanced font quote in the theme file fails startup", () => {
+  const dir = mkdtempSync(join(tmpdir(), "status-start-"));
+  try {
+    const file = join(dir, "theme.json");
+    writeFileSync(file, JSON.stringify({ "font-sans": '"Foo' }));
+    assert.throws(() => startFromEnv({ PULSE_STATUS_THEME: file }), /font-sans/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 for (const [name, env] of [

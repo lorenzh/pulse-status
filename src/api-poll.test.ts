@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { startApiPoll } from "./api-poll.ts";
 import { createMetrics } from "./metrics.ts";
 
@@ -52,4 +53,33 @@ test("a failing fetch counts as an error", async () => {
   stop();
   assert.match(metrics.render(), /outcome="error"\} 1/);
   assert.notEqual(metrics.notReadyReason(), undefined);
+});
+
+async function pollWithHeader(headers: Record<string, string>) {
+  const metrics = createMetrics({ now: () => 0, pollMs: 5000 });
+  const stop = startApiPoll({
+    apiUrl: "http://api.test",
+    pollMs: 5000,
+    timeoutMs: 100,
+    metrics,
+    doFetch: async () => new Response("[]", { status: 200, headers }),
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+  });
+  await new Promise((r) => setImmediate(r));
+  stop();
+  return metrics;
+}
+
+test("a mismatching wire version header with 200 fails readiness with that reason", async () => {
+  const metrics = await pollWithHeader({ [WIRE_VERSION_HEADER]: String(WIRE_VERSION + 1) });
+  assert.equal(metrics.notReadyReason(), "API version mismatch");
+  assert.match(metrics.render(), /outcome="mismatch"\} 1/);
+});
+
+test("a matching or absent wire version header passes readiness", async () => {
+  const matching = await pollWithHeader({ [WIRE_VERSION_HEADER]: String(WIRE_VERSION) });
+  assert.equal(matching.notReadyReason(), undefined);
+  const absent = await pollWithHeader({});
+  assert.equal(absent.notReadyReason(), undefined);
 });

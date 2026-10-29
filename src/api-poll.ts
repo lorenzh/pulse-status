@@ -1,3 +1,4 @@
+import { checkWireVersion, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import type { Metrics } from "./metrics.ts";
 
 export interface ApiPollDeps {
@@ -24,7 +25,11 @@ export function startApiPoll(deps: ApiPollDeps): () => void {
     try {
       const res = await deps.doFetch(`${base}/checks`, { signal: abort.signal });
       await res.arrayBuffer();
-      deps.metrics.recordPoll(res.ok ? "ok" : "error");
+      // An absent header is accepted, as in the page poller.
+      const isMismatch =
+        checkWireVersion(res.headers.get(WIRE_VERSION_HEADER)).status === "mismatch";
+      if (!res.ok) deps.metrics.recordPoll("error");
+      else deps.metrics.recordPoll(isMismatch ? "mismatch" : "ok");
     } catch {
       // An unreachable API is counted and shows in readiness; nothing else to do.
       deps.metrics.recordPoll("error");

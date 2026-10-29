@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
+import { createMetrics } from "./metrics.ts";
+import { createStatusServer } from "./server.ts";
 import { createShutdown } from "./shutdown.ts";
 
 function fakes() {
@@ -55,4 +57,23 @@ test("exits 0 with a warning when the bound is hit", async () => {
   assert.deepEqual(f.exits, [0]);
   assert.ok(f.logs.some((m) => /timed out/.test(m)));
   await res.body?.cancel().catch(() => {});
+});
+
+test("while shutting down /healthz stays 200 and /readyz is 503", async () => {
+  const f = fakes();
+  const metrics = createMetrics({ now: Date.now, pollMs: 5000 });
+  metrics.recordPoll("ok");
+  const server = createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, metrics });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const addr = server.address();
+  const base = `http://127.0.0.1:${typeof addr === "object" && addr !== null ? addr.port : 0}`;
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
+  const s = createShutdown(f.deps);
+  // Keep the listener open: the signal flips readiness, the listener closes later.
+  const held = createServer();
+  s.attach({ server: held, setShuttingDown: metrics.setShuttingDown, stop: () => {} });
+  s.onSignal("SIGTERM");
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  assert.equal((await fetch(`${base}/readyz`)).status, 503);
+  await new Promise<void>((r) => server.close(() => r()));
 });

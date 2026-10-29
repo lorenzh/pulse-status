@@ -1,9 +1,12 @@
 import type { Server } from "node:http";
 import { startApiPoll } from "./api-poll.ts";
-import { type LogLevel, parseLogLevel } from "./log.ts";
+import { type Logger, type LogLevel, parseLogLevel } from "./log.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { createStatusServer } from "./server.ts";
 import { parseHideDetails, parseMs } from "./settings.ts";
+
+/** A shorter interval would load the API without a visible benefit. */
+export const MIN_POLL_MS = 1000;
 
 export interface StartedServer {
   server: Server;
@@ -16,14 +19,18 @@ export interface StartedServer {
   startPolling: () => () => void;
 }
 
-export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): StartedServer {
+export function startFromEnv(
+  env: NodeJS.ProcessEnv,
+  doFetch?: typeof fetch,
+  log?: Logger,
+): StartedServer {
   const logLevel = parseLogLevel(env.PULSE_LOG_LEVEL);
   const port = parseMs("PORT", env.PORT, 8080, 0);
   if (port > 65535) throw new Error("PORT: must be an integer <= 65535");
   const apiUrl = env.PULSE_API_URL || "http://localhost:3000";
   // Never echo the value: it may carry credentials.
   if (!URL.canParse(apiUrl)) throw new Error("PULSE_API_URL is not a valid URL");
-  const pollMs = parseMs("POLL_MS", env.POLL_MS, 5000, 1);
+  const pollMs = parseMs("POLL_MS", env.POLL_MS, 5000, MIN_POLL_MS);
   const themeFile = env.PULSE_STATUS_THEME || undefined;
   const name = env.PULSE_STATUS_NAME || undefined;
   const logo = env.PULSE_STATUS_LOGO || undefined;
@@ -47,6 +54,7 @@ export function startFromEnv(env: NodeJS.ProcessEnv, doFetch?: typeof fetch): St
     upstreamTimeoutMs,
     fetch: doFetch,
     metrics,
+    log,
   });
   const startPolling = (): (() => void) =>
     startApiPoll({

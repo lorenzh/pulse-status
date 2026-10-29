@@ -89,6 +89,17 @@ function quietSummary(checks: ChecksResponse): { status: string; text: string } 
   return { status: "success", text: "All systems operational" };
 }
 
+/** Why the last refresh failed; visitors see a fixed sentence per kind, never the detail. */
+export type PollerErrorKind = "unreachable" | "invalid" | "version";
+
+const UPDATED_SUFFIX: Record<PollerErrorKind, string> = {
+  unreachable: " · API unreachable",
+  invalid: " · unexpected API answer",
+  version: " · versions do not match",
+};
+
+const VERSION_SUMMARY = "Status unavailable: versions do not match";
+
 /**
  * One sentence, worst state wins. Maintenance does not count as a problem; unknown checks never
  * count as healthy. After a failed poll the page never says "operational": the data may be stale.
@@ -97,11 +108,12 @@ function quietSummary(checks: ChecksResponse): { status: string; text: string } 
 export function renderSummary(
   checks: ChecksResponse,
   incidents: IncidentsResponse,
-  error: string | null = null,
+  error: PollerErrorKind | null = null,
   hasData = true,
 ): string {
   if (!hasData) {
-    return error === null ? "" : summaryLine("warning", "Status unavailable");
+    if (error === null) return "";
+    return summaryLine("warning", error === "version" ? VERSION_SUMMARY : "Status unavailable");
   }
   if (checks.length === 0) {
     return '<p class="summary status-none" role="status">No checks configured</p>';
@@ -117,7 +129,7 @@ export function renderSummary(
     text = `${countWord(degraded, "check")} degraded`;
   } else if (error !== null) {
     status = "warning";
-    text = "Status may be outdated";
+    text = error === "version" ? VERSION_SUMMARY : "Status may be outdated";
   }
   const open = incidents.filter((incident) => incident.resolvedAt === null).length;
   if (open > 0) text += ` · ${countWord(open, "incident")} open`;
@@ -127,17 +139,17 @@ export function renderSummary(
 /** Time of the last successful poll; after an error the last good time stays visible. */
 export function renderUpdated(
   updatedAt: number | null,
-  error: string | null,
+  error: PollerErrorKind | null,
   env: TimeEnv,
 ): string {
   if (updatedAt === null) return "";
-  const suffix = error === null ? "" : " · API unreachable";
+  const suffix = error === null ? "" : UPDATED_SUFFIX[error];
   return `<p class="updated">Last updated ${renderTime(updatedAt, env)}${suffix}</p>`;
 }
 
 /** Shown in place of the checks when the first poll failed. */
-export function renderUnavailable(error: string): string {
-  return `<p class="empty">${escapeHtml(error)}</p>`;
+export function renderUnavailable(error: PollerErrorKind): string {
+  return `<p class="empty">${escapeHtml(bannerText(error, false))}</p>`;
 }
 
 export function renderLocations(check: Pick<CheckWithState, "locations">): string {
@@ -319,9 +331,24 @@ export function renderResolvedIncidents(
   return `<ul class="incidents resolved">${items.join("")}</ul>${more}`;
 }
 
-export function renderBanner(error: string | null): string {
+function bannerText(error: PollerErrorKind, hasData: boolean): string {
+  switch (error) {
+    case "unreachable":
+      return hasData
+        ? "Cannot reach the API. Showing the last known status."
+        : "Cannot reach the API.";
+    case "invalid":
+      return "The API sent an unexpected answer.";
+    case "version":
+      return "The status page and the API versions do not match.";
+    default:
+      return error satisfies never;
+  }
+}
+
+export function renderBanner(error: PollerErrorKind | null, hasData = false): string {
   if (error === null) return "";
-  return `<div class="banner error" role="alert">${escapeHtml(error)}</div>`;
+  return `<div class="banner error" role="alert">${escapeHtml(bannerText(error, hasData))}</div>`;
 }
 
 function renderExactSpan(window: MaintenanceResponse[number], env: TimeEnv): string {

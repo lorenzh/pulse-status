@@ -6,6 +6,7 @@ import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
+import type { Logger } from "./log.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { escapeHtml, RESOLVED_WINDOW_MS } from "./render.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
@@ -19,7 +20,7 @@ export interface ServerOptions {
   themeFile?: string | undefined;
   /** Product name (PULSE_STATUS_NAME), default "pulse"; also the whole page title when set. */
   name?: string | undefined;
-  /** Logo: local file path (svg, png, jpg, webp) or http(s) URL (PULSE_STATUS_LOGO). */
+  /** Logo: local file path (svg, png, jpg, webp) or https URL (PULSE_STATUS_LOGO). */
   logo?: string | undefined;
   /** Hide check targets, keywords and reasons in proxied JSON (PULSE_STATUS_HIDE_DETAILS), default true. */
   hideDetails?: boolean | undefined;
@@ -29,12 +30,16 @@ export interface ServerOptions {
   upstreamTimeoutMs?: number;
   /** Clock for the cache and the resolved window. */
   now?: () => number;
-  /** State behind /healthz and /metrics; without it both report not ready. */
+  /** State behind /readyz and /metrics; without it both report not ready. */
   metrics?: Metrics | undefined;
+  /** Receives error detail that must not reach the client; default: discard. */
+  log?: Logger | undefined;
 }
 
 export const DEFAULT_CACHE_MS = 2000;
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
+/** The browser waits this much longer than the proxy, so the proxy's 502 arrives first. */
+export const BROWSER_TIMEOUT_MARGIN_MS = 2000;
 
 interface ProxyAnswer {
   status: number;
@@ -93,7 +98,8 @@ interface Logo {
 
 function resolveLogo(logo: string | undefined): Logo | null {
   if (logo === undefined || logo === "") return null;
-  if (/^https?:\/\//i.test(logo)) {
+  if (/^http:\/\//i.test(logo)) throw new Error("PULSE_STATUS_LOGO: URL must use https");
+  if (/^https:\/\//i.test(logo)) {
     try {
       new URL(logo);
     } catch {
@@ -123,6 +129,7 @@ const tsModules: Record<string, string> = {
   "/render.js": "render.ts",
   "/poller.js": "poller.ts",
   "/theme.js": "theme.ts",
+  "/sections.js": "sections.ts",
 };
 
 // Runtime files of the contract package, served to the browser under /pulse-contract/.
@@ -248,9 +255,16 @@ async function proxyApi(
   res.writeHead(result.status, headers).end(result.body);
 }
 
-/** Serves /healthz and /metrics straight from memory; true when the path was one of them. */
+/**
+ * Serves /healthz (liveness), /readyz (readiness) and /metrics straight from memory; true when
+ * the path was one of them. Liveness never looks at the API or at shutdown.
+ */
 function serveOps(pathname: string, res: ServerResponse, metrics: Metrics): boolean {
   if (pathname === "/healthz") {
+    res.writeHead(200, { "content-type": "text/plain" }).end("ok\n");
+    return true;
+  }
+  if (pathname === "/readyz") {
     const reason = metrics.notReadyReason();
     res
       .writeHead(reason === undefined ? 200 : 503, { "content-type": "text/plain" })
@@ -264,6 +278,18 @@ function serveOps(pathname: string, res: ServerResponse, metrics: Metrics): bool
     return true;
   }
   return false;
+}
+
+/** The detail stays in the log; the client only gets a generic 500. */
+function logFailure(log: Logger, path: string, err: unknown): void {
+  const fields: Record<string, unknown> = { path };
+  if (err instanceof Error) {
+    fields.error = err.message;
+    fields.stack = err.stack;
+  } else {
+    fields.error = String(err);
+  }
+  log("error", "request failed", fields);
 }
 
 export function createStatusServer(options: ServerOptions): Server {
@@ -293,6 +319,7 @@ export function createStatusServer(options: ServerOptions): Server {
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
   ctx.apiBase = apiBase;
 
+  const log: Logger = options.log ?? (() => {});
   const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -309,7 +336,11 @@ export function createStatusServer(options: ServerOptions): Server {
       if (serveOps(url.pathname, res, metrics)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = (await readFile(publicDir + "index.html", "utf8"))
-          .replace("<body>", () => `<body data-poll-ms="${options.pollMs}">`)
+          .replace(
+            "<body>",
+            () =>
+              `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}">`,
+          )
           .replaceAll("{{title}}", () => escapeHtml(title))
           .replace("{{wordmark}}", () => mark);
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
@@ -374,9 +405,10 @@ export function createStatusServer(options: ServerOptions): Server {
         .writeHead(404, { "content-type": "application/json" })
         .end(JSON.stringify({ error: "not found" }));
     } catch (err) {
+      logFailure(log, url.pathname, err);
       res
         .writeHead(500, { "content-type": "application/json" })
-        .end(JSON.stringify({ error: String(err) }));
+        .end(JSON.stringify({ error: "internal error" }));
     }
   };
 
