@@ -40,6 +40,6 @@ Settings, white label and theming, operation and troubleshooting are in [docs/in
 
 Licensed under the MIT licence, see [LICENSE](LICENSE).
 
-The `/api/*` proxy answers `502 {"error":"invalid API response"}` when the upstream answer is not `application/json` or its body is not valid JSON.
+The `/api/*` proxy answers `502 {"error":"invalid API response"}` when a successful (2xx) upstream answer is not `application/json` or its body is not valid JSON. A non-2xx upstream answer keeps its status with `{"error":"API error"}`.
 
 The browser validates every API answer with the runtime validators of pulse-contract (`validateChecksResponse`, `validateIncidentsResponse`, `validateMaintenanceResponse`, `validateUptimeResponse`). A malformed checks, open incidents or maintenance answer fails the refresh, and the error names the path (for example `checks[0].url: is required`). A malformed uptime or resolved-incidents answer gives an empty list and is logged. The proxy forwards the `x-pulse-contract` header of pulse-api. The poller compares it with the contract's wire version: a mismatch fails the refresh, an absent header is logged once. The server serves the contract's runtime files under `/pulse-contract/`.

@@ -151,12 +151,15 @@ export function createPoller(options: PollerOptions): Poller {
   /** Optional like uptime: a failed or malformed response yields an empty list. */
   async function getResolved(signal: AbortSignal): Promise<IncidentsResponse> {
     try {
-      const incidents = valid(
-        validateIncidentsResponse(
-          await getJson(`${base}/incidents?status=resolved`, signal),
-          "incidents",
-        ),
+      const result = validateIncidentsResponse(
+        await getJson(`${base}/incidents?status=resolved`, signal),
+        "incidents",
       );
+      if (!result.ok) {
+        log("resolved incidents response is invalid", result.error);
+        return [];
+      }
+      const incidents = result.value;
       const cutoff = options.now() - RESOLVED_WINDOW_MS;
       return incidents
         .filter((i) => i.resolvedAt !== null && i.resolvedAt >= cutoff)

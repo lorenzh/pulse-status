@@ -92,6 +92,13 @@ test("502 when the API is down", async () => {
   assert.deepEqual(await r.json(), { error: "API unreachable" });
 });
 
+test("a malformed upstream URL answers 502 and does not crash the process", async () => {
+  const base = await listen(createStatusServer({ apiUrl: `${"http"}://[`, pollMs: 1 }));
+  const r = await fetch(base + "/api/checks");
+  assert.equal(r.status, 502);
+  assert.deepEqual(await r.json(), { error: "API unreachable" });
+});
+
 async function proxyWith(headers: Record<string, string>, body: string): Promise<Response> {
   const apiUrl = await listen(createServer((_req, res) => res.writeHead(200, headers).end(body)));
   const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
