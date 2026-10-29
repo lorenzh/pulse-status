@@ -23,8 +23,8 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 
 ## Repository boundaries
 
-- `pulse-contract` holds shared types only. It has no runtime code and depends on no other repo.
-- Import contract types with `import type` only. A service never imports another service.
+- `pulse-contract` holds shared types, plain runtime validators and the wire version. It depends on no other repo.
+- Import contract types with `import type`; import its validators and wire version as values. A service never imports another service.
 - Services talk to each other only over HTTP at run time, in the shapes the contract defines.
 - Pin the contract dependency to a full commit SHA on its `main`; update the pin when the spec needs a newer contract.
 - A change that needs a contract change waits for the merged contract change. Never copy contract types into a service.
@@ -100,8 +100,8 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 - `src/render.ts`, `src/poller.ts` and `src/theme.ts` also run in the browser: the server strips
   their types at request time. They import only types, no `node:` modules and no relative runtime
   imports. A new browser module is added to the server's module map (`tsModules` in `src/server.ts`).
-- Known exception: `src/poller.ts` imports `./validate.ts` at run time, and `validate.ts` is not in
-  the module map. The rule above still applies to new code.
+- `src/poller.ts` also imports the contract's runtime validators. The server rewrites that import to
+  `/pulse-contract/index.js` and serves the contract's `dist` files from there.
 - `public/` is plain HTML and JavaScript; Biome does not check HTML and `tsc` does not check `public/`.
 - Every interactive element is reachable by keyboard and has an accessible name. State is never shown by colour alone.
 

@@ -35,7 +35,15 @@ test("serves page, modules, and proxies the API", async () => {
   assert.match(page.headers.get("content-type")!, /text\/html/);
   assert.match(await page.text(), /data-poll-ms="1234"/);
 
-  for (const path of ["/client.js", "/render.js", "/poller.js", "/theme.js", "/validate.js"]) {
+  for (const path of [
+    "/client.js",
+    "/render.js",
+    "/poller.js",
+    "/theme.js",
+    "/pulse-contract/index.js",
+    "/pulse-contract/validate.js",
+    "/pulse-contract/version.js",
+  ]) {
     const r = await fetch(base + path);
     assert.equal(r.status, 200, path);
     assert.match(r.headers.get("content-type")!, /javascript/);
@@ -120,7 +128,7 @@ async function start(options: Partial<Parameters<typeof createStatusServer>[0]> 
 test("browser modules import siblings as .js", async () => {
   const base = await start();
   const poller = await (await fetch(base + "/poller.js")).text();
-  assert.match(poller, /from "\/validate\.js"/);
+  assert.match(poller, /from "\/pulse-contract\/index\.js"/);
   assert.doesNotMatch(poller, /\.ts"/);
 });
 
