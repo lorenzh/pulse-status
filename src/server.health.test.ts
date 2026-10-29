@@ -15,20 +15,51 @@ async function listen(s: Server): Promise<string> {
   return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
 }
 
-test("/healthz is 503 until a poll succeeds, then 200, then 503 when shutting down", async () => {
+test("/readyz is 503 until a poll succeeds, then 200, then 503 when shutting down", async () => {
   const metrics = createMetrics({ now: Date.now, pollMs: 5000 });
   const base = await listen(
     createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, metrics }),
   );
-  const first = await fetch(`${base}/healthz`);
+  const first = await fetch(`${base}/readyz`);
   assert.equal(first.status, 503);
   assert.match(first.headers.get("content-type") ?? "", /text\/plain/);
   metrics.recordPoll("ok");
-  const ok = await fetch(`${base}/healthz`);
+  const ok = await fetch(`${base}/readyz`);
   assert.equal(ok.status, 200);
   assert.equal(await ok.text(), "ok\n");
   metrics.setShuttingDown();
-  assert.equal((await fetch(`${base}/healthz`)).status, 503);
+  assert.equal((await fetch(`${base}/readyz`)).status, 503);
+});
+
+test("/healthz is liveness: 200 with the API down, not ready and shutting down", async () => {
+  const metrics = createMetrics({ now: Date.now, pollMs: 5000 });
+  const base = await listen(
+    createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, metrics }),
+  );
+  const live = await fetch(`${base}/healthz`);
+  assert.equal(live.status, 200);
+  assert.equal(await live.text(), "ok\n");
+  assert.equal((await fetch(`${base}/readyz`)).status, 503);
+  metrics.recordPoll("error");
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  metrics.setShuttingDown();
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  assert.equal((await fetch(`${base}/readyz`)).status, 503);
+});
+
+test("a version mismatch poll makes /readyz 503 with that reason, an ok poll recovers", async () => {
+  const metrics = createMetrics({ now: Date.now, pollMs: 5000 });
+  const base = await listen(
+    createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, metrics }),
+  );
+  metrics.recordPoll("ok");
+  metrics.recordPoll("mismatch");
+  const res = await fetch(`${base}/readyz`);
+  assert.equal(res.status, 503);
+  assert.equal(await res.text(), "API version mismatch\n");
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  metrics.recordPoll("ok");
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
 });
 
 test("/metrics serves the series and leaks no hidden detail", async () => {
@@ -64,7 +95,7 @@ test("/metrics serves the series and leaks no hidden detail", async () => {
   }
 });
 
-test("/healthz and /metrics bypass the render cache and API proxy", async () => {
+test("/healthz, /readyz and /metrics bypass the render cache and API proxy", async () => {
   let hits = 0;
   const upstream = createServer((_req, res) => {
     hits += 1;
@@ -77,6 +108,7 @@ test("/healthz and /metrics bypass the render cache and API proxy", async () => 
   const health = await fetch(`${base}/healthz`);
   assert.equal(health.status, 200);
   assert.equal(await health.text(), "ok\n");
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
   const scrape = await fetch(`${base}/metrics`);
   assert.equal(scrape.status, 200);
   assert.match(scrape.headers.get("content-type") ?? "", /text\/plain; version=0\.0\.4/);

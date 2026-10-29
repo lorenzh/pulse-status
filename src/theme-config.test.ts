@@ -45,6 +45,10 @@ test("invalid values stop with the file and key", () => {
     [{ "radius-sm": 6 }, /radius-sm/],
     [{ "font-sans": "x;}</style>" }, /font-sans/],
     [{ "font-mono": "a".repeat(201) }, /font-mono/],
+    [{ "font-sans": '"Foo' }, /font-sans/],
+    [{ "font-sans": "'Foo\"" }, /font-sans/],
+    [{ "font-mono": "Foo'" }, /font-mono/],
+    [{ "font-mono": "'a' 'b" }, /font-mono/],
     [[], /\(root\)/],
   ];
   for (const [body, pattern] of cases) {
@@ -79,4 +83,18 @@ test("name length", () => {
   assert.throws(() => validateName(""));
   assert.throws(() => validateName("x".repeat(61)));
   assert.equal(validateName("x".repeat(60)).length, 60);
+});
+
+test("balanced quoted font lists pass and theme.css holds no unbalanced quote", () => {
+  const path = themeFile({
+    "font-sans": "'Space Grotesk', sans-serif",
+    "font-mono": '"JetBrains Mono", monospace',
+  });
+  const css = themeCss(loadTheme(path));
+  assert.match(css, /--font-sans:'Space Grotesk', sans-serif;/);
+  const fontLines = css.match(/--font-(?:sans|mono):[^;]*;/g) ?? [];
+  assert.equal(fontLines.length, 2);
+  for (const line of fontLines) {
+    assert.equal(/['"]/.exec(line.replace(/'[^']*'|"[^"]*"/g, "")), null, line);
+  }
 });

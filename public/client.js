@@ -1,14 +1,6 @@
 import { createPoller } from "/poller.js";
-import {
-  renderBanner,
-  renderChecks,
-  renderIncidents,
-  renderResolvedIncidents,
-  renderSummary,
-  renderUnavailable,
-  renderUpcomingMaintenance,
-  renderUpdated,
-} from "/render.js";
+import { renderUpdated } from "/render.js";
+import { buildSections, showSections } from "/sections.js";
 
 import { applyTheme, loadTheme, parseTheme, saveTheme } from "/theme.js";
 
@@ -34,6 +26,7 @@ themeSwitch.addEventListener("change", (event) => {
 });
 
 const pollMs = Number(document.body.dataset.pollMs) || 5000;
+const timeoutMs = Number(document.body.dataset.timeoutMs) || undefined;
 
 const exactFormat = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -79,20 +72,10 @@ function showUpdated(state) {
 }
 
 function draw(state) {
+  // Build every section first: a throwing renderer leaves the page as it was.
+  const sections = buildSections(state, makeEnv());
+  showSections(sections, show);
   lastState = state;
-  show("banner", renderBanner(state.error));
-  const hasData = state.updatedAt !== null;
-  show("summary", renderSummary(state.checks, state.incidents, state.error, hasData));
-  showUpdated(state);
-  if (!hasData) {
-    if (state.error !== null) show("checks", renderUnavailable(state.error));
-    return;
-  }
-  const env = makeEnv();
-  show("checks", renderChecks(state.checks, state.uptime, env));
-  show("incidents", renderIncidents(state.incidents, state.checks, env));
-  show("resolved", renderResolvedIncidents(state.resolved, state.checks, env));
-  show("maintenance", renderUpcomingMaintenance(state.maintenance, state.checks, env));
 }
 
 createPoller({
@@ -100,6 +83,7 @@ createPoller({
   timer: { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h) },
   now: () => Date.now(),
   pollMs,
+  timeoutMs,
   visibility: {
     isHidden: () => document.visibilityState === "hidden",
     onChange: (fn) => document.addEventListener("visibilitychange", fn),

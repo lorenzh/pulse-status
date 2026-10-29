@@ -6,12 +6,12 @@ An unreadable file, invalid JSON or an invalid value stops the server at start a
 
 ## Name and logo
 
-| Env                 | Default | Meaning                                                                                                                                                  |
-| ------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PULSE_STATUS_NAME` | `pulse` | Product name, 1 to 60 characters. The wordmark shows it. The page title is the name as it is. The default title is `pulse status`                        |
-| `PULSE_STATUS_LOGO` | none    | Local file (`.svg`, `.png`, `.jpg`, `.webp`), served at `/logo`, or an `http(s)://` URL used as is. Shown in an `<img alt="<name>">` instead of the name |
+| Env                 | Default | Meaning                                                                                                                                                |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PULSE_STATUS_NAME` | `pulse` | Product name, 1 to 60 characters. The wordmark shows it. The page title is the name as it is. The default title is `pulse status`                      |
+| `PULSE_STATUS_LOGO` | none    | Local file (`.svg`, `.png`, `.jpg`, `.webp`), served at `/logo`, or an `https://` URL used as is. Shown in an `<img alt="<name>">` instead of the name |
 
-A local logo needs a supported extension and must exist at start. An `http(s)://` value must be a valid URL.
+A local logo needs a supported extension and must exist at start. An `https://` value must be a valid URL; `http://` stops the server at start.
 
 ## Theme file
 
@@ -60,13 +60,13 @@ Under `light` and `dark`. Each value must be `#rgb`, `#rrggbb` or `#rrggbbaa`.
 
 Top level keys, shared by both modes.
 
-| Key           | Role                             | Default                                              | Allowed                                                            |
-| ------------- | -------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
-| `font-sans`   | Text and UI font stack           | `'Space Grotesk Variable', system-ui, sans-serif`    | letters, digits, space and `,` `'` `"` `_` `-`, max 200 characters |
-| `font-mono`   | Times, IDs, numbers, state words | `'JetBrains Mono Variable', ui-monospace, monospace` | same                                                               |
-| `radius-sm`   | Small chips                      | `6px`                                                | `<number>px`, `<number>rem` or `<number>em`                        |
-| `radius-md`   | Cards and panels                 | `12px`                                               | same                                                               |
-| `radius-pill` | Buttons and the theme switch     | `999px`                                              | same                                                               |
+| Key           | Role                             | Default                                              | Allowed                                                                                                   |
+| ------------- | -------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `font-sans`   | Text and UI font stack           | `'Space Grotesk Variable', system-ui, sans-serif`    | letters, digits, space and `,` `'` `"` `_` `-`, max 200 characters                                        |
+| `font-mono`   | Times, IDs, numbers, state words | `'JetBrains Mono Variable', ui-monospace, monospace` | same, and every quote must close (`'Space Grotesk', sans-serif` passes, `"Foo` stops the server at start) |
+| `radius-sm`   | Small chips                      | `6px`                                                | `<number>px`, `<number>rem` or `<number>em`                                                               |
+| `radius-md`   | Cards and panels                 | `12px`                                               | same                                                                                                      |
+| `radius-pill` | Buttons and the theme switch     | `999px`                                              | same                                                                                                      |
 
 ### Palette rules
 

@@ -10,7 +10,9 @@ import {
   validateUptimeResponse,
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
-import { RESOLVED_WINDOW_MS } from "./render.ts";
+import { type PollerErrorKind, RESOLVED_WINDOW_MS } from "./render.ts";
+
+export const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface PollerState {
   checks: ChecksResponse;
@@ -20,8 +22,8 @@ export interface PollerState {
   resolved: IncidentsResponse;
   /** 90-day uptime; empty when the uptime request failed. */
   uptime: UptimeResponse;
-  /** Set when the last refresh failed; data is from the last success. */
-  error: string | null;
+  /** Set when the last refresh failed; data is from the last success. Details go to the log. */
+  error: PollerErrorKind | null;
   /** Clock time of the last successful refresh. */
   updatedAt: number | null;
 }
@@ -39,7 +41,7 @@ export interface PollerOptions {
   /** Base path of the API, e.g. "/api". */
   baseUrl?: string | undefined;
   onUpdate: (state: PollerState) => void;
-  /** Time limit for one refresh, headers and body of every request; default `min(pollMs, 4000)`. */
+  /** Time limit for one refresh, headers and body of every request; default 10000 ms (the page passes the proxy timeout plus 2 s). */
   timeoutMs?: number;
   /** Receives errors thrown by `onUpdate`; default `console.error`. */
   log?: (message: string, error: unknown) => void;
@@ -71,33 +73,69 @@ function abortion(signal: AbortSignal): Promise<never> {
   return failed;
 }
 
+/** The API answered with a body that fails the contract validators. */
+class InvalidResponseError extends Error {
+  override name = "InvalidResponseError";
+}
+
 /** A wire version mismatch: it fails the refresh, also on the optional endpoints. */
 class WireVersionError extends Error {
   override name = "WireVersionError";
 }
 
 /**
- * Validates `/checks` as the server serves it: with details hidden it removes the target
- * (`url`, or `host` and `port`; a heartbeat check loses `period` and `grace`). Placeholders fill only the copy that is validated, so the
- * returned checks have no fake target and render omits the target line.
+ * Validates `/checks` as the server serves it: an allow-list keeps only what the page reads, so
+ * the target (`url`, or `host` and `port`; a heartbeat's `period` and `grace`) is absent when
+ * hidden, and fields only the contract requires (`intervalMs`, `warnDays`, per-location
+ * `location`, `checkId`, `statusCode`, `attempts`) are never served. Placeholders fill only the
+ * copy that is validated, so the returned checks carry no fake values.
  */
 function validServedChecks(body: unknown): ChecksResponse {
-  const filled = Array.isArray(body) ? body.map(withTargetPlaceholder) : body;
+  const filled = Array.isArray(body) ? body.map(withPlaceholders) : body;
   valid(validateChecksResponse(filled, "checks"));
-  // Checked above; only the hidden target fields may be absent.
+  // Checked above; only the fields the server withholds may be absent.
   return body as ChecksResponse;
 }
 
-function withTargetPlaceholder(item: unknown): unknown {
-  if (typeof item !== "object" || item === null) return item;
-  if ("type" in item && item.type === "heartbeat") return { period: 1000, grace: 0, ...item };
-  if ("type" in item && item.type === "tls") return { host: "hidden", port: 0, ...item };
-  return { url: "https://hidden.invalid/", ...item };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function withPlaceholders(item: unknown): unknown {
+  if (!isRecord(item)) return item;
+  const state = { consecutiveDown: 0, ...item, locations: fillLocations(item) };
+  if (item.type === "heartbeat") return { period: 1000, grace: 0, ...state };
+  if (item.type === "tls") {
+    return { host: "hidden", port: 0, warnDays: 0, intervalMs: 1, ...state };
+  }
+  return { url: "https://hidden.invalid/", intervalMs: 1, ...state };
+}
+
+function fillLocations(check: Record<string, unknown>): unknown {
+  if (!Array.isArray(check.locations)) return check.locations;
+  const checkId = typeof check.id === "string" ? check.id : "";
+  return check.locations.map((entry: unknown) => {
+    if (!isRecord(entry) || !isRecord(entry.result)) return entry;
+    const result = { checkId, statusCode: null, attempts: 1, location: "", ...entry.result };
+    return { location: "", ...entry, result };
+  });
+}
+
+function withDayPlaceholders(item: unknown): unknown {
+  if (!isRecord(item) || !Array.isArray(item.days)) return item;
+  const days = item.days.map((day: unknown) => (isRecord(day) ? { results: 0, ...day } : day));
+  return { ...item, days };
+}
+
+function errorKind(err: unknown): PollerErrorKind {
+  if (err instanceof WireVersionError) return "version";
+  if (err instanceof InvalidResponseError) return "invalid";
+  return "unreachable";
 }
 
 /** Unwraps a validation result: a failure throws its message, which names the path. */
 function valid<T>(result: { ok: true; value: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new InvalidResponseError(result.error);
   return result.value;
 }
 
@@ -117,7 +155,7 @@ export function createPoller(options: PollerOptions): Poller {
   // Bumped by every pause, resume and stop: a late result of an older tick is dropped.
   let generation = 0;
   let inFlight: AbortController | undefined;
-  const timeoutMs = options.timeoutMs ?? Math.min(options.pollMs, 4000);
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const log = options.log ?? ((message, error) => console.error(message, error));
 
   let hasLoggedMissingVersion = false;
@@ -138,8 +176,11 @@ export function createPoller(options: PollerOptions): Poller {
   /** Bars are optional: a failed or malformed uptime response yields no bars. */
   async function getUptime(signal: AbortSignal): Promise<UptimeResponse> {
     try {
-      const result = validateUptimeResponse(await getJson(`${base}/uptime`, signal), "uptime");
-      if (result.ok) return result.value;
+      const body = await getJson(`${base}/uptime`, signal);
+      const filled = Array.isArray(body) ? body.map(withDayPlaceholders) : body;
+      const result = validateUptimeResponse(filled, "uptime");
+      // Checked above; only the per-day result counts the server withholds may be absent.
+      if (result.ok) return body as UptimeResponse;
       log("uptime response is invalid", result.error);
       return [];
     } catch (err) {
@@ -204,8 +245,9 @@ export function createPoller(options: PollerOptions): Poller {
         updatedAt: options.now(),
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      state = { ...state, error: `Cannot reach the API: ${message}` };
+      // Visitors see only the kind; the detail (validator path, header name) is logged.
+      log("refresh failed", err);
+      state = { ...state, error: errorKind(err) };
     }
   }
 

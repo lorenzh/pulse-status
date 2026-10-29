@@ -40,6 +40,16 @@ const COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 const RADIUS_RE = /^\d+(?:\.\d+)?(?:px|rem|em)$/;
 const FONT_RE = /^[A-Za-z0-9 ,'"_-]+$/;
 const FONT_MAX = 200;
+const QUOTED_PAIR_RE = /'[^']*'|"[^"]*"/g;
+
+/** Allowed characters, and every quote closes: no quote is left once complete pairs are removed. */
+function isFontValue(value: string): boolean {
+  return (
+    value.length <= FONT_MAX &&
+    FONT_RE.test(value) &&
+    !/['"]/.test(value.replace(QUOTED_PAIR_RE, ""))
+  );
+}
 export const NAME_MAX = 60;
 
 type Fields = Record<string, unknown>;
@@ -90,7 +100,7 @@ export function parseThemeFile(file: string, body: unknown): Partial<Theme> {
   return {
     light: pickColors(file, "light", body.light),
     dark: pickColors(file, "dark", body.dark),
-    fonts: pickScalars(file, body, FONT_KEYS, (v) => v.length <= FONT_MAX && FONT_RE.test(v)),
+    fonts: pickScalars(file, body, FONT_KEYS, isFontValue),
     radii: pickScalars(file, body, RADIUS_KEYS, (v) => RADIUS_RE.test(v)),
   };
 }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
-import { ALLOWED_API_PATHS } from "./api-filter.ts";
+import { ALLOWED_API_PATHS, filterApiBody } from "./api-filter.ts";
 import { createPoller, type PollerState } from "./poller.ts";
 import { renderChecks } from "./render.ts";
 import { createStatusServer } from "./server.ts";
@@ -81,7 +81,7 @@ test("refreshes on schedule, shows error, recovers, stops", async () => {
   clock = 200;
   await timer.fire();
   assert.equal(updates.length, 2);
-  assert.match(updates[1]!.error!, /ECONNREFUSED/);
+  assert.equal(updates[1]!.error, "unreachable");
   assert.equal(updates[1]!.checks.length, 1, "keeps last data");
   assert.equal(updates[1]!.updatedAt, 100);
 
@@ -109,7 +109,7 @@ test("non-ok response is an error", async () => {
     onUpdate: (s) => updates.push(s),
   });
   await poller.refresh();
-  assert.match(updates[0]!.error!, /HTTP 500/);
+  assert.equal(updates[0]!.error, "unreachable");
 });
 
 test("fetches and stores maintenance windows; failure fails the refresh", async () => {
@@ -138,7 +138,7 @@ test("fetches and stores maintenance windows; failure fails the refresh", async 
 
   maintenanceOk = false;
   await poller.refresh();
-  assert.match(updates[1]!.error!, /maintenance returned HTTP 503/);
+  assert.equal(updates[1]!.error, "unreachable");
   assert.deepEqual(updates[1]!.maintenance, windows, "keeps last data");
 });
 
@@ -187,7 +187,7 @@ function malformedRun(checksBody: unknown) {
 test("a non-array body is a failed refresh that keeps the last good data", async () => {
   const { poller, updates } = malformedRun({ checks: [] });
   await poller.refresh();
-  assert.match(updates[0]!.error!, /checks: /);
+  assert.equal(updates[0]!.error, "invalid");
   assert.deepEqual(updates[0]!.checks, []);
   assert.equal(updates[0]!.updatedAt, null);
 });
@@ -195,7 +195,7 @@ test("a non-array body is a failed refresh that keeps the last good data", async
 test("an element with a wrong-typed field is a failed refresh", async () => {
   const { poller, updates } = malformedRun([checkOf("a", "A", { name: 7 })]);
   await poller.refresh();
-  assert.match(updates[0]!.error!, /checks\[0\]/);
+  assert.equal(updates[0]!.error, "invalid");
   assert.deepEqual(updates[0]!.checks, []);
   assert.equal(updates[0]!.updatedAt, null);
 });
@@ -215,6 +215,7 @@ test("a malformed incident or maintenance entry fails the poll with its path", a
     ["/maintenance", /maintenance\[0\]/],
   ] as const) {
     const updates: PollerState[] = [];
+    const logs: string[] = [];
     const poller = createPoller({
       fetch: (async (url: string) =>
         json(url.endsWith(path) ? [{ bad: true }] : [])) as unknown as typeof fetch,
@@ -222,9 +223,11 @@ test("a malformed incident or maintenance entry fails the poll with its path", a
       now: () => 5,
       pollMs: 1,
       onUpdate: (s) => updates.push(s),
+      log: (_m, e) => logs.push(String(e)),
     });
     await poller.refresh();
-    assert.match(updates[0]?.error ?? "", label);
+    assert.equal(updates[0]?.error, "invalid");
+    assert.ok(logs.some((l) => label.test(l)));
   }
 });
 
@@ -256,7 +259,7 @@ test("a wire version mismatch fails the poll", async () => {
     onUpdate: (s) => updates.push(s),
   });
   await poller.refresh();
-  assert.match(updates[0]?.error ?? "", /x-pulse-contract/);
+  assert.equal(updates[0]?.error, "version");
   assert.equal(updates[0]?.updatedAt, null);
 });
 
@@ -350,7 +353,7 @@ test("a keyword is passed through and a non-string keyword is malformed", async 
   assert.deepEqual(good.updates[0]?.checks, checks);
   const bad = malformedRun([checkOf("a", "A", { keyword: 5 })]);
   await bad.poller.refresh();
-  assert.match(bad.updates[0]?.error ?? "", /checks\[0\]/);
+  assert.equal(bad.updates[0]?.error, "invalid");
 });
 
 test("poller requests only allow-listed API paths", async () => {
@@ -415,7 +418,7 @@ test("a hanging request (headers) times out as a failed refresh", async () => {
   assert.equal(updates.length, 0);
   await timer.fire();
   assert.equal(updates.length, 1);
-  assert.match(updates[0]?.error ?? "", /Cannot reach the API/);
+  assert.equal(updates[0]?.error, "unreachable");
   assert.equal(timer.pending.size, 1);
 });
 
@@ -580,7 +583,7 @@ test("the first error stays published after the abort", async () => {
     onUpdate: (s) => updates.push(s),
   });
   await poller.refresh();
-  assert.match(updates[0]?.error ?? "", /boom/);
+  assert.equal(updates[0]?.error, "unreachable");
 });
 
 test("a hidden tab aborts all pending requests", async () => {
@@ -629,14 +632,14 @@ test("hiding the tab after a failure keeps the first error", async () => {
   await flush();
   visibility.set(true);
   await flush();
-  assert.match(updates[0]?.error ?? "", /boom/);
+  assert.equal(updates[0]?.error, "unreachable");
   assert.equal(updates.length, 1);
 });
 
-test("the default timeout is min(pollMs, 4000)", async () => {
+test("the default timeout is a fixed 10000 ms, whatever pollMs is", async () => {
   for (const [pollMs, expected] of [
-    [1000, 1000],
-    [10_000, 4000],
+    [1000, 10_000],
+    [60_000, 10_000],
   ] as const) {
     const rec = recordingTimer();
     let signal: AbortSignal | undefined;
@@ -703,14 +706,14 @@ test("a redacted check is still validated by the contract", async () => {
   const http = redacted(checkOf("a", "A", { intervalMs: "soon" }));
   const state = await pollOnce((async (url: string) =>
     url.endsWith("/checks") ? json([http]) : json([])) as unknown as typeof fetch);
-  assert.match(state?.error ?? "", /checks\[0\]\.intervalMs/);
+  assert.equal(state?.error, "invalid");
 });
 
 test("a wire version mismatch on uptime or resolved incidents fails the poll", async () => {
   for (const path of ["/uptime", "/incidents?status=resolved"]) {
     const state = await pollOnce((async (url: string) =>
       url.endsWith(path) ? json([], "2") : json([])) as unknown as typeof fetch);
-    assert.match(state?.error ?? "", /x-pulse-contract/, path);
+    assert.equal(state?.error, "version", path);
     assert.equal(state?.updatedAt, null, path);
   }
 });
@@ -765,4 +768,76 @@ test("hidden and visible heartbeat checks pass validation", async () => {
     assert.equal(state?.checks.length, 1);
     assert.equal("url" in (state?.checks[0] ?? {}), false);
   }
+});
+
+test("checks as the allow-list serves them pass validation in both hide modes", async () => {
+  const upstream = [
+    checkOf("a", "A", {
+      locations: [
+        {
+          location: "eu",
+          stale: false,
+          result: {
+            checkId: "a",
+            timestamp: 1,
+            status: "up",
+            statusCode: 200,
+            latencyMs: 5,
+            reason: null,
+            location: "eu",
+            attempts: 1,
+          },
+        },
+      ],
+    }),
+    tlsCheckOf("t"),
+    {
+      ...checkOf("h", "H", { type: "heartbeat", period: 60_000, grace: 0 }),
+      intervalMs: undefined,
+    },
+  ];
+  for (const isHidden of [true, false]) {
+    const served = filterApiBody("/api/checks", upstream, isHidden);
+    const state = await pollOnce((async (url: string) =>
+      url.endsWith("/checks") ? json(served) : json([])) as unknown as typeof fetch);
+    assert.equal(state?.error, null, `hidden=${isHidden}`);
+    assert.equal(state?.checks.length, 3);
+  }
+});
+
+test("uptime as served without per-day results still validates", async () => {
+  const served = filterApiBody(
+    "/api/uptime",
+    [{ checkId: "a", uptime: 99, days: [{ date: "2026-01-01", uptime: 100, results: 3 }] }],
+    true,
+  );
+  const state = await pollOnce((async (url: string) =>
+    url.endsWith("/uptime") ? json(served) : json([])) as unknown as typeof fetch);
+  assert.equal(state?.error, null);
+  assert.equal(state?.uptime.length, 1);
+});
+
+test("the next tick starts only after a slow refresh ends", async () => {
+  const timer = fakeTimer();
+  const gates: Array<() => void> = [];
+  let calls = 0;
+  const poller = createPoller({
+    fetch: (() => {
+      calls++;
+      return new Promise<Response>((resolve) => gates.push(() => resolve(json([]))));
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 1000,
+    timeoutMs: 6000,
+    onUpdate: () => {},
+  });
+  poller.start();
+  await flush();
+  const firstRound = calls;
+  assert.equal(timer.pending.size, 1, "only the request timeout is pending, no next tick");
+  for (const open of gates.splice(0)) open();
+  await flush();
+  assert.equal(calls, firstRound, "no new round before the timer fires");
+  assert.equal(timer.pending.size, 1, "the next tick is scheduled after the refresh ended");
 });

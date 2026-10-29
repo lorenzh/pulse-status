@@ -51,56 +51,97 @@ function cleanReason(value: unknown, isHidden: boolean): unknown {
   return typeof value === "string" ? sanitizeText(value) : value;
 }
 
-function cleanCheck(check: Fields, isHidden: boolean): Fields {
-  const out: Fields = { ...check };
-  // The api never serves a ping secret; drop it defensively.
-  delete out.secret;
-  if (out.type === "heartbeat") {
-    delete out.url;
-    delete out.host;
-    delete out.port;
-    delete out.keyword;
-  }
-  if (isHidden) {
-    delete out.period;
-    delete out.grace;
-    delete out.url;
-    delete out.host;
-    delete out.port;
-    delete out.keyword;
-  } else if (typeof out.url === "string") {
-    const clean = sanitizeUrl(out.url);
-    if (clean === null) delete out.url;
-    else out.url = clean;
-  }
-  if ("lastReason" in out) out.lastReason = cleanReason(out.lastReason, isHidden);
-  if (Array.isArray(out.locations)) {
-    out.locations = out.locations.map((entry: unknown) => {
-      if (!isObject(entry) || !isObject(entry.result)) return entry;
-      const result: Fields = { ...entry.result };
-      if ("reason" in result) result.reason = cleanReason(result.reason, isHidden);
-      return { ...entry, result };
-    });
+function pick(source: Fields, keys: readonly string[]): Fields {
+  const out: Fields = {};
+  for (const key of keys) {
+    if (Object.hasOwn(source, key) && source[key] !== undefined) out[key] = source[key];
   }
   return out;
 }
 
+const CHECK_COMMON = ["id", "name", "type", "state", "lastResultAt", "certDaysLeft"] as const;
+// The contract validator requires the other result fields; the page does not read them.
+const RESULT_FIELDS = ["timestamp", "status", "latencyMs"] as const;
+const WINDOW_FIELDS = ["checkId", "start", "end", "note"] as const;
+
+function cleanResult(result: unknown, isHidden: boolean): Fields {
+  if (!isObject(result)) return {};
+  const out = pick(result, RESULT_FIELDS);
+  if ("reason" in result) out.reason = cleanReason(result.reason, isHidden);
+  return out;
+}
+
+function cleanLocation(entry: unknown, isHidden: boolean): Fields | null {
+  if (!isObject(entry)) return null;
+  return { ...pick(entry, ["stale"]), result: cleanResult(entry.result, isHidden) };
+}
+
+function cleanTarget(check: Fields, isHidden: boolean): Fields {
+  switch (check.type) {
+    case "heartbeat":
+      return isHidden ? {} : pick(check, ["period", "grace"]);
+    case "tls":
+      return isHidden ? {} : pick(check, ["host", "port"]);
+    case undefined:
+    case "http": {
+      const out = pick(check, ["latencyObjectiveMs"]);
+      if (isHidden) return out;
+      Object.assign(out, pick(check, ["keyword"]));
+      const url = typeof check.url === "string" ? sanitizeUrl(check.url) : null;
+      if (url !== null) out.url = url;
+      return out;
+    }
+    default:
+      return {};
+  }
+}
+
+function cleanCheck(check: Fields, isHidden: boolean): Fields {
+  const out = pick(check, CHECK_COMMON);
+  if ("lastReason" in check) out.lastReason = cleanReason(check.lastReason, isHidden);
+  if (Array.isArray(check.locations)) {
+    out.locations = check.locations
+      .map((entry: unknown) => cleanLocation(entry, isHidden))
+      .filter((entry): entry is Fields => entry !== null);
+  }
+  if (isObject(check.maintenance)) out.maintenance = pick(check.maintenance, WINDOW_FIELDS);
+  return { ...out, ...cleanTarget(check, isHidden) };
+}
+
 function cleanIncident(incident: Fields, isHidden: boolean): Fields {
-  if (!("reason" in incident)) return incident;
-  return { ...incident, reason: cleanReason(incident.reason, isHidden) };
+  const out = pick(incident, ["id", "checkId", "openedAt", "resolvedAt"]);
+  if ("reason" in incident) out.reason = cleanReason(incident.reason, isHidden);
+  return out;
+}
+
+function cleanMaintenance(window: Fields): Fields {
+  return pick(window, WINDOW_FIELDS);
+}
+
+function cleanUptime(entry: Fields): Fields {
+  const out = pick(entry, ["checkId", "uptime"]);
+  if (Array.isArray(entry.days)) {
+    out.days = entry.days.filter(isObject).map((day) => pick(day, ["date", "uptime"]));
+  }
+  return out;
 }
 
 const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
   "/api/checks": cleanCheck,
   "/api/incidents": cleanIncident,
+  "/api/maintenance": cleanMaintenance,
+  "/api/uptime": cleanUptime,
 };
 
-/** Returns the JSON of an allow-listed answer with URLs sanitized and, when hidden, details removed. */
+/**
+ * Builds the served JSON from an allow-list per endpoint: unlisted fields, new upstream ones
+ * included, never leave the server. URLs are sanitized and, when hidden, details removed.
+ */
 export function filterApiBody(pathname: string, body: unknown, isHidden: boolean): unknown {
   if (!Array.isArray(body)) return body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;
-  return body.map((item: unknown) => (isObject(item) ? clean(item, isHidden) : item));
+  return body.filter(isObject).map((item) => clean(item, isHidden));
 }
 
 /**

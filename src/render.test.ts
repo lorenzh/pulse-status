@@ -221,12 +221,36 @@ test("escapes names, urls, reasons", () => {
   assert.doesNotMatch(res, /<script>/);
   assert.doesNotMatch(renderSummary([{ ...base, name: evil }], []), /<script>/);
   assert.doesNotMatch(inc, /<script>/);
-  assert.doesNotMatch(renderBanner(evil), /<script>/);
 });
 
 test("banner empty when no error", () => {
   assert.equal(renderBanner(null), "");
-  assert.match(renderBanner("boom"), /boom/);
+  assert.match(
+    renderBanner("unreachable", true),
+    /Cannot reach the API\. Showing the last known status\./,
+  );
+});
+
+test("banner text per kind holds no validator path or header name", () => {
+  assert.doesNotMatch(renderBanner("unreachable"), /Showing/);
+  assert.match(renderBanner("invalid"), />The API sent an unexpected answer\.</);
+  const version = renderBanner("version");
+  assert.match(version, /status page and the API versions do not match/);
+  assert.doesNotMatch(version, /x-pulse|checks\[/i);
+});
+
+test("summary and updated for a version mismatch", () => {
+  assert.match(
+    renderSummary([withState("up")], [], "version"),
+    /Status unavailable: versions do not match/,
+  );
+  assert.match(
+    renderSummary([], [], "version", false),
+    /Status unavailable: versions do not match/,
+  );
+  const html = renderUpdated(NOW - 3 * MIN, "version", env);
+  assert.doesNotMatch(html, /API unreachable/);
+  assert.match(html, /versions do not match/);
 });
 
 test("maintenance row shows state and escaped note", () => {
@@ -545,24 +569,25 @@ test("summary: only maintenance keeps the operational text", () => {
 });
 
 test("summary: an error replaces operational with a warning", () => {
-  const html = renderSummary([withState("up")], [], "Cannot reach the API: x");
+  const html = renderSummary([withState("up")], [], "unreachable");
   assert.match(html, /status-warning/);
   assert.match(html, />Status may be outdated</);
   assert.doesNotMatch(html, /operational/);
 });
 
 test("summary: an error keeps a down state visible", () => {
-  assert.match(renderSummary([withState("down")], [], "x"), />1 check down</);
+  assert.match(renderSummary([withState("down")], [], "invalid"), />1 check down</);
 });
 
 test("summary: failed first fetch reads Status unavailable", () => {
-  const html = renderSummary([], [], "Cannot reach the API: x", false);
+  const html = renderSummary([], [], "unreachable", false);
   assert.match(html, />Status unavailable</);
   assert.equal(renderSummary([], [], null, false), "");
 });
 
-test("unavailable: shows the escaped error", () => {
-  assert.match(renderUnavailable("a <b>"), /a &lt;b&gt;/);
+test("unavailable: shows the visitor sentence", () => {
+  assert.match(renderUnavailable("invalid"), /The API sent an unexpected answer\./);
+  assert.match(renderUnavailable("version"), /API versions do not match/);
 });
 
 test("updated: last updated time with exact tooltip", () => {
@@ -574,12 +599,12 @@ test("updated: last updated time with exact tooltip", () => {
 });
 
 test("updated: after an error the last good time stays", () => {
-  const html = renderUpdated(NOW - 3 * MIN, "boom", env);
+  const html = renderUpdated(NOW - 3 * MIN, "unreachable", env);
   assert.match(html, /3 min ago<\/time> · API unreachable/);
 });
 
 test("updated: nothing before the first success", () => {
-  assert.equal(renderUpdated(null, "boom", env), "");
+  assert.equal(renderUpdated(null, "unreachable", env), "");
 });
 
 const heartbeat: CheckWithState = {

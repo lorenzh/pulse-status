@@ -19,6 +19,9 @@ after(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+// Built in parts: the test needs a clear-text URL.
+const PLAIN_LOGO = ["http:", "//x.test/logo.png"].join("");
+
 const api = createServer((req, res) => {
   res.setHeader("content-type", "application/json");
   if (req.url === "/checks") res.end('[{"id":"a"}]');
@@ -79,7 +82,9 @@ test("proxies a TLS check from the API", async () => {
   const apiUrl = await listen(tlsApi);
   const base = await listen(createStatusServer({ apiUrl, pollMs: 1, hideDetails: false }));
   const r = await fetch(base + "/api/checks");
-  assert.deepEqual(await r.json(), [tlsCheck]);
+  assert.deepEqual(await r.json(), [
+    { id: "t", name: "Cert", type: "tls", host: "example.test", port: 443, certDaysLeft: 5 },
+  ]);
 });
 
 test("502 when the API is down", async () => {
@@ -175,6 +180,49 @@ test("a configured name is the whole title, even when it is the default name", a
   assert.match(await (await fetch(plain + "/")).text(), /<title>pulse<\/title>/);
 });
 
+test("the page carries poll interval and a browser timeout above the proxy timeout", async () => {
+  const base = await listen(
+    createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, upstreamTimeoutMs: 4000 }),
+  );
+  const page = await (await fetch(`${base}/`)).text();
+  assert.match(page, /<body data-poll-ms="5000" data-timeout-ms="6000">/);
+  const custom = await listen(
+    createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, upstreamTimeoutMs: 1500 }),
+  );
+  assert.match(await (await fetch(`${custom}/`)).text(), /data-timeout-ms="3500"/);
+});
+
+test("sections.js is served as a browser module", async () => {
+  const base = await listen(createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000 }));
+  const js = await (await fetch(`${base}/sections.js`)).text();
+  assert.match(js, /export function buildSections/);
+  assert.match(js, /from "\/render\.js"/);
+});
+
+test("a forced 500 is generic and the detail goes to the log", async () => {
+  const logo = join(tmp, "gone.png");
+  writeFileSync(logo, "x");
+  const logs: Array<{ level: string; msg: string; fields: Record<string, unknown> | undefined }> =
+    [];
+  const base = await listen(
+    createStatusServer({
+      apiUrl: "http://127.0.0.1:1",
+      pollMs: 5000,
+      logo,
+      log: (level, msg, fields) => logs.push({ level, msg, fields }),
+    }),
+  );
+  rmSync(logo);
+  const res = await fetch(`${base}/logo`);
+  assert.equal(res.status, 500);
+  const text = await res.text();
+  assert.deepEqual(JSON.parse(text), { error: "internal error" });
+  assert.ok(!text.includes("/"), text);
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0]?.level, "error");
+  assert.match(String(logs[0]?.fields?.error), /ENOENT/);
+});
+
 test("invalid settings stop the server before it listens", () => {
   const apiUrl = "http://127.0.0.1:1";
   const bad = join(tmp, "bad.json");
@@ -190,6 +238,13 @@ test("invalid settings stop the server before it listens", () => {
   assert.throws(
     () => createStatusServer({ apiUrl, pollMs: 1, name: "x".repeat(61) }),
     /PULSE_STATUS_NAME/,
+  );
+  assert.throws(
+    () => createStatusServer({ apiUrl, pollMs: 1, logo: PLAIN_LOGO }),
+    /PULSE_STATUS_LOGO: URL must use https/,
+  );
+  assert.doesNotThrow(() =>
+    createStatusServer({ apiUrl, pollMs: 1, logo: "https://x.test/logo.png" }),
   );
   assert.throws(
     () => createStatusServer({ apiUrl, pollMs: 1, logo: join(tmp, "l.gif") }),

@@ -19,12 +19,14 @@ The process prints `pulse-status: <message>` and exits with code 2.
 | `PULSE_STATUS_LOGO: cannot read <file>`                      | The logo file does not exist                                                        | Fix the path. In Docker, mount the file                     |
 | `PULSE_API_URL is not a valid URL`                           | The value does not parse as a URL (the value is not printed)                        | Use a full URL such as `http://localhost:3000`              |
 | `cannot listen on <host>:<port> (PORT): <reason>`            | The port is in use (`EADDRINUSE`) or not allowed (`EACCES`)                         | Set another `PORT`                                          |
-| `PULSE_STATUS_LOGO: invalid URL <url>`                       | The `http(s)://` value is not a valid URL                                           | Fix the URL                                                 |
+| `PULSE_STATUS_LOGO: invalid URL <url>`                       | The `https://` value is not a valid URL                                             | Fix the URL                                                 |
+| `PULSE_STATUS_LOGO: URL must use https`                      | The logo URL starts with `http://`                                                  | Use an `https://` URL or a local file                       |
+| `POLL_MS: must be an integer >= 1000`                        | `POLL_MS` is below 1000 or not an integer                                           | Use 1000 or more                                            |
 
 
 ## The page shows "Cannot reach the API"
 
-The banner text is `Cannot reach the API: <reason>`.
+The banner reads `Cannot reach the API. Showing the last known status.` The reason is not shown to visitors; open the browser console or the server log to see it.
 
 - `<url> returned HTTP <status>`: the page got an error status from the `/api/*` proxy. Usually pulse-api answered with an error. `returned HTTP 502` can also come from the status server itself: the proxy answers `502` with `{"error":"API unreachable"}` when it cannot reach the API at all (`src/server.ts`), so `returned HTTP <status>` does not always mean the API answered. For 502, follow the `fetch failed` step below. Check pulse-api, and that `PULSE_API_URL` points at it and not at another service.
 - `fetch failed` or similar: the API is not reachable from the status server. Check `curl <PULSE_API_URL>/checks` from the same host or container. In Docker, `localhost` is the container itself: use the service name or `host.docker.internal`.
@@ -34,7 +36,7 @@ Direct test of the proxy: `curl -i http://localhost:8080/api/checks`. A `502` wi
 
 ## The page says "Status may be outdated" or "Status unavailable"
 
-The last refresh failed or timed out (the shorter of `POLL_MS` and 4000 ms). `Status may be outdated` keeps the last data and shows when it was updated (`Last updated ... · API unreachable`). `Status unavailable` means the first refresh failed, so there is no data yet. Follow the steps above. The proxy retries pulse-api at most once per `PULSE_STATUS_CACHE_MS`, so a recovery shows within about one cache period plus `POLL_MS`.
+The last refresh failed or timed out (`PULSE_STATUS_UPSTREAM_TIMEOUT_MS` plus 2000 ms in the browser). `Status may be outdated` keeps the last data and shows when it was updated (`Last updated ... · API unreachable`). `Status unavailable` means the first refresh failed, so there is no data yet. Follow the steps above. The proxy retries pulse-api at most once per `PULSE_STATUS_CACHE_MS`, so a recovery shows within about one cache period plus `POLL_MS`.
 
 ## The page is stale
 
