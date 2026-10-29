@@ -39,6 +39,22 @@ Then open http://localhost:8080 (with the default `PORT`). Requests to `/api/*` 
 | `PULSE_API_URL` | `http://localhost:3000` | pulse-api base URL; `/api/*` is proxied to it |
 | `POLL_MS`       | `5000`                  | Page refresh interval in ms                   |
 
+## Docker
+
+The image is built from `Dockerfile` (multi-stage, `node:24-alpine`). It holds the production
+dependencies (including the bundled fonts), `src` without tests, and `public`. It runs as the
+non-root `node` user and has a `HEALTHCHECK` on `GET /`.
+
+```sh
+docker build --tag pulse-status:local .
+docker run --rm -p 8080:8080 -e PULSE_API_URL=http://host.docker.internal:3000 pulse-status:local
+```
+
+Image defaults: `PORT=8080` (exposed). Every setting in the tables below works as a container
+environment variable. To use a theme or logo file, mount it and set `PULSE_STATUS_THEME` or
+`PULSE_STATUS_LOGO` to the mounted path. pulse-api's repository has a Compose file that starts
+the whole stack with `docker compose up`.
+
 ## White label
 
 The default look is losoft (warm paper, deep plum ink, one amethyst accent, Space Grotesk and JetBrains Mono, self-hosted: no request to a font CDN). An operator changes name, logo, colours, fonts and radii with settings and a theme file, without code changes.
