@@ -43,7 +43,7 @@ const upstream = [
 // Target and state fields the page does not read; the poller fills them in, not under test here.
 const REST: Record<string, object> = {
   http: { url: "https://hidden.invalid/", intervalMs: 1, consecutiveDown: 0 },
-  tls: { host: "hidden", port: 0, warnDays: 0, intervalMs: 1, consecutiveDown: 0 },
+  tls: { host: "hidden", port: 1, warnDays: 0, intervalMs: 1, consecutiveDown: 0 },
   heartbeat: { period: 1000, grace: 0, consecutiveDown: 0 },
 };
 

@@ -106,7 +106,7 @@ function withPlaceholders(item: unknown): unknown {
   const state = { consecutiveDown: 0, ...item, locations: fillLocations(item) };
   if (item.type === "heartbeat") return { period: 1000, grace: 0, ...state };
   if (item.type === "tls") {
-    return { host: "hidden", port: 0, warnDays: 0, intervalMs: 1, ...state };
+    return { host: "hidden", port: 1, warnDays: 0, intervalMs: 1, ...state };
   }
   return { url: "https://hidden.invalid/", intervalMs: 1, ...state };
 }
