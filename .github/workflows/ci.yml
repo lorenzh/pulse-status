@@ -24,3 +24,11 @@ jobs:
       - uses: actions/checkout@v5
       - name: Build image
         run: docker build --tag pulse-status:local .
+      - name: Check the image holds no test files
+        run: |
+          found=$(docker run --rm --entrypoint sh pulse-status:local -c "find /app -type f \( -name '*.test.ts' -o -name '*.spec.ts' \) -not -path '*/node_modules/*'")
+          if [ -n "$found" ]; then
+            echo "Test files in the image:"
+            echo "$found"
+            exit 1
+          fi
