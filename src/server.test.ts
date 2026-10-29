@@ -84,6 +84,34 @@ test("502 when the API is down", async () => {
   assert.deepEqual(await r.json(), { error: "API unreachable" });
 });
 
+async function proxyWith(headers: Record<string, string>, body: string): Promise<Response> {
+  const apiUrl = await listen(createServer((_req, res) => res.writeHead(200, headers).end(body)));
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  return fetch(base + "/api/checks");
+}
+
+test("non-JSON upstream content types give a generic 502", async () => {
+  for (const headers of [{ "content-type": "text/html" } as Record<string, string>, {}]) {
+    const r = await proxyWith(headers, "[]");
+    assert.equal(r.status, 502);
+    assert.deepEqual(await r.json(), { error: "invalid API response" });
+  }
+});
+
+test("JSON content types with parameters or other case are accepted", async () => {
+  for (const type of ["application/json; charset=utf-8", "Application/JSON"]) {
+    const r = await proxyWith({ "content-type": type }, "[]");
+    assert.equal(r.status, 200, type);
+    assert.deepEqual(await r.json(), []);
+  }
+});
+
+test("invalid JSON with a JSON content type gives a generic 502", async () => {
+  const r = await proxyWith({ "content-type": "application/json" }, "{nope");
+  assert.equal(r.status, 502);
+  assert.deepEqual(await r.json(), { error: "invalid API response" });
+});
+
 async function start(options: Partial<Parameters<typeof createStatusServer>[0]> = {}) {
   const apiUrl = await listen(createServer((_req, res) => res.writeHead(404).end("{}")));
   return listen(createStatusServer({ apiUrl, pollMs: 1, ...options }));

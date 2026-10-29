@@ -135,6 +135,14 @@ async function proxyApi(
     sendJson(res, upstream.status, { error: "API error" });
     return;
   }
+  const mediaType = (upstream.headers.get("content-type") ?? "")
+    .split(";")[0]
+    ?.trim()
+    .toLowerCase();
+  if (mediaType !== "application/json") {
+    sendJson(res, 502, { error: "invalid API response" });
+    return;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);

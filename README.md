@@ -39,3 +39,5 @@ Settings, white label and theming, operation and troubleshooting are in [docs/in
 `npm run check` runs lint, typecheck and tests. See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
 
 Licensed under the MIT licence, see [LICENSE](LICENSE).
+
+The `/api/*` proxy answers `502 {"error":"invalid API response"}` when the upstream answer is not `application/json` or its body is not valid JSON.
