@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { filterApiBody, isAllowedApiPath } from "./api-filter.ts";
 import { escapeHtml } from "./render.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 
@@ -18,6 +19,8 @@ export interface ServerOptions {
   name?: string;
   /** Logo: local file path (svg, png, jpg, webp) or http(s) URL (PULSE_STATUS_LOGO). */
   logo?: string;
+  /** Hide check targets, keywords and reasons in proxied JSON (PULSE_STATUS_HIDE_DETAILS), default true. */
+  hideDetails?: boolean;
 }
 
 const LOGO_TYPES: Record<string, string> = {
@@ -38,6 +41,8 @@ const fontFiles: Record<string, string> = {
 interface Logo {
   /** Value of the img src attribute. */
   src: string;
+  /** Origin of a remote logo, for the CSP. */
+  origin?: string;
   /** Local file and content type, when served by this server. */
   file?: string;
   type?: string;
@@ -51,7 +56,7 @@ function resolveLogo(logo: string | undefined): Logo | null {
     } catch {
       throw new Error(`PULSE_STATUS_LOGO: invalid URL ${logo}`);
     }
-    return { src: logo };
+    return { src: logo, origin: new URL(logo).origin };
   }
   const type = LOGO_TYPES[extname(logo).toLowerCase()];
   if (type === undefined)
@@ -78,6 +83,68 @@ const tsModules: Record<string, string> = {
   "/validate.js": "validate.ts",
 };
 
+const staticFiles: Record<string, { file: string; type: string }> = {
+  "/theme-init.js": { file: "theme-init.js", type: "text/javascript; charset=utf-8" },
+  "/page.css": { file: "page.css", type: "text/css; charset=utf-8" },
+};
+
+function contentSecurityPolicy(logoOrigin: string | undefined): string {
+  const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
+  return [
+    "default-src 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
+    `img-src ${img}`,
+    "font-src 'self'",
+    "connect-src 'self'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
+}
+
+async function proxyApi(
+  res: ServerResponse,
+  rawUrl: string,
+  url: URL,
+  apiBase: string,
+  doFetch: typeof fetch,
+  isHidden: boolean,
+): Promise<void> {
+  // The raw target must equal the parsed one: a bare "?" is not the allow-listed form.
+  if (rawUrl !== url.pathname + url.search || !isAllowedApiPath(url.pathname, url.search)) {
+    sendJson(res, 404, { error: "not found" });
+    return;
+  }
+  let upstream: Response;
+  let text: string;
+  try {
+    upstream = await doFetch(apiBase + url.pathname.slice("/api".length) + url.search);
+    text = await upstream.text();
+  } catch {
+    // Any fetch failure means the upstream API is unreachable; answer 502.
+    sendJson(res, 502, { error: "API unreachable" });
+    return;
+  }
+  if (!upstream.ok) {
+    // The upstream body is never forwarded.
+    sendJson(res, upstream.status, { error: "API error" });
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    sendJson(res, 502, { error: "invalid API response" });
+    return;
+  }
+  sendJson(res, 200, filterApiBody(url.pathname, parsed, isHidden));
+}
+
 export function createStatusServer(options: ServerOptions): Server {
   // Invalid settings throw here, before the server can listen.
   const name = validateName(options.name ?? "pulse");
@@ -86,12 +153,18 @@ export function createStatusServer(options: ServerOptions): Server {
   const css = themeCss(loadTheme(options.themeFile));
   const logo = resolveLogo(options.logo);
   const mark = wordmark(name, logo);
+  const isHidden = options.hideDetails ?? true;
+  const csp = contentSecurityPolicy(logo?.origin);
   const doFetch = options.fetch ?? fetch;
   let apiBase = options.apiUrl;
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
+    res.setHeader("content-security-policy", csp);
+    res.setHeader("x-content-type-options", "nosniff");
+    res.setHeader("x-frame-options", "DENY");
+    res.setHeader("referrer-policy", "no-referrer");
     try {
       if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
@@ -103,6 +176,12 @@ export function createStatusServer(options: ServerOptions): Server {
           .replaceAll("{{title}}", () => escapeHtml(title))
           .replace("{{wordmark}}", () => mark);
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
+        return;
+      }
+      const staticFile = staticFiles[url.pathname];
+      if (staticFile !== undefined) {
+        const body = await readFile(publicDir + staticFile.file, "utf8");
+        res.writeHead(200, { "content-type": staticFile.type }).end(body);
         return;
       }
       if (url.pathname === "/theme.css") {
@@ -122,7 +201,13 @@ export function createStatusServer(options: ServerOptions): Server {
       }
       if (url.pathname === "/logo" && logo?.file !== undefined) {
         const image = await readFile(logo.file);
-        res.writeHead(200, { "content-type": logo.type ?? "application/octet-stream" }).end(image);
+        res
+          .writeHead(200, {
+            "content-type": logo.type ?? "application/octet-stream",
+            // A direct visit must not run script in the page origin; <img> still renders.
+            "content-security-policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+          })
+          .end(image);
         return;
       }
       if (url.pathname === "/client.js") {
@@ -141,23 +226,7 @@ export function createStatusServer(options: ServerOptions): Server {
         return;
       }
       if (url.pathname.startsWith("/api/")) {
-        const target = apiBase + url.pathname.slice("/api".length) + url.search;
-        let upstream: Response;
-        try {
-          upstream = await doFetch(target);
-        } catch {
-          // Any fetch failure means the upstream API is unreachable; answer 502.
-          res
-            .writeHead(502, { "content-type": "application/json" })
-            .end(JSON.stringify({ error: "API unreachable" }));
-          return;
-        }
-        const body = Buffer.from(await upstream.arrayBuffer());
-        res
-          .writeHead(upstream.status, {
-            "content-type": upstream.headers.get("content-type") ?? "application/json",
-          })
-          .end(body);
+        await proxyApi(res, req.url ?? "", url, apiBase, doFetch, isHidden);
         return;
       }
       res

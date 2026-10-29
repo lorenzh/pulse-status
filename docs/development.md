@@ -15,6 +15,9 @@ Node 24 or newer runs the TypeScript source directly (type stripping, no build s
 
 - `src/main.ts` reads the environment and starts the server.
 - `src/server.ts` is the HTTP server: page, theme, logo, fonts, browser modules and the `/api/*` proxy.
+- `src/api-filter.ts` is the proxy allow-list and the JSON sanitizing and redaction (pure functions).
+- `src/settings.ts` parses `PULSE_STATUS_HIDE_DETAILS`.
+- `public/page.css` and `public/theme-init.js` are the page style and the theme bootstrap script. The page has no inline script or style, because the CSP forbids them.
 - `src/theme-config.ts` loads and validates the theme file and generates the CSS.
 - `src/poller.ts`, `src/render.ts`, `src/theme.ts` and `src/validate.ts` run in the browser. The server strips their types when it serves them. They import only types, with one exception: `poller.ts` imports `validate.ts`. A new browser module is added to `tsModules` in `src/server.ts`.
 - `public/` is plain HTML and JavaScript. Biome does not check HTML and `tsc` does not check `public/`.

@@ -504,3 +504,22 @@ test("uptime: total null reads no data; missing entry gives no bars; escaping", 
   const escaped = renderChecks([base], [evil]);
   assert.doesNotMatch(escaped, /<script>/);
 });
+
+test("hidden details: no target line, TLS days still shown", () => {
+  const hiddenTls: Partial<CheckWithState> = {
+    ...tls,
+    state: "down",
+    certDaysLeft: 5,
+    lastReason: null,
+  };
+  delete hiddenTls.host;
+  delete hiddenTls.port;
+  const html = renderChecks([hiddenTls as CheckWithState]);
+  assert.doesNotMatch(html, /class="url"|undefined/);
+  assert.match(html, /5 days left/);
+  const hiddenHttp: Partial<CheckWithState> = { ...base, lastReason: null };
+  delete (hiddenHttp as { url?: string }).url;
+  const http = renderChecks([hiddenHttp as CheckWithState]);
+  assert.doesNotMatch(http, /class="url"|undefined|keyword|class="reason"/);
+  assert.match(http, /class="name"/);
+});
