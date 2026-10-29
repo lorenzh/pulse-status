@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,15 +13,15 @@ export interface ServerOptions {
   /** Base URL of pulse-api. */
   apiUrl: string;
   pollMs: number;
-  fetch?: typeof fetch;
+  fetch?: typeof fetch | undefined;
   /** Path to a JSON theme file (PULSE_STATUS_THEME). */
-  themeFile?: string;
+  themeFile?: string | undefined;
   /** Product name (PULSE_STATUS_NAME), default "pulse"; also the whole page title when set. */
-  name?: string;
+  name?: string | undefined;
   /** Logo: local file path (svg, png, jpg, webp) or http(s) URL (PULSE_STATUS_LOGO). */
-  logo?: string;
+  logo?: string | undefined;
   /** Hide check targets, keywords and reasons in proxied JSON (PULSE_STATUS_HIDE_DETAILS), default true. */
-  hideDetails?: boolean;
+  hideDetails?: boolean | undefined;
   /** How long a proxied answer, error answers included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
   cacheMs?: number;
   /** Time limit for one upstream request, headers and body (PULSE_STATUS_UPSTREAM_TIMEOUT_MS). */
@@ -272,7 +272,7 @@ export function createStatusServer(options: ServerOptions): Server {
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
   ctx.apiBase = apiBase;
 
-  return createServer(async (req, res) => {
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
     res.setHeader("content-security-policy", csp);
     res.setHeader("x-content-type-options", "nosniff");
@@ -354,5 +354,12 @@ export function createStatusServer(options: ServerOptions): Server {
         .writeHead(500, { "content-type": "application/json" })
         .end(JSON.stringify({ error: String(err) }));
     }
+  };
+
+  return createServer((req, res) => {
+    handle(req, res).catch((err: unknown) => {
+      // The error response itself failed (for example headers already sent): drop the socket.
+      res.destroy(err instanceof Error ? err : new Error(String(err)));
+    });
   });
 }
