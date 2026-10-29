@@ -53,10 +53,16 @@ function parseChecks(answer: CachedAnswer): ListedCheck[] | undefined {
   if (list === undefined) return undefined;
   const out: ListedCheck[] = [];
   for (const item of list) {
-    if (!isObject(item) || typeof item.id !== "string" || typeof item.name !== "string") {
+    if (
+      !isObject(item) ||
+      typeof item.id !== "string" ||
+      typeof item.name !== "string" ||
+      typeof item.state !== "string" ||
+      item.state === ""
+    ) {
       return undefined;
     }
-    out.push({ id: item.id, name: item.name, state: String(item.state) });
+    out.push({ id: item.id, name: item.name, state: item.state });
   }
   return out;
 }
@@ -91,7 +97,10 @@ function uptimeOf(answer: CachedAnswer, checkId: string): number | undefined {
   const list = jsonList(answer);
   const entry = list?.find((item) => isObject(item) && item.checkId === checkId);
   if (!isObject(entry)) return undefined;
-  return typeof entry.uptime === "number" ? entry.uptime : undefined;
+  const value = entry.uptime;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
+    ? value
+    : undefined;
 }
 
 function sendText(res: ServerResponse, status: number, body: string): void {
