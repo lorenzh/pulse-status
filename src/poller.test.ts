@@ -323,7 +323,8 @@ test("resolved: requests status=resolved, keeps the last 7 days newest first", a
 
 test("resolved: a failed or malformed request gives an empty list and no error", async () => {
   for (const [bad, isLogged] of [
-    [new Response("x", { status: 500 }), false],
+    // The shared client reports an absent wire header before it checks the status.
+    [new Response("x", { status: 500 }), true],
     [json({ nope: true }), true],
   ] as const) {
     const fakeFetch = (async (url: string) =>
@@ -425,13 +426,12 @@ test("a hanging request (headers) times out as a failed refresh", async () => {
 test("a hanging json body times out as a failed refresh", async () => {
   const timer = fakeTimer();
   const updates: PollerState[] = [];
-  const hangingBody = {
-    ok: true,
-    headers: new Headers({ [WIRE_VERSION_HEADER]: String(WIRE_VERSION) }),
-    json: () => new Promise<unknown>(() => {}),
-  } as unknown as Response;
+  const hangingBody = (): Response =>
+    new Response(new ReadableStream<Uint8Array>({}), {
+      headers: { [WIRE_VERSION_HEADER]: String(WIRE_VERSION) },
+    });
   const poller = createPoller({
-    fetch: (() => Promise.resolve(hangingBody)) as unknown as typeof fetch,
+    fetch: (() => Promise.resolve(hangingBody())) as unknown as typeof fetch,
     timer,
     now: () => 1,
     pollMs: 5000,
@@ -835,7 +835,11 @@ test("the next tick starts only after a slow refresh ends", async () => {
   poller.start();
   await flush();
   const firstRound = calls;
-  assert.equal(timer.pending.size, 1, "only the request timeout is pending, no next tick");
+  assert.equal(
+    timer.pending.size,
+    firstRound,
+    "only the request timeouts are pending, no next tick",
+  );
   for (const open of gates.splice(0)) open();
   await flush();
   assert.equal(calls, firstRound, "no new round before the timer fires");

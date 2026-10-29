@@ -83,3 +83,19 @@ test("a matching or absent wire version header passes readiness", async () => {
   const absent = await pollWithHeader({});
   assert.equal(absent.notReadyReason(), undefined);
 });
+
+test("a body above the size cap counts as an error", async () => {
+  const metrics = createMetrics({ now: () => 0, pollMs: 5000 });
+  const stop = startApiPoll({
+    apiUrl: "http://api.test",
+    pollMs: 5000,
+    timeoutMs: 100,
+    metrics,
+    doFetch: async () => new Response(`[${" ".repeat(5 * 1024 * 1024 + 1)}]`),
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+  });
+  await new Promise((r) => setImmediate(r));
+  stop();
+  assert.match(metrics.render(), /outcome="error"\} 1/);
+});

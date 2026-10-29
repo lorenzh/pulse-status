@@ -1,6 +1,7 @@
 import {
   type ChecksResponse,
-  checkWireVersion,
+  type FetchJsonError,
+  fetchJson,
   type IncidentsResponse,
   type MaintenanceResponse,
   type UptimeResponse,
@@ -58,19 +59,6 @@ export interface Poller {
   start(): void;
   stop(): void;
   refresh(): Promise<void>;
-}
-
-/** Rejects when the signal aborts, also if the fetch implementation ignores it. */
-function abortion(signal: AbortSignal): Promise<never> {
-  const failed = new Promise<never>((_, reject) => {
-    const fail = (): void => reject(new Error("request aborted or timed out"));
-    if (signal.aborted) fail();
-    else signal.addEventListener("abort", fail, { once: true });
-  });
-  failed.catch(() => {
-    // Handled by the race in getJson; this only avoids an unhandled rejection after success.
-  });
-  return failed;
 }
 
 /** The API answered with a body that fails the contract validators. */
@@ -160,17 +148,50 @@ export function createPoller(options: PollerOptions): Poller {
 
   let hasLoggedMissingVersion = false;
 
-  async function getJson(url: string, signal: AbortSignal): Promise<unknown> {
-    const aborted = abortion(signal);
-    const response = await Promise.race([options.fetch(url, { signal }), aborted]);
-    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
-    const version = checkWireVersion(response.headers.get(WIRE_VERSION_HEADER));
-    if (version.status === "mismatch") throw new WireVersionError(`${url}: ${version.error}`);
-    if (version.status === "absent" && !hasLoggedMissingVersion) {
-      hasLoggedMissingVersion = true;
-      log(`${WIRE_VERSION_HEADER} header is missing; the API version is unchecked`, null);
+  const schedule = (fn: () => void, ms: number): (() => void) => {
+    const timeout = options.timer.setTimeout(fn, ms);
+    return () => options.timer.clearTimeout(timeout);
+  };
+
+  function failure(url: string, error: FetchJsonError): Error {
+    switch (error.kind) {
+      case "wire-mismatch":
+        return new WireVersionError(`${url}: ${error.message}`);
+      case "validation":
+      case "invalid-json":
+        return new InvalidResponseError(`${url}: ${error.message}`);
+      case "too-large":
+        return new InvalidResponseError(`${url} is larger than ${error.maxBytes} bytes`);
+      case "http":
+        return new Error(`${url} returned HTTP ${error.status}`);
+      case "timeout":
+        return new Error(`${url} timed out after ${error.timeoutMs}ms`);
+      case "aborted":
+        return new Error(`${url} aborted`);
+      case "network":
+        return new Error(`${url} is unreachable`, { cause: error.cause });
+      default: {
+        const unreachable: never = error;
+        return new Error(`unknown error: ${String(unreachable)}`);
+      }
     }
-    return await Promise.race([response.json() as Promise<unknown>, aborted]);
+  }
+
+  async function getJson(url: string, signal: AbortSignal): Promise<unknown> {
+    const result = await fetchJson<unknown>(url, {
+      fetch: options.fetch,
+      validate: (raw) => ({ ok: true, value: raw }),
+      timeoutMs,
+      signal,
+      schedule,
+      onWireAbsent: () => {
+        if (hasLoggedMissingVersion) return;
+        hasLoggedMissingVersion = true;
+        log(`${WIRE_VERSION_HEADER} header is missing; the API version is unchecked`, null);
+      },
+    });
+    if (!result.ok) throw failure(url, result.error);
+    return result.value;
   }
 
   /** Bars are optional: a failed or malformed uptime response yields no bars. */
@@ -255,13 +276,11 @@ export function createPoller(options: PollerOptions): Poller {
     const mine = generation;
     const controller = new AbortController();
     inFlight = controller;
-    const timeout = options.timer.setTimeout(() => controller.abort(), timeoutMs);
     try {
       await load(controller.signal);
     } finally {
       // A failed refresh leaves the other requests pending: cancel them so none outlive it.
       if (state.error !== null) controller.abort();
-      options.timer.clearTimeout(timeout);
       if (inFlight === controller) inFlight = undefined;
     }
     // Paused or stopped meanwhile: the result is dropped.

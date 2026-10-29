@@ -82,7 +82,7 @@ For `/api/incidents?status=resolved` the proxy keeps only incidents resolved in 
 
 ### Timeouts
 
-The proxy gives up on pulse-api after `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` (default 4000 ms), headers and body together, and answers `502` `API unreachable`. The server tells the page to wait `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` plus 2000 ms (`data-timeout-ms` on `<body>`, 6000 ms with the default), so the proxy's `502` arrives before the page gives up; without that value the page uses 10000 ms. A refresh that is still running delays the next one: the next refresh is scheduled only after the previous one ends. A timeout counts as a failed refresh.
+The proxy gives up on pulse-api after `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` (default 4000 ms), headers and body together, and answers `502` `API unreachable`. A body above 5 MiB answers `502` `invalid API response`. The server tells the page to wait `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` plus 2000 ms (`data-timeout-ms` on `<body>`, 6000 ms with the default), so the proxy's `502` arrives before the page gives up; without that value the page uses 10000 ms. A refresh that is still running delays the next one: the next refresh is scheduled only after the previous one ends. A timeout counts as a failed refresh.
 
 ### Freshness
 

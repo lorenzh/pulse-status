@@ -163,3 +163,21 @@ test("the proxy forwards the wire version header of the api", async () => {
   const without = await start({}, async () => ok([]));
   assert.equal((await fetch(`${without}/api/maintenance`)).headers.get("x-pulse-contract"), null);
 });
+
+test("a body above the size cap answers 502 invalid API response", async () => {
+  const big = `[${" ".repeat(5 * 1024 * 1024 + 1)}]`;
+  const base = await start({}, async () => new Response(big, { headers: JSON_HEADERS }));
+  const res = await fetch(`${base}/api/checks`);
+  assert.equal(res.status, 502);
+  assert.deepEqual(await res.json(), { error: "invalid API response" });
+});
+
+test("a wire version mismatch of the api reaches the page with the original header", async () => {
+  const base = await start(
+    {},
+    async () => new Response("[]", { headers: { ...JSON_HEADERS, "x-pulse-contract": "99" } }),
+  );
+  const res = await fetch(`${base}/api/maintenance`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("x-pulse-contract"), "99");
+});
