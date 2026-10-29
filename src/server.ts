@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { createRequire, stripTypeScriptTypes } from "node:module";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
+import { fetchJson, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
 import type { Logger } from "./log.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
@@ -137,7 +137,13 @@ const tsModules: Record<string, string> = {
 
 // Runtime files of the contract package, served to the browser under /pulse-contract/.
 const contractDir = fileURLToPath(new URL("./", import.meta.resolve("@lorenzh/pulse-contract")));
-const contractModules = new Set(["index.js", "schema.js", "validate.js", "version.js"]);
+const contractModules = new Set([
+  "index.js",
+  "schema.js",
+  "validate.js",
+  "version.js",
+  "client.js",
+]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
 const zodDir = dirname(
@@ -208,49 +214,51 @@ function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswe
     : { status, body: JSON.stringify(body), wireVersion };
 }
 
-/** Rejects when the signal aborts, also if the fetch implementation ignores it. */
-function abortion(signal: AbortSignal): Promise<never> {
-  return new Promise((_, reject) => {
-    signal.addEventListener("abort", () => reject(new Error("upstream timeout")), { once: true });
-  });
-}
-
 async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
-  const signal = AbortSignal.timeout(ctx.timeoutMs);
-  const timedOut = abortion(signal);
-  timedOut.catch(() => {
-    // Handled by the race below; this only avoids an unhandled rejection after success.
+  // The shared client does not expose headers; this wrapper records those the proxy forwards.
+  let contentType = "";
+  let wireHeader: string | undefined;
+  const recordingFetch: typeof fetch = async (input, init) => {
+    const response = await ctx.doFetch(input, init);
+    contentType = response.headers.get("content-type") ?? "";
+    wireHeader = response.headers.get(WIRE_VERSION_HEADER) ?? undefined;
+    return response;
+  };
+  const target = ctx.apiBase + url.pathname.slice("/api".length) + url.search;
+  const result = await fetchJson<unknown>(target, {
+    fetch: recordingFetch,
+    validate: (raw) => ({ ok: true, value: raw }),
+    timeoutMs: ctx.timeoutMs,
   });
-  let upstream: Response;
-  let text: string;
-  try {
-    const target = ctx.apiBase + url.pathname.slice("/api".length) + url.search;
-    upstream = await Promise.race([ctx.doFetch(target, { signal }), timedOut]);
-    text = await Promise.race([upstream.text(), timedOut]);
-  } catch {
-    // Any fetch failure or timeout means the upstream API is unreachable; answer 502.
-    return answer(502, { error: "API unreachable" });
+  if (!result.ok) {
+    switch (result.error.kind) {
+      case "http":
+        // The upstream body is never forwarded.
+        return answer(result.error.status, { error: "API error" });
+      case "wire-mismatch":
+        // The page poller reads the header and shows the version error; the body is not read.
+        return answer(200, { error: "API version mismatch" }, wireHeader);
+      case "too-large":
+      case "invalid-json":
+      case "validation":
+        return answer(502, { error: "invalid API response" });
+      case "timeout":
+      case "aborted":
+      case "network":
+        return answer(502, { error: "API unreachable" });
+      default: {
+        const unreachable: never = result.error;
+        return answer(502, { error: String(unreachable) });
+      }
+    }
   }
-  if (!upstream.ok) {
-    // The upstream body is never forwarded.
-    return answer(upstream.status, { error: "API error" });
-  }
-  const mediaType = (upstream.headers.get("content-type") ?? "")
-    .split(";")[0]
-    ?.trim()
-    .toLowerCase();
+  const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
   if (mediaType !== "application/json") return answer(502, { error: "invalid API response" });
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return answer(502, { error: "invalid API response" });
-  }
-  let body = filterApiBody(url.pathname, parsed, ctx.isHidden);
+  let body = filterApiBody(url.pathname, result.value, ctx.isHidden);
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
   }
-  return answer(200, body, upstream.headers.get(WIRE_VERSION_HEADER) ?? undefined);
+  return answer(200, body, wireHeader);
 }
 
 function cachedAnswer(key: string, url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {

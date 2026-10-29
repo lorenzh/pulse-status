@@ -25,7 +25,7 @@ const IMPORT_FROM = /\bfrom\s*"([^"]+)"/g;
 
 test("served contract modules have no bare zod specifier", async () => {
   const base = await start();
-  for (const file of ["index.js", "schema.js", "validate.js", "version.js"]) {
+  for (const file of ["index.js", "schema.js", "validate.js", "version.js", "client.js"]) {
     const r = await fetch(`${base}/pulse-contract/${file}`);
     assert.equal(r.status, 200, file);
     const js = await r.text();
