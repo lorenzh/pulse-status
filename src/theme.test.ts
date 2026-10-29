@@ -8,7 +8,7 @@ function fakeStorage(initial: Record<string, string> = {}): ThemeStorage & {
   const data = { ...initial };
   return {
     data,
-    getItem: (k) => (k in data ? data[k] : null),
+    getItem: (k) => data[k] ?? null,
     setItem: (k, v) => {
       data[k] = v;
     },

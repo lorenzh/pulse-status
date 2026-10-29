@@ -32,19 +32,25 @@ const table: Record<string, [string, string]> = {
   "info-tint": ["#dde4f1", "#262e47"],
 };
 
+function must<T>(value: T | undefined, what: string): T {
+  if (value === undefined) throw new Error(`missing ${what}`);
+  return value;
+}
+
 function vars(block: string): Record<string, string> {
   const out: Record<string, string> = {};
   // eslint-disable-next-line sonarjs/super-linear-regex -- test-only input, generated CSS
-  for (const m of block.matchAll(/--([\w-]+):(#[0-9a-fA-F]{6});/g)) out[m[1]] = m[2];
+  for (const m of block.matchAll(/--([\w-]+):(#[0-9a-fA-F]{6});/g))
+    out[must(m[1], "name")] = must(m[2], "value");
   return out;
 }
 
 const css = themeCss(loadDefaultTheme());
 const lines = css.trim().split("\n");
 const generated = {
-  light: vars(lines[0]),
-  dark: vars(lines[1]),
-  mediaDark: vars(lines[2]),
+  light: vars(must(lines[0], "light line")),
+  dark: vars(must(lines[1], "dark line")),
+  mediaDark: vars(must(lines[2], "media line")),
 };
 
 function luminance(hex: string): number {
@@ -52,11 +58,12 @@ function luminance(hex: string): number {
     const c = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   });
-  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+  const [r = 0, g = 0, b = 0] = ch;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
 function contrast(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  const [hi = 0, lo = 0] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 }
 
@@ -77,16 +84,18 @@ const controlPairs: [string, string][] = [
 // Not checked: `line-strong` is a decorative card outline (1.7:1 light, 2.0:1 dark with the
 // approved values), so it is not a control border; `field-line` is the control border.
 
+const byName = (a: string, b: string): number => a.localeCompare(b);
+
 test("the default theme file lists exactly the documented colour roles", () => {
-  assert.deepEqual(Object.keys(file.light).sort(), [...COLOR_KEYS].sort());
-  assert.deepEqual(Object.keys(file.dark).sort(), [...COLOR_KEYS].sort());
-  assert.deepEqual(Object.keys(table).sort(), [...COLOR_KEYS].sort());
+  assert.deepEqual(Object.keys(file.light).sort(byName), [...COLOR_KEYS].sort(byName));
+  assert.deepEqual(Object.keys(file.dark).sort(byName), [...COLOR_KEYS].sort(byName));
+  assert.deepEqual(Object.keys(table).sort(byName), [...COLOR_KEYS].sort(byName));
 });
 
 test("dark CSS is generated once and identical for explicit and system dark", () => {
   assert.deepEqual(generated.mediaDark, generated.dark);
   assert.match(
-    lines[2],
+    must(lines[2], "media line"),
     /^@media \(prefers-color-scheme: dark\)\{:root:not\(\[data-theme="light"\]\)\{/,
   );
 });
@@ -107,14 +116,14 @@ for (const [mode, index] of [
 
   test(`${mode}: text pairs have contrast >= 4.5`, () => {
     for (const [fg, bg] of textPairs) {
-      const ratio = contrast(fromFile[fg], fromFile[bg]);
+      const ratio = contrast(must(fromFile[fg], fg), must(fromFile[bg], bg));
       assert.ok(ratio >= 4.5, `${mode}: ${fg} on ${bg} = ${ratio.toFixed(2)}`);
     }
   });
 
   test(`${mode}: control pairs have contrast >= 3`, () => {
     for (const [fg, bg] of controlPairs) {
-      const ratio = contrast(fromFile[fg], fromFile[bg]);
+      const ratio = contrast(must(fromFile[fg], fg), must(fromFile[bg], bg));
       assert.ok(ratio >= 3, `${mode}: ${fg} on ${bg} = ${ratio.toFixed(2)}`);
     }
   });
@@ -122,8 +131,8 @@ for (const [mode, index] of [
 
 test("the default theme has the fonts and radii", () => {
   const theme = loadTheme(undefined);
-  assert.match(theme.fonts["font-sans"], /Space Grotesk/);
-  assert.match(theme.fonts["font-mono"], /JetBrains Mono/);
+  assert.match(must(theme.fonts["font-sans"], "font-sans"), /Space Grotesk/);
+  assert.match(must(theme.fonts["font-mono"], "font-mono"), /JetBrains Mono/);
   assert.deepEqual(theme.radii, {
     "radius-sm": "6px",
     "radius-md": "12px",
@@ -136,7 +145,9 @@ test("the page CSS uses only theme variables: no raw colours, shadows or stripes
   assert.doesNotMatch(style, /#[0-9a-fA-F]{3,8}\b/);
   assert.doesNotMatch(style, /\b(?:rgb|hsl)a?\(/);
   assert.doesNotMatch(style, /box-shadow|border-left/);
-  const used = new Set([...style.matchAll(/var\(--([\w-]+)\)/g)].map((m) => m[1]));
+  const used = new Set(
+    [...style.matchAll(/var\(--([\w-]+)\)/g)].map((m) => must(m[1], "variable")),
+  );
   const known = new Set<string>([
     ...COLOR_KEYS,
     "font-sans",

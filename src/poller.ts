@@ -37,7 +37,7 @@ export interface PollerOptions {
   now: () => number;
   pollMs: number;
   /** Base path of the API, e.g. "/api". */
-  baseUrl?: string;
+  baseUrl?: string | undefined;
   onUpdate: (state: PollerState) => void;
   /** Time limit for one refresh, headers and body of every request; default `min(pollMs, 4000)`. */
   timeoutMs?: number;
