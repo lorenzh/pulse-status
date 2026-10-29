@@ -9,11 +9,19 @@ export interface XmlNode {
 
 const NAMED: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
+/** Decodes `#123` or `#x1F`; the code point must be a legal XML 1.0 character. */
+function decodeReference(name: string): string {
+  const cp = name.startsWith("#x") ? Number.parseInt(name.slice(2), 16) : Number(name.slice(1));
+  if (!Number.isSafeInteger(cp) || !isLegalCodePoint(cp)) {
+    throw new Error(`illegal character reference &${name};`);
+  }
+  return String.fromCodePoint(cp);
+}
+
 /** Decodes the five predefined and numeric entities; any other `&` is an error. */
 function decode(raw: string): string {
   const out = raw.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-z]+);/g, (whole, name: string) => {
-    if (name.startsWith("#x")) return String.fromCodePoint(Number.parseInt(name.slice(2), 16));
-    if (name.startsWith("#")) return String.fromCodePoint(Number(name.slice(1)));
+    if (name.startsWith("#")) return decodeReference(name);
     return Object.hasOwn(NAMED, name) ? (NAMED[name] ?? whole) : whole;
   });
   // Any entity left over was not one of the allowed forms; a decoded "&" cannot be told apart
@@ -49,7 +57,9 @@ function parseAttributes(rest: string): Record<string, string> {
   const attrs: Record<string, string> = {};
   let remaining = rest;
   for (let m = ATTRIBUTE.exec(remaining); m !== null; m = ATTRIBUTE.exec(remaining)) {
-    attrs[m[1] ?? ""] = decode(m[2] ?? "");
+    const attrName = m[1] ?? "";
+    if (Object.hasOwn(attrs, attrName)) throw new Error(`duplicate attribute ${attrName}`);
+    attrs[attrName] = decode(m[2] ?? "");
     remaining = remaining.slice(m[0].length);
   }
   if (remaining.trim() !== "") throw new Error("bad attribute");

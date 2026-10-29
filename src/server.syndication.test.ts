@@ -34,6 +34,7 @@ interface Harness {
   base: string;
   calls: string[];
   failing: Set<string>;
+  bodies: Record<string, unknown>;
 }
 
 async function start(options: Partial<ServerOptions> = {}): Promise<Harness> {
@@ -63,7 +64,12 @@ async function start(options: Partial<ServerOptions> = {}): Promise<Harness> {
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   servers.push(server);
-  return { base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, calls, failing };
+  return {
+    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    calls,
+    failing,
+    bodies,
+  };
 }
 
 test("feed: Atom with open and in-window resolved incidents of listed checks", async () => {
@@ -227,4 +233,38 @@ test("page links the feed only with a public URL; global CSP is unchanged", asyn
     offRes.headers.get("content-security-policy"),
     (await fetch(`${on.base}/`)).headers.get("content-security-policy"),
   );
+});
+
+test("badge and feed: invalid state in checks gives 503 unavailable", async () => {
+  for (const bad of [undefined, null, 5, ""]) {
+    const h = await start();
+    h.bodies["/checks"] = [
+      { id: "web", name: "Web", state: bad },
+      { id: "api", name: "API", state: "up" },
+    ];
+    for (const path of ["/badge/web.svg", "/badge/api.svg", "/badge/ghost.svg", "/feed.atom"]) {
+      const res = await fetch(h.base + path);
+      assert.equal(res.status, 503, `${String(bad)} ${path}`);
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      assert.equal(await res.text(), "unavailable");
+    }
+  }
+});
+
+test("badge: an unlisted non-empty state still renders unknown with 200", async () => {
+  const h = await start();
+  h.bodies["/checks"] = [{ id: "web", name: "Web", state: "weird" }];
+  const res = await fetch(`${h.base}/badge/web.svg`);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /Web: unknown/);
+});
+
+test("badge: uptime outside 0-100 means no data", async () => {
+  for (const value of [150, -1, 100.5]) {
+    const h = await start();
+    h.bodies["/uptime"] = [{ checkId: "web", uptime: value, days: [] }];
+    const res = await fetch(`${h.base}/badge/web.svg`);
+    assert.equal(res.status, 200);
+    assert.doesNotMatch(await res.text(), /150|-1%/);
+  }
 });
