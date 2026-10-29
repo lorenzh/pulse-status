@@ -741,3 +741,28 @@ test("end to end: the page polls the real server with details hidden by default"
   const html = renderChecks(state?.checks ?? []);
   assert.doesNotMatch(html, /example\.test|db\.internal|5432/);
 });
+
+test("hidden and visible heartbeat checks pass validation", async () => {
+  const hb = {
+    id: "h",
+    name: "H",
+    type: "heartbeat",
+    period: 60_000,
+    grace: 0,
+    state: "unknown",
+    consecutiveDown: 0,
+    lastResultAt: null,
+    lastReason: null,
+    locations: [],
+  };
+  const hidden: Record<string, unknown> = { ...hb };
+  delete hidden.period;
+  delete hidden.grace;
+  for (const item of [hb, hidden]) {
+    const state = await pollOnce((async (url: string) =>
+      url.endsWith("/checks") ? json([item]) : json([])) as unknown as typeof fetch);
+    assert.equal(state?.error, null);
+    assert.equal(state?.checks.length, 1);
+    assert.equal("url" in (state?.checks[0] ?? {}), false);
+  }
+});

@@ -53,7 +53,17 @@ function cleanReason(value: unknown, isHidden: boolean): unknown {
 
 function cleanCheck(check: Fields, isHidden: boolean): Fields {
   const out: Fields = { ...check };
+  // The api never serves a ping secret; drop it defensively.
+  delete out.secret;
+  if (out.type === "heartbeat") {
+    delete out.url;
+    delete out.host;
+    delete out.port;
+    delete out.keyword;
+  }
   if (isHidden) {
+    delete out.period;
+    delete out.grace;
     delete out.url;
     delete out.host;
     delete out.port;

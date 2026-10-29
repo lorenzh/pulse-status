@@ -89,7 +89,7 @@ function draw(state) {
     return;
   }
   const env = makeEnv();
-  show("checks", renderChecks(state.checks, state.uptime));
+  show("checks", renderChecks(state.checks, state.uptime, env));
   show("incidents", renderIncidents(state.incidents, state.checks, env));
   show("resolved", renderResolvedIncidents(state.resolved, state.checks, env));
   show("maintenance", renderUpcomingMaintenance(state.maintenance, state.checks, env));

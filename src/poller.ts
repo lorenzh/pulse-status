@@ -78,7 +78,7 @@ class WireVersionError extends Error {
 
 /**
  * Validates `/checks` as the server serves it: with details hidden it removes the target
- * (`url`, or `host` and `port`). Placeholders fill only the copy that is validated, so the
+ * (`url`, or `host` and `port`; a heartbeat check loses `period` and `grace`). Placeholders fill only the copy that is validated, so the
  * returned checks have no fake target and render omits the target line.
  */
 function validServedChecks(body: unknown): ChecksResponse {
@@ -90,8 +90,9 @@ function validServedChecks(body: unknown): ChecksResponse {
 
 function withTargetPlaceholder(item: unknown): unknown {
   if (typeof item !== "object" || item === null) return item;
-  if ("type" in item && item.type === "tls") return { host: "", port: 0, ...item };
-  return { url: "", ...item };
+  if ("type" in item && item.type === "heartbeat") return { period: 1000, grace: 0, ...item };
+  if ("type" in item && item.type === "tls") return { host: "hidden", port: 0, ...item };
+  return { url: "https://hidden.invalid/", ...item };
 }
 
 /** Unwraps a validation result: a failure throws its message, which names the path. */
