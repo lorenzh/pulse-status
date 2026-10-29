@@ -53,6 +53,8 @@ const incident = {
   reason: `got https://user:pass@${IP}/p?token=abc`,
 };
 
+const JSON_HEADERS = { "content-type": "application/json" };
+
 interface Fake {
   calls: string[];
   status: number;
@@ -64,11 +66,12 @@ async function start(options: Partial<ServerOptions> = {}, fake?: Partial<Fake>)
   const fakeFetch: typeof fetch = async (input) => {
     const url = String(input);
     state.calls.push(url);
-    if (state.body !== "") return new Response(state.body, { status: state.status });
+    if (state.body !== "")
+      return new Response(state.body, { status: state.status, headers: JSON_HEADERS });
     let body: unknown = [];
     if (url.endsWith("/checks")) body = [httpCheck, tlsCheck];
     else if (url.includes("/incidents")) body = [incident];
-    return new Response(JSON.stringify(body), { status: state.status });
+    return new Response(JSON.stringify(body), { status: state.status, headers: JSON_HEADERS });
   };
   const server = createStatusServer({
     apiUrl: "http://api.test",

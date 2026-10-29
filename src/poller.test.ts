@@ -25,7 +25,8 @@ function fakeTimer() {
   };
 }
 
-const json = (body: unknown) => new Response(JSON.stringify(body));
+const json = (body: unknown) =>
+  new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
 
 test("refreshes on schedule, shows error, recovers, stops", async () => {
   const timer = fakeTimer();
@@ -259,7 +260,7 @@ test("poller requests only allow-listed API paths", async () => {
   const poller = createPoller({
     fetch: async (input) => {
       requested.push(String(input));
-      return new Response("[]");
+      return new Response("[]", { headers: { "content-type": "application/json" } });
     },
     timer: { setTimeout: () => 0, clearTimeout: () => undefined },
     now: () => 0,
