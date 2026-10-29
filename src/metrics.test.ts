@@ -43,3 +43,16 @@ test("render lists the series", () => {
   m.setShuttingDown();
   assert.match(m.render(), /^pulse_up 0$/m);
 });
+
+test("a mismatch survives failed polls and clears on the next ok", () => {
+  const m = createMetrics({ now: () => 1_000_000, pollMs: 5000 });
+  m.recordPoll("ok");
+  assert.equal(m.notReadyReason(), undefined);
+  m.recordPoll("mismatch");
+  assert.equal(m.notReadyReason(), "API version mismatch");
+  m.recordPoll("error");
+  assert.equal(m.notReadyReason(), "API version mismatch");
+  assert.match(m.render(), /outcome="error"} 1/);
+  m.recordPoll("ok");
+  assert.equal(m.notReadyReason(), undefined);
+});

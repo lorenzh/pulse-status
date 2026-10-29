@@ -645,3 +645,21 @@ test("heartbeat card escapes the name and the reason", () => {
   );
   assert.doesNotMatch(html, /<img/);
 });
+
+test("summary: a version error replaces every other summary", () => {
+  const text = ">Status unavailable: versions do not match<";
+  const open: Incident[] = [{ id: 1, checkId: "c", openedAt: 1, resolvedAt: null, reason: null }];
+  const cases: Array<[CheckWithState[], Incident[]]> = [
+    [[], []],
+    [[withState("down")], []],
+    [[withState("degraded")], []],
+    [[withState("up")], open],
+    [[withState("down")], open],
+  ];
+  for (const [checks, incidents] of cases) {
+    const html = renderSummary(checks, incidents, "version");
+    assert.match(html, /status-warning/);
+    assert.ok(html.includes(text), html);
+    assert.doesNotMatch(html, /incident|down|degraded|No checks/);
+  }
+});

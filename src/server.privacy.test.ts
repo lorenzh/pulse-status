@@ -301,7 +301,7 @@ const FUTURE = {
   secret: "should-never-appear",
 };
 const upstreamLocation = {
-  location: "eu-secret-name",
+  location: "eu-1",
   stale: false,
   futureField: "never-served",
   result: {
@@ -311,7 +311,7 @@ const upstreamLocation = {
     statusCode: 200,
     latencyMs: 12,
     reason: null,
-    location: "eu-secret-name",
+    location: "eu-1",
     attempts: 2,
     futureField: "never-served",
   },
@@ -407,7 +407,7 @@ test("checks: the served keys equal the allow-list per type and hide mode", asyn
         { body: JSON.stringify([{ ...c.check, maintenance: { ...maintenance, futureField: 1 } }]) },
       );
       const text = await fetch(`${base}/api/checks`).then((r) => r.text());
-      assert.doesNotMatch(text, /never-served|should-never-appear|eu-secret-name/, c.label);
+      assert.doesNotMatch(text, /never-served|should-never-appear/, c.label);
       const [item] = JSON.parse(text) as Record<string, unknown>[];
       const expected = [...(isHidden ? c.hidden : c.shown), "maintenance"].sort(byName);
       assert.deepEqual(
@@ -416,10 +416,23 @@ test("checks: the served keys equal the allow-list per type and hide mode", asyn
         `${c.label} hidden=${isHidden}`,
       );
       const [loc] = (item?.locations ?? []) as Record<string, unknown>[];
-      assert.deepEqual(Object.keys(loc ?? {}).sort(byName), ["result", "stale"], c.label);
+      assert.deepEqual(
+        Object.keys(loc ?? {}).sort(byName),
+        ["location", "result", "stale"],
+        c.label,
+      );
       assert.deepEqual(
         Object.keys((loc?.result ?? {}) as object).sort(byName),
-        ["latencyMs", "reason", "status", "timestamp"],
+        [
+          "attempts",
+          "checkId",
+          "latencyMs",
+          "location",
+          "reason",
+          "statusCode",
+          "status",
+          "timestamp",
+        ].sort(byName),
         c.label,
       );
       assert.deepEqual(

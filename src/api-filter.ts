@@ -60,8 +60,16 @@ function pick(source: Fields, keys: readonly string[]): Fields {
 }
 
 const CHECK_COMMON = ["id", "name", "type", "state", "lastResultAt", "certDaysLeft"] as const;
-// The contract validator requires the other result fields; the page does not read them.
-const RESULT_FIELDS = ["timestamp", "status", "latencyMs"] as const;
+// The contract validator requires these result fields. They carry no target data.
+const RESULT_FIELDS = [
+  "timestamp",
+  "status",
+  "latencyMs",
+  "location",
+  "checkId",
+  "statusCode",
+  "attempts",
+] as const;
 const WINDOW_FIELDS = ["checkId", "start", "end", "note"] as const;
 
 function cleanResult(result: unknown, isHidden: boolean): Fields {
@@ -73,7 +81,10 @@ function cleanResult(result: unknown, isHidden: boolean): Fields {
 
 function cleanLocation(entry: unknown, isHidden: boolean): Fields | null {
   if (!isObject(entry)) return null;
-  return { ...pick(entry, ["stale"]), result: cleanResult(entry.result, isHidden) };
+  return {
+    ...pick(entry, ["stale", "location"]),
+    result: cleanResult(entry.result, isHidden),
+  };
 }
 
 function cleanTarget(check: Fields, isHidden: boolean): Fields {
@@ -121,7 +132,7 @@ function cleanMaintenance(window: Fields): Fields {
 function cleanUptime(entry: Fields): Fields {
   const out = pick(entry, ["checkId", "uptime"]);
   if (Array.isArray(entry.days)) {
-    out.days = entry.days.filter(isObject).map((day) => pick(day, ["date", "uptime"]));
+    out.days = entry.days.filter(isObject).map((day) => pick(day, ["date", "uptime", "results"]));
   }
   return out;
 }

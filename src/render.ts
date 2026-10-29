@@ -115,6 +115,7 @@ export function renderSummary(
     if (error === null) return "";
     return summaryLine("warning", error === "version" ? VERSION_SUMMARY : "Status unavailable");
   }
+  if (error === "version") return summaryLine("warning", VERSION_SUMMARY);
   if (checks.length === 0) {
     return '<p class="summary status-none" role="status">No checks configured</p>';
   }
@@ -129,7 +130,7 @@ export function renderSummary(
     text = `${countWord(degraded, "check")} degraded`;
   } else if (error !== null) {
     status = "warning";
-    text = error === "version" ? VERSION_SUMMARY : "Status may be outdated";
+    text = "Status may be outdated";
   }
   const open = incidents.filter((incident) => incident.resolvedAt === null).length;
   if (open > 0) text += ` · ${countWord(open, "incident")} open`;

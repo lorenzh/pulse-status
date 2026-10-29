@@ -37,7 +37,8 @@ export function createMetrics(options: MetricsOptions): Metrics {
   return {
     recordPoll(outcome) {
       polls[outcome] += 1;
-      isMismatched = outcome === "mismatch";
+      if (outcome === "mismatch") isMismatched = true;
+      else if (outcome === "ok") isMismatched = false;
       if (outcome === "ok") lastSuccessMs = options.now();
     },
     recordHttp(code) {
