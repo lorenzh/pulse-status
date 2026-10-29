@@ -3,7 +3,7 @@ import { startApiPoll } from "./api-poll.ts";
 import { type Logger, type LogLevel, parseLogLevel } from "./log.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { createStatusServer } from "./server.ts";
-import { parseHideDetails, parseMs } from "./settings.ts";
+import { parseHideDetails, parseMs, parsePublicUrl } from "./settings.ts";
 
 /** A shorter interval would load the API without a visible benefit. */
 export const MIN_POLL_MS = 1000;
@@ -34,6 +34,7 @@ export function startFromEnv(
   const themeFile = env.PULSE_STATUS_THEME || undefined;
   const name = env.PULSE_STATUS_NAME || undefined;
   const logo = env.PULSE_STATUS_LOGO || undefined;
+  const publicUrl = parsePublicUrl(env.PULSE_STATUS_PUBLIC_URL);
   const hideDetails = parseHideDetails(env.PULSE_STATUS_HIDE_DETAILS);
   const cacheMs = parseMs("PULSE_STATUS_CACHE_MS", env.PULSE_STATUS_CACHE_MS, 2000, 0);
   const upstreamTimeoutMs = parseMs(
@@ -49,6 +50,7 @@ export function startFromEnv(
     themeFile,
     name,
     logo,
+    publicUrl,
     hideDetails,
     cacheMs,
     upstreamTimeoutMs,
