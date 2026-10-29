@@ -3,6 +3,9 @@
 .repos
 node_modules
 **/*.test.ts
+**/*.spec.ts
+**/__fixtures__
+**/*.mock.ts
 test
 **/test
 biome.json
