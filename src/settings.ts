@@ -1,42 +1,72 @@
-/** Parses PULSE_STATUS_HIDE_DETAILS: true/false/1/0; empty or unset means true (hidden). */
-export function parseHideDetails(value: string | undefined): boolean {
-  if (value === undefined || value === "") return true;
-  if (value === "true" || value === "1") return true;
-  if (value === "false" || value === "0") return false;
-  throw new Error("PULSE_STATUS_HIDE_DETAILS: must be true, false, 1 or 0");
+import {
+  type Env,
+  readBool,
+  readMs,
+  readPort,
+  readString,
+  readUrl,
+  StartupError,
+} from "@lorenzh/pulse-kit";
+
+/** A shorter interval would load the API without a visible benefit. */
+export const MIN_POLL_MS = 1000;
+
+export interface Settings {
+  port: number;
+  apiUrl: string;
+  pollMs: number;
+  themeFile: string | undefined;
+  name: string | undefined;
+  logo: string | undefined;
+  /** Normalized, without a trailing slash; undefined means no feed. */
+  publicUrl: string | undefined;
+  hideDetails: boolean;
+  cacheMs: number;
+  upstreamTimeoutMs: number;
 }
 
-/** Parses a millisecond setting: empty or unset means the default; below `min` or not an integer throws. */
-export function parseMs(
-  name: string,
-  value: string | undefined,
-  fallback: number,
-  min: number,
-): number {
-  if (value === undefined || value === "") return fallback;
-  const ms = Number(value);
-  if (!Number.isInteger(ms) || ms < min) {
-    throw new Error(`${name}: must be an integer >= ${min}`);
-  }
-  return ms;
-}
+const PUBLIC_URL = "PULSE_STATUS_PUBLIC_URL";
 
 /**
- * Parses PULSE_STATUS_PUBLIC_URL: an http(s) URL without userinfo, query or fragment. Empty or
- * unset means no feed. Returns the URL without a trailing slash. The value is never echoed.
+ * PULSE_STATUS_PUBLIC_URL: an http(s) URL without credentials, query or fragment. Unset or empty
+ * means no feed. The value is never echoed.
  */
-export function parsePublicUrl(value: string | undefined): string | undefined {
-  if (value === undefined || value === "") return undefined;
-  const bad = (): Error =>
-    new Error(
-      "PULSE_STATUS_PUBLIC_URL: must be an http(s) URL without credentials, query or fragment",
+function readPublicUrl(env: Env): string | undefined {
+  const raw = readString(env, PUBLIC_URL);
+  // `new URL` hides a bare "?" or "#", so the raw text is checked as well.
+  if (raw?.includes("?") || raw?.includes("#")) {
+    throw new StartupError(
+      `${PUBLIC_URL}: must be an http(s) URL without credentials, query or fragment`,
+      { setting: PUBLIC_URL },
     );
-  if (!URL.canParse(value)) throw bad();
-  const url = new URL(value);
-  const isHttp = url.protocol === "http:" || url.protocol === "https:";
-  if (!isHttp || url.username !== "" || url.password !== "") throw bad();
-  if (value.includes("?") || value.includes("#")) throw bad();
-  let href = url.href;
-  while (href.endsWith("/")) href = href.slice(0, -1);
-  return href;
+  }
+  return readUrl(env, PUBLIC_URL);
+}
+
+function readApiUrl(env: Env): string {
+  const apiUrl = readString(env, "PULSE_API_URL") ?? "http://localhost:3000";
+  // Never echo the value: it may carry credentials.
+  if (!URL.canParse(apiUrl)) {
+    throw new StartupError("PULSE_API_URL is not a valid URL", { setting: "PULSE_API_URL" });
+  }
+  return apiUrl;
+}
+
+/** Reads and validates every PULSE_STATUS_*, PORT, POLL_MS and PULSE_API_URL setting. */
+export function readSettings(env: Env): Settings {
+  return {
+    port: readPort(env, "PORT", { fallback: 8080 }) ?? 8080,
+    apiUrl: readApiUrl(env),
+    pollMs: readMs(env, "POLL_MS", { fallback: 5000, min: MIN_POLL_MS }),
+    themeFile: readString(env, "PULSE_STATUS_THEME"),
+    name: readString(env, "PULSE_STATUS_NAME"),
+    logo: readString(env, "PULSE_STATUS_LOGO"),
+    publicUrl: readPublicUrl(env),
+    hideDetails: readBool(env, "PULSE_STATUS_HIDE_DETAILS", true),
+    cacheMs: readMs(env, "PULSE_STATUS_CACHE_MS", { fallback: 2000, min: 0 }),
+    upstreamTimeoutMs: readMs(env, "PULSE_STATUS_UPSTREAM_TIMEOUT_MS", {
+      fallback: 4000,
+      min: 1,
+    }),
+  };
 }

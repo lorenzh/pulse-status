@@ -5,10 +5,17 @@ import { createRequire, stripTypeScriptTypes } from "node:module";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchJson, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
+import {
+  createLogger,
+  escapeHtml,
+  handleOps,
+  type Logger,
+  type Readiness,
+  sendJson,
+} from "@lorenzh/pulse-kit";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
-import type { Logger } from "./log.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
-import { escapeHtml, RESOLVED_WINDOW_MS } from "./render.ts";
+import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 
@@ -189,6 +196,23 @@ async function readContractModule(pathname: string): Promise<string | undefined>
   return (await readFile(contractDir + file, "utf8")).replace(/from "zod"/g, `from "${zodEntry}"`);
 }
 
+// The browser-safe modules of pulse-kit (they import nothing), served under /pulse-kit/.
+const kitDir = fileURLToPath(new URL("./", import.meta.resolve("@lorenzh/pulse-kit/escape")));
+const kitModules = new Set(["escape.js", "format-duration.js"]);
+
+/** The source of a browser-safe kit module under `/pulse-kit/`, else undefined. */
+async function readKitModule(pathname: string): Promise<string | undefined> {
+  const prefix = "/pulse-kit/";
+  if (!pathname.startsWith(prefix)) return undefined;
+  const file = pathname.slice(prefix.length);
+  return kitModules.has(file) ? await readFile(kitDir + file, "utf8") : undefined;
+}
+
+/** A runtime file of pulse-kit or pulse-contract (with zod) for the browser, else undefined. */
+async function readDependencyModule(pathname: string): Promise<string | undefined> {
+  return (await readKitModule(pathname)) ?? (await readContractModule(pathname));
+}
+
 function contentSecurityPolicy(logoOrigin: string | undefined): string {
   const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
   return [
@@ -202,10 +226,6 @@ function contentSecurityPolicy(logoOrigin: string | undefined): string {
     "form-action 'none'",
     "frame-ancestors 'none'",
   ].join("; ");
-}
-
-function sendJson(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 }
 
 function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswer {
@@ -299,31 +319,6 @@ async function proxyApi(
   res.writeHead(result.status, headers).end(result.body);
 }
 
-/**
- * Serves /healthz (liveness), /readyz (readiness) and /metrics straight from memory; true when
- * the path was one of them. Liveness never looks at the API or at shutdown.
- */
-function serveOps(pathname: string, res: ServerResponse, metrics: Metrics): boolean {
-  if (pathname === "/healthz") {
-    res.writeHead(200, { "content-type": "text/plain" }).end("ok\n");
-    return true;
-  }
-  if (pathname === "/readyz") {
-    const reason = metrics.notReadyReason();
-    res
-      .writeHead(reason === undefined ? 200 : 503, { "content-type": "text/plain" })
-      .end(reason === undefined ? "ok\n" : `${reason}\n`);
-    return true;
-  }
-  if (pathname === "/metrics") {
-    res
-      .writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8" })
-      .end(metrics.render());
-    return true;
-  }
-  return false;
-}
-
 /** The detail stays in the log; the client only gets a generic 500. */
 function logFailure(log: Logger, path: string, err: unknown): void {
   const fields: Record<string, unknown> = { path };
@@ -333,7 +328,7 @@ function logFailure(log: Logger, path: string, err: unknown): void {
   } else {
     fields.error = String(err);
   }
-  log("error", "request failed", fields);
+  log.error("request failed", fields);
 }
 
 export function createStatusServer(options: ServerOptions): Server {
@@ -374,7 +369,7 @@ export function createStatusServer(options: ServerOptions): Server {
       ? ""
       : '<link rel="alternate" type="application/atom+xml" href="/feed.atom">';
 
-  const log: Logger = options.log ?? (() => {});
+  const log: Logger = options.log ?? createLogger({ write: () => {} });
   const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
 
   const renderIndex = async (): Promise<string> =>
@@ -388,8 +383,21 @@ export function createStatusServer(options: ServerOptions): Server {
       .replace("{{wordmark}}", () => mark)
       .replace("{{feedLink}}", () => feedLink);
 
-  const serveGenerated = async (url: URL, res: ServerResponse): Promise<boolean> =>
-    serveOps(url.pathname, res, metrics) || (await syndicate(url, res));
+  // Liveness never looks at the API or at shutdown.
+  const ops = {
+    ready: (): Readiness => {
+      const reason = metrics.notReadyReason();
+      return reason === undefined ? { ready: true } : { ready: false, reason };
+    },
+    metrics: (): string => metrics.render(),
+    allowHead: true,
+  };
+
+  const serveGenerated = async (
+    req: IncomingMessage,
+    url: URL,
+    res: ServerResponse,
+  ): Promise<boolean> => handleOps(req, res, ops) || (await syndicate(url, res));
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -402,7 +410,7 @@ export function createStatusServer(options: ServerOptions): Server {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;
       }
-      if (await serveGenerated(url, res)) return;
+      if (await serveGenerated(req, url, res)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = await renderIndex();
         res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
@@ -450,11 +458,12 @@ export function createStatusServer(options: ServerOptions): Server {
         // Relative ".ts" imports point at sibling modules served as ".js".
         const js = stripTypeScriptTypes(await readFile(srcDir + tsFile, "utf8"))
           .replace(/from "\.\/([\w-]+)\.ts"/g, 'from "/$1.js"')
-          .replace(/from "@lorenzh\/pulse-contract"/g, 'from "/pulse-contract/index.js"');
+          .replace(/from "@lorenzh\/pulse-contract"/g, 'from "/pulse-contract/index.js"')
+          .replace(/from "@lorenzh\/pulse-kit\/([\w-]+)"/g, 'from "/pulse-kit/$1.js"');
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(js);
         return;
       }
-      const contractJs = await readContractModule(url.pathname);
+      const contractJs = await readDependencyModule(url.pathname);
       if (contractJs !== undefined) {
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(contractJs);
         return;

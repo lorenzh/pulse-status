@@ -34,7 +34,7 @@ Both paths are not page content, bypass the cache and the API proxy, and carry n
 
 ## Log format
 
-Logs are JSON lines: `{"time":"<ISO 8601>","level":"info","msg":"...", ...fields}`. `warn` and `error` go to stderr, the rest to stdout. `PULSE_LOG_LEVEL` (`debug`, `info`, `warn`, `error`; default `info`) sets the minimum level.
+Logs come from pulse-kit. They are JSON lines (a field named `time`, `level` or `msg` never replaces the base key): `{"time":"<ISO 8601>","level":"info","msg":"...", ...fields}`. `warn` and `error` go to stderr, the rest to stdout. `PULSE_LOG_LEVEL` (`debug`, `info`, `warn`, `error`; default `info`) sets the minimum level.
 
 ## What the page shows
 
@@ -43,6 +43,7 @@ Logs are JSON lines: `{"time":"<ISO 8601>","level":"info","msg":"...", ...fields
 - Under each check, 90 daily uptime bars (oldest first, today last) from `/api/uptime` and the 90-day total. A day is green at >= 99.9 %, amber at >= 95 %, red below and grey without data. The date and percentage show on hover and keyboard focus. If `/api/uptime` fails or lacks a check, that check shows no bars and no banner appears.
 - Open incidents with check name, "since <time>" and reason, and below them the incidents resolved in the last 7 days (from `/api/incidents?status=resolved`) with resolve time, duration and reason. Only the newest ten are listed, followed by `and N more` when there are others. If that request fails the list is empty and no banner appears.
 - Upcoming maintenance windows (start in the future), with check, start, end and note, from `/api/maintenance`.
+- Durations of resolved incidents read `<1m`, `12m`, `2h 5m`, `3d 2h` (pulse-kit `formatDuration`). Before the pulse-kit move they read `<1 min`, `2 h 5 min`, `3 d 2 h`.
 - Times are relative ("3 min ago", "in 2 h") in a `<time datetime>` element. The exact local time shows on hover and keyboard focus.
 - A TLS check (`type: "tls"`) shows `host:port` instead of a URL and a `.cert-days` span with the days left on the certificate (`certificate expires in 5 days` while down, otherwise `N days left`).
 

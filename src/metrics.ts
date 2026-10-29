@@ -1,3 +1,5 @@
+import { createRegistry } from "@lorenzh/pulse-kit";
+
 /** "mismatch": the API answered but reports another wire version. */
 export type PollOutcome = "ok" | "error" | "mismatch";
 
@@ -19,6 +21,17 @@ const MIN_STALE_MS = 30_000;
 
 /** Counters and readiness state in memory; they reset on restart. */
 export function createMetrics(options: MetricsOptions): Metrics {
+  const registry = createRegistry();
+  const upGauge = registry.gauge("pulse_up", "1 when the service is ready, else 0.");
+  const pollCounter = registry.counter("pulse_status_polls_total", "API polls by outcome.");
+  const lastPollGauge = registry.gauge(
+    "pulse_status_last_poll_success_timestamp_seconds",
+    "Unix time of the last successful API poll, 0 if none.",
+  );
+  const httpCounter = registry.counter(
+    "pulse_status_http_requests_total",
+    "HTTP requests served by status code.",
+  );
   const polls: Record<PollOutcome, number> = { ok: 0, error: 0, mismatch: 0 };
   const codes = new Map<number, number>();
   const maxAgeMs = Math.max(3 * options.pollMs, MIN_STALE_MS);
@@ -34,6 +47,21 @@ export function createMetrics(options: MetricsOptions): Metrics {
     return undefined;
   };
 
+  // Live state is copied into the registry at scrape time.
+  registry.collect(() => {
+    upGauge.set(notReadyReason() === undefined ? 1 : 0);
+    for (const outcome of ["ok", "error", "mismatch"] as const) {
+      pollCounter.remove({ outcome });
+      pollCounter.inc({ outcome }, polls[outcome]);
+    }
+    lastPollGauge.set(lastSuccessMs === null ? 0 : lastSuccessMs / 1000);
+    // Series are listed by status code, ascending.
+    for (const [code, n] of [...codes].sort((a, b) => a[0] - b[0])) {
+      httpCounter.remove({ code: String(code) });
+      httpCounter.inc({ code: String(code) }, n);
+    }
+  });
+
   return {
     recordPoll(outcome) {
       polls[outcome] += 1;
@@ -48,26 +76,6 @@ export function createMetrics(options: MetricsOptions): Metrics {
       isShuttingDown = true;
     },
     notReadyReason,
-    render() {
-      const lines = [
-        "# HELP pulse_up 1 when the service is ready, else 0.",
-        "# TYPE pulse_up gauge",
-        `pulse_up ${notReadyReason() === undefined ? 1 : 0}`,
-        "# HELP pulse_status_polls_total API polls by outcome.",
-        "# TYPE pulse_status_polls_total counter",
-        `pulse_status_polls_total{outcome="ok"} ${polls.ok}`,
-        `pulse_status_polls_total{outcome="error"} ${polls.error}`,
-        `pulse_status_polls_total{outcome="mismatch"} ${polls.mismatch}`,
-        "# HELP pulse_status_last_poll_success_timestamp_seconds Unix time of the last successful API poll, 0 if none.",
-        "# TYPE pulse_status_last_poll_success_timestamp_seconds gauge",
-        `pulse_status_last_poll_success_timestamp_seconds ${lastSuccessMs === null ? 0 : lastSuccessMs / 1000}`,
-        "# HELP pulse_status_http_requests_total HTTP requests served by status code.",
-        "# TYPE pulse_status_http_requests_total counter",
-      ];
-      for (const [code, n] of [...codes].sort((a, b) => a[0] - b[0])) {
-        lines.push(`pulse_status_http_requests_total{code="${code}"} ${n}`);
-      }
-      return `${lines.join("\n")}\n`;
-    },
+    render: () => registry.render(),
   };
 }

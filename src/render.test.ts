@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CheckWithState, Incident, LocationResult } from "@lorenzh/pulse-contract";
 import {
-  formatDuration,
   formatRelative,
   renderBanner,
   renderChecks,
@@ -94,8 +93,8 @@ test("resolved incidents: duration, newest first, older than 7 days hidden", () 
   ];
   const html = renderResolvedIncidents(incidents, [base], env);
   assert.ok(html.indexOf("new one") < html.indexOf("old one"));
-  assert.match(html, /2 h<\/span>/);
-  assert.match(html, /12 min<\/span>/);
+  assert.match(html, /2h<\/span>/);
+  assert.match(html, /12m<\/span>/);
   assert.match(html, /resolved <time/);
   assert.doesNotMatch(html, /ancient|open/);
 });
@@ -125,7 +124,7 @@ test("resolved incidents: 10 render no 'more' line", () => {
 
 test("resolved incidents: order is name, time, duration, reason", () => {
   const html = renderResolvedIncidents(resolvedList(1), [base], env);
-  const order = ["Site", "resolved <time", "1 h</span>", "r0"].map((s) => html.indexOf(s));
+  const order = ["Site", "resolved <time", "1h</span>", "r0"].map((s) => html.indexOf(s));
   assert.deepEqual(
     order,
     [...order].sort((a, b) => a - b),
@@ -146,15 +145,6 @@ test("formatRelative", () => {
   assert.equal(formatRelative(NOW + 3 * MIN, NOW), "in 3 min");
   assert.equal(formatRelative(NOW + 5 * HOUR, NOW), "in 5 h");
   assert.equal(formatRelative(NOW + 2 * DAY, NOW), "in 2 d");
-});
-
-test("formatDuration", () => {
-  assert.equal(formatDuration(59_000), "<1 min");
-  assert.equal(formatDuration(12 * MIN), "12 min");
-  assert.equal(formatDuration(2 * HOUR + 5 * MIN), "2 h 5 min");
-  assert.equal(formatDuration(2 * HOUR), "2 h");
-  assert.equal(formatDuration(3 * DAY + 2 * HOUR), "3 d 2 h");
-  assert.equal(formatDuration(3 * DAY), "3 d");
 });
 
 const withState = (state: CheckWithState["state"], id = "x"): CheckWithState => ({

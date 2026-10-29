@@ -72,7 +72,7 @@ test("invalid PULSE_STATUS_CACHE_MS and PULSE_STATUS_UPSTREAM_TIMEOUT_MS throw",
 test("POLL_MS below 1000 fails startup, 1000 is accepted", () => {
   assert.throws(
     () => startFromEnv({ POLL_MS: "999" }),
-    /^Error: POLL_MS: must be an integer >= 1000$/,
+    /^StartupError: POLL_MS: must be an integer >= 1000$/,
   );
   assert.throws(() => startFromEnv({ POLL_MS: "1" }), /POLL_MS/);
   assert.equal(startFromEnv({ POLL_MS: "1000" }).pollMs, 1000);
@@ -108,9 +108,8 @@ test("an unbalanced font quote in the theme file fails startup", () => {
 for (const [name, env] of [
   ["PORT", { PORT: "abc" }],
   ["POLL_MS", { POLL_MS: "abc" }],
-  ["PULSE_LOG_LEVEL", { PULSE_LOG_LEVEL: "loud" }],
 ] as const) {
   test(`${name} that is invalid names the variable`, () => {
-    assert.throws(() => startFromEnv({ ...env }), new RegExp(`^Error: ${name}:`));
+    assert.throws(() => startFromEnv({ ...env }), new RegExp(`^StartupError: ${name}:`));
   });
 }

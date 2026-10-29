@@ -6,15 +6,9 @@ import type {
   MaintenanceResponse,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
-
-export function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+// Browser module: the server rewrites these two imports to /pulse-kit/ (see tsModules in server.ts).
+import { escapeHtml } from "@lorenzh/pulse-kit/escape";
+import { formatDuration } from "@lorenzh/pulse-kit/format-duration";
 
 export function formatTime(epochMs: number): string {
   return new Date(epochMs).toISOString();
@@ -49,20 +43,6 @@ export function formatRelative(then: number, now: number): string {
   else if (abs < DAY) amount = `${Math.floor(abs / HOUR)} h`;
   else amount = `${Math.floor(abs / DAY)} d`;
   return diff < 0 ? `${amount} ago` : `in ${amount}`;
-}
-
-/** "<1 min", "12 min", "2 h 5 min", "3 d 2 h". */
-export function formatDuration(ms: number): string {
-  if (ms < MINUTE) return "<1 min";
-  if (ms < HOUR) return `${Math.floor(ms / MINUTE)} min`;
-  if (ms < DAY) {
-    const minutes = Math.floor((ms % HOUR) / MINUTE);
-    const rest = minutes > 0 ? " " + minutes + " min" : "";
-    return `${Math.floor(ms / HOUR)} h${rest}`;
-  }
-  const hours = Math.floor((ms % DAY) / HOUR);
-  const rest = hours > 0 ? " " + hours + " h" : "";
-  return `${Math.floor(ms / DAY)} d${rest}`;
 }
 
 export function renderTime(epochMs: number, env: TimeEnv): string {

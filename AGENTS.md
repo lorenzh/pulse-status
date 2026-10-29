@@ -44,6 +44,8 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 
 ## Code design
 
+- Use `@lorenzh/pulse-kit`, `pulse-contract` or an approved package before writing infrastructure code (settings, logging, shutdown, ops endpoints, metrics, JSON helpers). Propose an addition to pulse-kit instead of a local helper.
+
 - One module, one responsibility. Name the module after its job (`scheduler.ts`, `uptime.ts`).
 - Split a module when it holds a second responsibility, not because it is long. Over 200 lines is a review question, not a limit.
 - Keep a helper beside its only caller; move it out when a second module needs it.
@@ -100,6 +102,7 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 - `src/render.ts`, `src/poller.ts` and `src/theme.ts` also run in the browser: the server strips
   their types at request time. They import only types, no `node:` modules and no relative runtime
   imports. A new browser module is added to the server's module map (`tsModules` in `src/server.ts`).
+- `src/render.ts` also imports the browser-safe `@lorenzh/pulse-kit/escape` and `@lorenzh/pulse-kit/format-duration`. The server rewrites them to `/pulse-kit/escape.js` and `/pulse-kit/format-duration.js` and serves only those two files from the kit.
 - `src/poller.ts` also imports the contract's runtime validators. The server rewrites that import to
   `/pulse-contract/index.js` and serves the contract's `dist` files from there. The contract's `zod`
   import is rewritten to `/pulse-contract/zod/index.js`; only `.js` files of the zod package are served.
