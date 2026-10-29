@@ -71,6 +71,29 @@ function abortion(signal: AbortSignal): Promise<never> {
   return failed;
 }
 
+/** A wire version mismatch: it fails the refresh, also on the optional endpoints. */
+class WireVersionError extends Error {
+  override name = "WireVersionError";
+}
+
+/**
+ * Validates `/checks` as the server serves it: with details hidden it removes the target
+ * (`url`, or `host` and `port`). Placeholders fill only the copy that is validated, so the
+ * returned checks have no fake target and render omits the target line.
+ */
+function validServedChecks(body: unknown): ChecksResponse {
+  const filled = Array.isArray(body) ? body.map(withTargetPlaceholder) : body;
+  valid(validateChecksResponse(filled, "checks"));
+  // Checked above; only the hidden target fields may be absent.
+  return body as ChecksResponse;
+}
+
+function withTargetPlaceholder(item: unknown): unknown {
+  if (typeof item !== "object" || item === null) return item;
+  if ("type" in item && item.type === "tls") return { host: "", port: 0, ...item };
+  return { url: "", ...item };
+}
+
 /** Unwraps a validation result: a failure throws its message, which names the path. */
 function valid<T>(result: { ok: true; value: T } | { ok: false; error: string }): T {
   if (!result.ok) throw new Error(result.error);
@@ -103,7 +126,7 @@ export function createPoller(options: PollerOptions): Poller {
     const response = await Promise.race([options.fetch(url, { signal }), aborted]);
     if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
     const version = checkWireVersion(response.headers.get(WIRE_VERSION_HEADER));
-    if (version.status === "mismatch") throw new Error(`${url}: ${version.error}`);
+    if (version.status === "mismatch") throw new WireVersionError(`${url}: ${version.error}`);
     if (version.status === "absent" && !hasLoggedMissingVersion) {
       hasLoggedMissingVersion = true;
       log(`${WIRE_VERSION_HEADER} header is missing; the API version is unchecked`, null);
@@ -118,7 +141,9 @@ export function createPoller(options: PollerOptions): Poller {
       if (result.ok) return result.value;
       log("uptime response is invalid", result.error);
       return [];
-    } catch {
+    } catch (err) {
+      if (err instanceof WireVersionError) throw err;
+      // Bars are optional: the page still shows the checks without them.
       return [];
     }
   }
@@ -136,7 +161,9 @@ export function createPoller(options: PollerOptions): Poller {
       return incidents
         .filter((i) => i.resolvedAt !== null && i.resolvedAt >= cutoff)
         .sort((a, b) => (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0));
-    } catch {
+    } catch (err) {
+      if (err instanceof WireVersionError) throw err;
+      // The resolved list is optional: the page still shows the open incidents.
       return [];
     }
   }
@@ -153,7 +180,7 @@ export function createPoller(options: PollerOptions): Poller {
   async function load(signal: AbortSignal): Promise<void> {
     try {
       const [checks, incidents, maintenance, resolved, uptime] = await Promise.all([
-        getJson(`${base}/checks`, signal).then((b) => valid(validateChecksResponse(b, "checks"))),
+        getJson(`${base}/checks`, signal).then(validServedChecks),
         getJson(`${base}/incidents?status=open`, signal).then((b) =>
           valid(validateIncidentsResponse(b, "incidents")),
         ),

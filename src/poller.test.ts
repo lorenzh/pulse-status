@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import type { AddressInfo } from "node:net";
+import { after, test } from "node:test";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { ALLOWED_API_PATHS } from "./api-filter.ts";
 import { createPoller, type PollerState } from "./poller.ts";
+import { renderChecks } from "./render.ts";
+import { createStatusServer } from "./server.ts";
 
 function fakeTimer() {
   const pending = new Map<number, () => void>();
@@ -618,4 +621,87 @@ test("the default timeout is min(pollMs, 4000)", async () => {
     await done;
     assert.equal(signal?.aborted, true);
   }
+});
+
+const tlsCheckOf = (id: string) => ({
+  ...checkOf(id, "Cert", { type: "tls", host: "db.internal", port: 5432, warnDays: 14 }),
+  url: undefined,
+});
+
+/** A check as the server serves it with details hidden: no url, host or port. */
+const redacted = (check: Record<string, unknown>) => {
+  const out = { ...check };
+  delete out.url;
+  delete out.host;
+  delete out.port;
+  return out;
+};
+
+const pollOnce = async (fakeFetch: typeof fetch, baseUrl?: string) => {
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: fakeFetch,
+    timer: fakeTimer(),
+    now: () => 5,
+    pollMs: 1,
+    baseUrl,
+    onUpdate: (s) => updates.push(s),
+  });
+  await poller.refresh();
+  return updates[0];
+};
+
+test("redacted checks without url, host or port pass and get no fake target", async () => {
+  const http = redacted(checkOf("a", "A"));
+  const tls = redacted(tlsCheckOf("t"));
+  const state = await pollOnce((async (url: string) =>
+    url.endsWith("/checks") ? json([http, tls]) : json([])) as unknown as typeof fetch);
+  assert.equal(state?.error, null);
+  assert.equal(state?.checks.length, 2);
+  assert.equal("url" in (state?.checks[0] ?? {}), false);
+  assert.equal("host" in (state?.checks[1] ?? {}), false);
+  assert.doesNotMatch(renderChecks(state?.checks ?? []), /class="url"/);
+});
+
+test("a redacted check is still validated by the contract", async () => {
+  const http = redacted(checkOf("a", "A", { intervalMs: "soon" }));
+  const state = await pollOnce((async (url: string) =>
+    url.endsWith("/checks") ? json([http]) : json([])) as unknown as typeof fetch);
+  assert.match(state?.error ?? "", /checks\[0\]\.intervalMs/);
+});
+
+test("a wire version mismatch on uptime or resolved incidents fails the poll", async () => {
+  for (const path of ["/uptime", "/incidents?status=resolved"]) {
+    const state = await pollOnce((async (url: string) =>
+      url.endsWith(path) ? json([], "2") : json([])) as unknown as typeof fetch);
+    assert.match(state?.error ?? "", /x-pulse-contract/, path);
+    assert.equal(state?.updatedAt, null, path);
+  }
+});
+
+const e2eServers: { close(): unknown }[] = [];
+after(() => {
+  for (const s of e2eServers) s.close();
+});
+
+test("end to end: the page polls the real server with details hidden by default", async () => {
+  const apiFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    const body = url.endsWith("/checks") ? [checkOf("a", "A"), tlsCheckOf("t")] : [];
+    return json(body);
+  };
+  const server = createStatusServer({ apiUrl: "http://api.test", pollMs: 1, fetch: apiFetch });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  e2eServers.push(server);
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const pageFetch = ((url: string, init?: RequestInit) =>
+    fetch(origin + url, init)) as unknown as typeof fetch;
+  const state = await pollOnce(pageFetch);
+  assert.equal(state?.error, null);
+  assert.deepEqual(
+    state?.checks.map((c) => c.id),
+    ["a", "t"],
+  );
+  const html = renderChecks(state?.checks ?? []);
+  assert.doesNotMatch(html, /example\.test|db\.internal|5432/);
 });
