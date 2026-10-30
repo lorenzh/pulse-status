@@ -1,7 +1,10 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
+import type { CheckWithState } from "@lorenzh/pulse-contract";
+import { type ComponentView, renderComponents } from "./components-view.ts";
 import { FakeDom, type FakeNode } from "./patch.fake-dom.ts";
 import { diffAttributes, patchHtml, planChildren } from "./patch.ts";
+import { renderChecks, type TimeEnv } from "./render.ts";
 
 function setup(html: string): { dom: FakeDom; root: FakeNode } {
   const dom = new FakeDom();
@@ -114,4 +117,83 @@ test("diffAttributes sets changed, removes missing and leaves kept names alone",
   );
   assert.deepEqual(diff.set, [["class", "b"]]);
   assert.deepEqual(diff.remove, ["gone"]);
+});
+
+const days = [
+  { date: "2026-01-01", uptime: 100, results: 5 },
+  { date: "2026-01-02", uptime: 100, results: 5 },
+];
+const timeEnv: TimeEnv = {
+  now: 1_000_000,
+  formatExact: () => "t",
+  formatExactSpan: () => ({ start: "a", end: "b", isSameDay: true }),
+};
+const webCheck = (state: CheckWithState["state"], lastReason: string | null): CheckWithState => ({
+  id: "web",
+  name: "Web",
+  type: "http",
+  url: "https://web.test/",
+  intervalMs: 1000,
+  state,
+  consecutiveDown: 0,
+  lastResultAt: null,
+  lastReason,
+  locations: [],
+});
+const shopView = (incidentIds: number[], hasUptime: boolean): ComponentView => ({
+  components: [
+    { id: "shop", name: "Shop", checkIds: ["web"], state: "up", uptime: 100, incidentIds },
+  ],
+  componentUptime: hasUptime ? [{ componentId: "shop", uptime: 100, days }] : [],
+  checks: [webCheck("up", null)],
+  uptime: [{ checkId: "web", uptime: 100, days }],
+  showChecks: true,
+});
+
+function isConnected(node: FakeNode | null, root: FakeNode): boolean {
+  let at: FakeNode | null = node;
+  while (at !== null && at !== root) at = at.parentNode;
+  return at === root;
+}
+
+function findKey(node: FakeNode, key: string): FakeNode | undefined {
+  if (node.getAttribute("data-key") === key) return node;
+  return node.childNodes.map((child) => findKey(child, key)).find(Boolean);
+}
+
+/** Focuses the last day in `entryKey`, patches to `after` and asserts the same node keeps focus. */
+function assertFocusSurvives(before: string, after: string, entryKey: string): void {
+  const { dom, root } = setup(before);
+  const entry = root.childNodes.map((node) => findKey(node, entryKey)).find(Boolean);
+  const bar = entry === undefined ? undefined : findKey(entry, "day:2026-01-02");
+  assert.ok(bar !== undefined, "bar rendered");
+  bar.focus();
+  patchHtml(root, after, dom);
+  assert.equal(dom.active, bar, "focus stays on the same bar");
+  assert.ok(isConnected(bar, root), "the focused bar stays in the page");
+}
+
+test("a focused component bar survives the component's first incident line", () => {
+  assertFocusSurvives(
+    renderComponents(shopView([], true), timeEnv),
+    renderComponents(shopView([1], true), timeEnv),
+    "component:shop",
+  );
+});
+
+test("a focused bar of a member check survives its component's first incident line", () => {
+  assertFocusSurvives(
+    renderComponents(shopView([], false), timeEnv),
+    renderComponents(shopView([1], false), timeEnv),
+    "check:web",
+  );
+});
+
+test("a focused check bar survives the check's first meta line", () => {
+  const uptime = [{ checkId: "web", uptime: 100, days }];
+  assertFocusSurvives(
+    renderChecks([webCheck("up", null)], uptime, timeEnv),
+    renderChecks([webCheck("down", "HTTP 500")], uptime, timeEnv),
+    "check:web",
+  );
 });

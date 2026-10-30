@@ -62,11 +62,11 @@ function renderComponent(component: ComponentWithState, view: ComponentView, env
   const incidents =
     component.incidentIds.length === 0
       ? ""
-      : `<div class="meta"><span class="incident-count">${escapeHtml(countOpen(component.incidentIds.length))}</span></div>`;
+      : `<div class="meta" data-key="meta"><span class="incident-count">${escapeHtml(countOpen(component.incidentIds.length))}</span></div>`;
   const description =
     component.description === undefined || component.description === ""
       ? ""
-      : `<p class="description">${escapeHtml(component.description)}</p>`;
+      : `<p class="description" data-key="description">${escapeHtml(component.description)}</p>`;
   const checks =
     view.showChecks && memberChecks.length > 0
       ? renderChecks(memberChecks, view.uptime, env, false)

@@ -199,7 +199,7 @@ export function renderUptime(
   });
   const groupName = escapeHtml(`${name}, 90-day uptime ${groupLabel}`);
   return (
-    `<div class="uptime">` +
+    `<div class="uptime" data-key="uptime">` +
     `<div class="bars" role="group" aria-label="${groupName}" data-key="bars">${bars.join("")}</div>` +
     `<span class="uptime-total">${escapeHtml(total)}</span>` +
     `</div>`
@@ -243,7 +243,7 @@ function renderMeta(check: CheckWithState, env: TimeEnv | undefined): string {
   if (check.maintenance) parts.push(span("note", check.maintenance.note));
   if (check.lastReason && !reasonIsDays) parts.push(span("reason", check.lastReason));
   const filled = parts.filter((part) => part !== "");
-  return filled.length === 0 ? "" : `<div class="meta">${filled.join("")}</div>`;
+  return filled.length === 0 ? "" : `<div class="meta" data-key="meta">${filled.join("")}</div>`;
 }
 
 /** Empty when the server hides the target. */
@@ -264,7 +264,7 @@ function renderCheck(
     `<li class="check state-${check.state}" data-key="check:${escapeHtml(check.id)}">` +
     `<div class="check-head"><span class="state">${check.state}</span>` +
     `<span class="name">${escapeHtml(check.name)}</span></div>` +
-    (targetText === "" ? "" : `<div class="url">${escapeHtml(targetText)}</div>`) +
+    (targetText === "" ? "" : `<div class="url" data-key="url">${escapeHtml(targetText)}</div>`) +
     renderMeta(check, env) +
     (entry ? renderUptime(entry, check.name) : "") +
     `</li>`
@@ -282,7 +282,7 @@ export function renderChecks(
   }
   const uptimeById = new Map(uptime.map((entry) => [entry.checkId, entry]));
   const items = checks.map((check) => renderCheck(check, uptimeById.get(check.id), env));
-  return `${hasLegend ? renderUptimeLegend() : ""}<ul class="checks">${items.join("")}</ul>`;
+  return `${hasLegend ? renderUptimeLegend() : ""}<ul class="checks" data-key="checks">${items.join("")}</ul>`;
 }
 
 /** Check id to the text an incident or maintenance entry shows for it. */

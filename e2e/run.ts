@@ -59,7 +59,7 @@ function body(path: string): unknown {
     checkIds: ["web"],
     state: data.state,
     uptime: 99.5,
-    incidentIds: [],
+    incidentIds: data.state === "down" ? [1] : [],
   };
   const routes: Record<string, unknown> = {
     "/checks": [check],
@@ -193,10 +193,8 @@ async function hasMarker(page: Page, selector: string): Promise<boolean> {
 }
 
 async function checkFocusSurvivesPolls(page: Page): Promise<void> {
-  const group =
-    '[data-key="check:web"] [data-key="bars"], [data-key="component:shop"] [data-key="bars"]';
-  const bar = `${group.split(", ").join(" .bar[tabindex='0'], ")} .bar[tabindex='0']`;
-  await page.focus(bar);
+  // The component's bars: going down gives the component its first incident line.
+  await page.focus('[data-key="component:shop"] [data-key="bars"] .bar[tabindex=\'0\']');
   const dayKey = await page.evaluate(() => document.activeElement?.getAttribute("data-key") ?? "");
   assert.match(dayKey, /^day:/);
   const focused = `[data-key="${dayKey}"]:focus`;
@@ -207,8 +205,9 @@ async function checkFocusSurvivesPolls(page: Page): Promise<void> {
   await page.waitForFunction(() =>
     /down/.test(document.getElementById("summary")?.textContent ?? ""),
   );
+  await page.waitForSelector('[data-key="component:shop"] .incident-count');
   await polls(2);
-  assert.ok(await hasMarker(page, focused), "same node after a state change");
+  assert.ok(await hasMarker(page, focused), "same node after a state change and first incident");
   data.state = "up";
   await page.waitForFunction(() =>
     /operational/.test(document.getElementById("summary")?.textContent ?? ""),

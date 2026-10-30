@@ -389,7 +389,7 @@ const tls: CheckWithState = {
 
 test("tls up shows host:port and days left", () => {
   const html = renderChecks([tls]);
-  assert.match(html, /<div class="url">example\.test:443<\/div>/);
+  assert.match(html, /<div class="url" data-key="url">example\.test:443<\/div>/);
   assert.match(html, /<span class="cert-days">90 days left<\/span>/);
   assert.doesNotMatch(html, /class="reason"/);
 });
@@ -421,9 +421,9 @@ test("tls without certificate shows only the reason; host is escaped", () => {
 test("http row structure: state, name, target; no meta line", () => {
   assert.equal(
     renderChecks([base]),
-    `${renderUptimeLegend()}<ul class="checks"><li class="check state-up" data-key="check:a"><div class="check-head">` +
+    `${renderUptimeLegend()}<ul class="checks" data-key="checks"><li class="check state-up" data-key="check:a"><div class="check-head">` +
       '<span class="state">up</span><span class="name">Site</span></div>' +
-      '<div class="url">http://x.test/</div></li></ul>',
+      '<div class="url" data-key="url">http://x.test/</div></li></ul>',
   );
 });
 

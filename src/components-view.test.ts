@@ -101,7 +101,7 @@ test("a component shows name, state, escaped description, bars and open incident
   const html = renderComponents(view, env);
   assert.match(html, /class="component state-down"/);
   assert.match(html, /<span class="state">down<\/span>/);
-  assert.match(html, /<p class="description">Buy &lt;things&gt;<\/p>/);
+  assert.match(html, /<p class="description" data-key="description">Buy &lt;things&gt;<\/p>/);
   assert.match(html, /1 open incident/);
   assert.match(html, /class="bar degraded"/);
   assert.match(html, /98\.0 % uptime, 90 days/);
