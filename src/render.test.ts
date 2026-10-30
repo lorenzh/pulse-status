@@ -634,6 +634,8 @@ test("heartbeat card escapes the name and the reason", () => {
     env,
   );
   assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img src=x onerror=&quot;1&quot;&gt;/);
+  assert.match(html, /last ping/);
 });
 
 test("summary: a version error replaces every other summary", () => {

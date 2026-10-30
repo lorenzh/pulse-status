@@ -569,12 +569,16 @@ test("a failed request aborts the other pending requests", async () => {
 test("the first error stays published after the abort", async () => {
   const timer = fakeTimer();
   let n = 0;
+  let abortedSiblings = 0;
   const updates: PollerState[] = [];
   const poller = createPoller({
     fetch: ((_url: string, init?: RequestInit) => {
       if (n++ === 0) return Promise.reject(new Error("boom"));
       return new Promise<Response>((_, reject) => {
-        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        init?.signal?.addEventListener("abort", () => {
+          abortedSiblings++;
+          reject(new Error("aborted"));
+        });
       });
     }) as unknown as typeof fetch,
     timer,
@@ -583,6 +587,10 @@ test("the first error stays published after the abort", async () => {
     onUpdate: (s) => updates.push(s),
   });
   await poller.refresh();
+  await flush();
+  // The failure itself aborts the pending siblings; their rejections must not replace the error.
+  assert.equal(abortedSiblings, 4);
+  assert.equal(updates.length, 1);
   assert.equal(updates[0]?.error, "unreachable");
 });
 
@@ -610,14 +618,19 @@ test("a hidden tab aborts all pending requests", async () => {
   assert.ok(signals.every((s) => s.aborted));
 });
 
-test("hiding the tab after a failure keeps the first error", async () => {
+test("hiding the tab before a failure settles drops the result and keeps the first error", async () => {
   const timer = fakeTimer();
   const visibility = fakeVisibility(false);
   const updates: PollerState[] = [];
   let n = 0;
+  let failFirst: () => void = () => {};
   const poller = createPoller({
     fetch: ((_url: string, init?: RequestInit) => {
-      if (n++ === 0) return Promise.reject(new Error("boom"));
+      if (n++ === 0) {
+        return new Promise<Response>((_, reject) => {
+          failFirst = () => reject(new Error("boom"));
+        });
+      }
       return new Promise<Response>((_, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
       });
@@ -632,8 +645,13 @@ test("hiding the tab after a failure keeps the first error", async () => {
   await flush();
   visibility.set(true);
   await flush();
-  assert.equal(updates[0]?.error, "unreachable");
-  assert.equal(updates.length, 1);
+  failFirst();
+  await flush();
+  // The hide aborts every request and bumps the generation: the stale result is dropped.
+  assert.equal(updates.length, 0);
+  visibility.set(false);
+  await flush();
+  assert.equal(updates.length, 0);
 });
 
 test("the default timeout is a fixed 10000 ms, whatever pollMs is", async () => {

@@ -44,6 +44,10 @@ test("serves zod js files under /pulse-contract/zod/", async () => {
 
 test("zod path: traversal, other extensions and unknown files answer 404", async () => {
   const base = await start();
+  // Positive control: the same route serves a real file.
+  const control = await fetch(`${base}/pulse-contract/zod/index.js`);
+  assert.equal(control.status, 200);
+  await control.arrayBuffer();
   for (const path of [
     "/pulse-contract/zod/../package.json",
     "/pulse-contract/zod/%2e%2e/package.json",
