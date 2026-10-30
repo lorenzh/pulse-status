@@ -71,6 +71,7 @@ interface ProxyContext {
   apiBase: string;
   doFetch: typeof fetch;
   isHidden: boolean;
+  hasChecks: boolean;
   cacheMs: number;
   timeoutMs: number;
   now: () => number;
@@ -161,6 +162,8 @@ const contractModules = new Set([
   "version.js",
   "client.js",
   "components.js",
+  "admin.js",
+  "validate-admin.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
@@ -291,7 +294,7 @@ async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> 
   if (mediaType !== "application/json") {
     return answer(502, { error: "invalid API response" }, wireHeader);
   }
-  let body = filterApiBody(url.pathname, result.value, ctx.isHidden);
+  let body = filterApiBody(url.pathname, result.value, ctx.isHidden, ctx.hasChecks);
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
   }
@@ -321,7 +324,12 @@ async function proxyApi(
   ctx: ProxyContext,
 ): Promise<void> {
   // The raw target must equal the parsed one: a bare "?" is not the allow-listed form.
-  if (rawUrl !== url.pathname + url.search || !isAllowedApiPath(url.pathname, url.search)) {
+  const isLatencyHidden = url.pathname === "/api/latency" && !ctx.hasChecks;
+  if (
+    isLatencyHidden ||
+    rawUrl !== url.pathname + url.search ||
+    !isAllowedApiPath(url.pathname, url.search)
+  ) {
     sendJson(res, 404, { error: "not found" });
     return;
   }
@@ -360,6 +368,7 @@ export function createStatusServer(options: ServerOptions): Server {
     apiBase: "",
     doFetch: options.fetch ?? fetch,
     isHidden,
+    hasChecks: options.showChecks === true,
     cacheMs: checkMs("PULSE_STATUS_CACHE_MS", options.cacheMs ?? DEFAULT_CACHE_MS, 0),
     timeoutMs: checkMs(
       "PULSE_STATUS_UPSTREAM_TIMEOUT_MS",

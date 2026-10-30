@@ -218,7 +218,7 @@ test("syndication shares the proxy cache and adds no upstream paths", async () =
       "/uptime",
     ],
   );
-  assert.equal(ALLOWED_API_PATHS.length, 8);
+  assert.equal(ALLOWED_API_PATHS.length, 9);
   for (const path of ["/api/feed.atom", "/api/badge/web.svg"]) {
     assert.equal((await fetch(h.base + path)).status, 404, path);
   }

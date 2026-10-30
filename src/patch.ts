@@ -101,9 +101,15 @@ function isBar(node: PatchNode): boolean {
   return (node.getAttribute("class") ?? "").split(" ").includes("bar");
 }
 
+function isDetails(node: PatchNode): boolean {
+  return node.nodeName.toLowerCase() === "details";
+}
+
 function syncElement(old: PatchNode, next: PatchNode, env: PatchEnv): void {
-  // The roving tab stop of a bar lives in the DOM, not in the server html.
-  const keep = isBar(old) ? ["tabindex"] : [];
+  // The roving tab stop of a bar and the open state of a details live in the DOM, not in the html.
+  let keep: string[] = [];
+  if (isBar(old)) keep = ["tabindex"];
+  else if (isDetails(old)) keep = ["open"];
   const diff = diffAttributes(attributeMap(old), attributeMap(next), keep);
   for (const [name, value] of diff.set) old.setAttribute(name, value);
   for (const name of diff.remove) old.removeAttribute(name);

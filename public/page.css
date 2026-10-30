@@ -492,3 +492,70 @@ ul.resolved li {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.slo {
+  margin-top: 0.5rem;
+  color: var(--lead);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.latency-chart {
+  margin-top: 0.75rem;
+}
+.latency-summary {
+  color: var(--lead);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.latency-legend {
+  color: var(--muted);
+  font-size: 13px;
+}
+.latency-svg {
+  display: block;
+  width: 100%;
+  height: 5rem;
+  margin-top: 0.25rem;
+  overflow: visible;
+}
+.lat-p95,
+.lat-p50,
+.lat-objective {
+  fill: none;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.lat-p95 {
+  stroke: var(--accent);
+}
+.lat-p50 {
+  stroke: var(--info);
+  stroke-dasharray: 6 3;
+}
+.lat-objective {
+  stroke: var(--warning);
+  stroke-dasharray: 1 4;
+  stroke-linecap: round;
+}
+.lat-p95-dot {
+  fill: var(--accent);
+}
+.lat-p50-dot {
+  fill: var(--info);
+}
+.latency-details summary {
+  margin-top: 0.25rem;
+  color: var(--accent-text);
+  cursor: pointer;
+}
+.latency-details table {
+  margin-top: 0.5rem;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.latency-details th,
+.latency-details td {
+  padding: 0.125rem 0.75rem 0.125rem 0;
+  text-align: left;
+}

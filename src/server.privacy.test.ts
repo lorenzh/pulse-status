@@ -90,7 +90,7 @@ const SECRETS = ["user:pass@", "token=abc", "frag", "k=v"];
 const INTERNALS = ["internal.example", "secret-word", "db.internal", "5432", IP, "ECONNREFUSED"];
 
 test("allow-listed paths are proxied", async () => {
-  const { base, state } = await start();
+  const { base, state } = await start({ showChecks: true });
   for (const path of ALLOWED_API_PATHS) {
     const r = await fetch(base + path);
     assert.equal(r.status, 200, path);
@@ -490,4 +490,33 @@ test("incidents, maintenance and uptime serve only their allow-listed keys", asy
       assert.doesNotMatch(JSON.stringify(served), /futureField|retries/);
     }
   }
+});
+
+test("latency is per check: with checks hidden it is 404, never fetched and never in the page", async () => {
+  const { base, state } = await start();
+  const r = await fetch(`${base}/api/latency`);
+  assert.equal(r.status, 404);
+  const page = await (await fetch(`${base}/`)).text();
+  assert.doesNotMatch(page, /latency-chart/);
+  assert.deepEqual(
+    state.calls.filter((c) => c.includes("latency")),
+    [],
+  );
+});
+
+test("latency with checks shown serves only contract fields and no per-id route exists", async () => {
+  const days = Array.from({ length: 90 }, (_, i) => ({
+    date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+    p50Ms: 10,
+    p95Ms: 20,
+    count: 1,
+    sentinel: "LEAK",
+  }));
+  const body = JSON.stringify([{ checkId: "web", days, sentinel: "LEAK" }]);
+  const { base } = await start({ showChecks: true }, { body });
+  const r = await fetch(`${base}/api/latency`);
+  assert.equal(r.status, 200);
+  assert.doesNotMatch(await r.text(), /LEAK/);
+  assert.equal((await fetch(`${base}/api/checks/web/latency`)).status, 404);
+  assert.equal((await fetch(`${base}/api/latency?x=1`)).status, 404);
 });

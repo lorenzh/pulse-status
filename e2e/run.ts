@@ -15,9 +15,10 @@ interface StubData {
   state: "up" | "down";
   isFailing: boolean;
   hasComponents: boolean;
+  hasTarget: boolean;
 }
 
-const data: StubData = { state: "up", isFailing: false, hasComponents: true };
+const data: StubData = { state: "up", isFailing: false, hasComponents: true, hasTarget: false };
 
 function utcDay(offset: number): string {
   return new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
@@ -34,6 +35,7 @@ const NOW = Date.now();
 
 function body(path: string): unknown {
   const now = NOW;
+  const slo = { target: 99.9, windowDays: 30, availability: 99.95, budgetRemaining: 50 };
   const check = {
     id: "web",
     name: "Checkout API",
@@ -45,6 +47,7 @@ function body(path: string): unknown {
     lastResultAt: now - 60_000,
     lastReason: data.state === "down" ? "HTTP 500" : null,
     locations: [],
+    ...(data.hasTarget ? { slo } : {}),
   };
   const incident = {
     id: 1,
@@ -57,6 +60,7 @@ function body(path: string): unknown {
     id: "shop",
     name: "Online shop",
     checkIds: ["web"],
+    ...(data.hasTarget ? { slo } : {}),
     state: data.state,
     uptime: 99.5,
     incidentIds: data.state === "down" ? [1] : [],
@@ -72,6 +76,17 @@ function body(path: string): unknown {
     ],
     "/manual-incidents": [],
     "/uptime": [{ checkId: "web", uptime: 99.5, days }],
+    "/latency": [
+      {
+        checkId: "web",
+        days: days.map((day, i) => ({
+          date: day.date,
+          p50Ms: i % 15 === 0 ? null : 80 + (i % 7),
+          p95Ms: i % 15 === 0 ? null : 150 + (i % 11) * 5,
+          count: i % 15 === 0 ? 0 : 10,
+        })),
+      },
+    ],
   };
   return routes[path];
 }
@@ -149,8 +164,30 @@ async function checkStructure(page: Page, entryName: string): Promise<void> {
   );
   for (const label of dayLabels) assert.match(label ?? "", / UTC: /);
   assert.match((await page.textContent(".legend")) ?? "", /UTC/);
+  await checkLatencyChart(page);
   const span = (await page.textContent(".exact-span")) ?? "";
   assert.match(span, /(EDT|EST|GMT[+-]\d+)/, "span names the zone");
+}
+
+async function checkLatencyChart(page: Page): Promise<void> {
+  assert.match(
+    (await page.textContent(".latency-summary")) ?? "",
+    /^highest daily p95, last 7 days \d+ ms/,
+  );
+  assert.equal(await page.getAttribute(".latency-svg", "aria-hidden"), "true");
+  assert.ok((await page.$$(".latency-svg polyline.lat-p95")).length > 1, "null days leave gaps");
+  const sloText = (await page.textContent("body")) ?? "";
+  assert.equal(
+    sloText.includes("Availability 99.95 % of 99.9 % target, 50 % budget left"),
+    data.hasTarget,
+    "the SLO sentence shows exactly when a target is set",
+  );
+  await page.focus(".latency-details summary");
+  await page.keyboard.press("Enter");
+  assert.equal(await page.getAttribute(".latency-details", "open"), "");
+  await polls(3);
+  assert.equal(await page.getAttribute(".latency-details", "open"), "", "open survives polls");
+  await page.keyboard.press("Enter");
 }
 
 async function countTabStops(page: Page): Promise<Map<string, number>> {
@@ -178,7 +215,9 @@ async function checkTabStops(page: Page): Promise<void> {
   assert.ok(stops.size > 0, "entries are reachable by Tab");
   for (const [key, count] of stops) {
     assert.ok(count <= 3, `${key}: at most 3 tab stops, got ${count}`);
-    assert.equal(count, 1, `${key}: one tab stop`);
+    // A check has its day bars and the one `<details>` summary of its latency chart.
+    const expected = key.startsWith("check:") ? 2 : 1;
+    assert.equal(count, expected, `${key}: ${expected} tab stop(s)`);
   }
 }
 
@@ -279,24 +318,37 @@ async function checkNoJavaScript(browser: Browser, url: string): Promise<void> {
   await context.close();
 }
 
+async function checkMatrixCell(
+  browser: Browser,
+  url: string,
+  cell: { hasComponents: boolean; hasTarget: boolean },
+): Promise<void> {
+  data.hasComponents = cell.hasComponents;
+  data.hasTarget = cell.hasTarget;
+  for (const scheme of ["light", "dark"] as const) {
+    for (const width of [360, 1280]) {
+      const { context, page } = await open(browser, url, { width, scheme });
+      const kind = cell.hasComponents ? "components" : "checks";
+      const label = `${scheme} ${width}px ${kind} ${cell.hasTarget ? "with" : "without"} target`;
+      await checkAxe(page, label);
+      await checkStructure(page, cell.hasComponents ? "Online shop" : "Checkout API");
+      await context.close();
+      console.log(`ok  ${label}`);
+    }
+  }
+}
+
 async function checkMatrix(browser: Browser, url: string): Promise<void> {
   for (const hasComponents of [true, false]) {
-    data.hasComponents = hasComponents;
-    for (const scheme of ["light", "dark"] as const) {
-      for (const width of [360, 1280]) {
-        const { context, page } = await open(browser, url, { width, scheme });
-        const label = `${scheme} ${width}px ${hasComponents ? "components" : "checks"}`;
-        await checkAxe(page, label);
-        await checkStructure(page, hasComponents ? "Online shop" : "Checkout API");
-        await context.close();
-        console.log(`ok  ${label}`);
-      }
+    for (const hasTarget of [false, true]) {
+      await checkMatrixCell(browser, url, { hasComponents, hasTarget });
     }
   }
 }
 
 async function checkBehavior(browser: Browser, url: string): Promise<void> {
   data.hasComponents = true;
+  data.hasTarget = true;
   const { context, page } = await open(browser, url, { width: 1280, scheme: "light" });
   await checkTabStops(page);
   await checkQuietPolls(page);
@@ -309,7 +361,13 @@ async function checkBehavior(browser: Browser, url: string): Promise<void> {
 async function main(): Promise<void> {
   const api = startApi();
   const apiUrl = await listen(api);
-  const status = createStatusServer({ apiUrl, pollMs: POLL_MS, cacheMs: 0, hideDetails: false });
+  const status = createStatusServer({
+    apiUrl,
+    pollMs: POLL_MS,
+    cacheMs: 0,
+    hideDetails: false,
+    showChecks: true,
+  });
   const url = await listen(status);
   const browser = await chromium.launch();
   try {

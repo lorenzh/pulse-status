@@ -983,3 +983,64 @@ test("an empty components list is not an error", async () => {
   assert.equal(state?.error, null);
   assert.deepEqual(state?.components, []);
 });
+
+const latencyBody = [
+  {
+    checkId: "a",
+    days: Array.from({ length: 90 }, (_, i) => ({
+      date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+      p50Ms: 1,
+      p95Ms: 2,
+      count: 1,
+    })),
+  },
+];
+
+async function latencyRun(
+  hasLatency: boolean | undefined,
+  answers: (() => Response)[],
+): Promise<{ states: PollerState[]; urls: string[] }> {
+  const urls: string[] = [];
+  const queue = [...answers];
+  const fakeFetch = (async (url: string) => {
+    urls.push(url);
+    if (url.endsWith("/latency")) return queue.shift()?.() ?? json([]);
+    return url.endsWith("/checks") ? json([checkOf("a", "A")]) : json([]);
+  }) as unknown as typeof fetch;
+  const states: PollerState[] = [];
+  const poller = createPoller({
+    fetch: fakeFetch,
+    timer: fakeTimer(),
+    now: () => 1,
+    pollMs: 1000,
+    ...(hasLatency === undefined ? {} : { hasLatency }),
+    onUpdate: (s) => states.push(s),
+    log: () => {},
+  });
+  await poller.refresh();
+  await poller.refresh();
+  return { states, urls };
+}
+
+test("latency is read only when asked for", async () => {
+  const off = await latencyRun(undefined, []);
+  assert.equal(
+    off.urls.some((u) => u.endsWith("/latency")),
+    false,
+  );
+  assert.equal(off.states[0]?.latency, null);
+  const on = await latencyRun(true, [() => json(latencyBody)]);
+  assert.equal(on.states[0]?.latency?.[0]?.checkId, "a");
+});
+
+test("a failed or invalid latency read keeps the last good value and does not fail the refresh", async () => {
+  const run = await latencyRun(true, [
+    () => json(latencyBody),
+    () => json([{ checkId: "a", days: [] }]),
+  ]);
+  assert.equal(run.states[1]?.error, null);
+  assert.equal(run.states[1]?.latency?.[0]?.checkId, "a");
+  const failing = await latencyRun(true, [() => new Response("x", { status: 500 })]);
+  assert.equal(failing.states[0]?.error, null);
+  assert.equal(failing.states[0]?.latency, null);
+});

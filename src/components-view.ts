@@ -4,6 +4,7 @@ import type {
   ComponentsUptimeResponse,
   ComponentWithState,
   IncidentsResponse,
+  LatencyResponse,
   MaintenanceResponse,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
@@ -18,6 +19,7 @@ import { escapeHtml } from "@lorenzh/pulse-kit/escape";
 import {
   type CheckLabels,
   renderChecks,
+  renderSlo,
   renderUptime,
   renderUptimeLegend,
   type TimeEnv,
@@ -30,6 +32,8 @@ export interface ComponentView {
   uptime: UptimeResponse;
   /** PULSE_STATUS_SHOW_CHECKS: member checks are listed under their component. */
   showChecks: boolean;
+  /** Latency per check; null when the page does not read it. */
+  latency?: LatencyResponse | null;
 }
 
 interface Block {
@@ -69,7 +73,7 @@ function renderComponent(component: ComponentWithState, view: ComponentView, env
       : `<p class="description" data-key="description">${escapeHtml(component.description)}</p>`;
   const checks =
     view.showChecks && memberChecks.length > 0
-      ? renderChecks(memberChecks, view.uptime, env, false)
+      ? renderChecks(memberChecks, view.uptime, env, false, view.latency ?? null)
       : "";
   return (
     `<li class="component state-${component.state}" data-key="component:${escapeHtml(component.id)}">` +
@@ -77,6 +81,7 @@ function renderComponent(component: ComponentWithState, view: ComponentView, env
     `<span class="name">${escapeHtml(component.name)}</span></div>` +
     description +
     incidents +
+    renderSlo(component.slo) +
     (entry ? renderUptime(entry, component.name) : "") +
     checks +
     `</li>`
@@ -98,7 +103,7 @@ function renderLooseChecks(view: ComponentView, env: TimeEnv): string {
   const members = new Set(view.components.flatMap((component) => component.checkIds));
   const loose = view.checks.filter((check) => !members.has(check.id));
   if (!view.showChecks || loose.length === 0) return "";
-  return `<div class="component-group loose-checks">${renderChecks(loose, view.uptime, env, false)}</div>`;
+  return `<div class="component-group loose-checks">${renderChecks(loose, view.uptime, env, false, view.latency ?? null)}</div>`;
 }
 
 /** The checks area of a page with components. Checks appear only when `showChecks` is set. */

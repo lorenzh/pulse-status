@@ -187,7 +187,7 @@ test("the allow-list holds exactly the component and manual incident paths, with
   assert.ok(!isAllowedApiPath("/api/components", "?x=1"));
   assert.ok(!isAllowedApiPath("/api/components/uptime", "?x=1"));
   assert.ok(!isAllowedApiPath("/api/components/shop", ""));
-  assert.equal(ALLOWED_API_PATHS.length, 8);
+  assert.equal(ALLOWED_API_PATHS.length, 9);
 });
 
 test("components and component uptime serve only their allow-listed keys", () => {

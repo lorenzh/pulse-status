@@ -8,6 +8,7 @@ export const ALLOWED_API_PATHS = [
   "/api/components",
   "/api/components/uptime",
   "/api/manual-incidents",
+  "/api/latency",
 ] as const;
 
 export function isAllowedApiPath(pathname: string, search: string): boolean {
@@ -63,6 +64,33 @@ function pick(source: Fields, keys: readonly string[]): Fields {
 }
 
 const CHECK_COMMON = ["id", "name", "type", "state", "lastResultAt", "certDaysLeft"] as const;
+
+/** The availability objective: numbers and null only, else dropped. */
+function cleanSlo(value: unknown): Fields | undefined {
+  if (!isObject(value)) return undefined;
+  const { target, windowDays, availability, budgetRemaining } = value;
+  const isNumberOrNull = (v: unknown): boolean =>
+    v === null || (typeof v === "number" && Number.isFinite(v));
+  if (typeof target !== "number" || typeof windowDays !== "number") return undefined;
+  if (!isNumberOrNull(availability) || !isNumberOrNull(budgetRemaining)) return undefined;
+  return { target, windowDays, availability, budgetRemaining };
+}
+
+function withSlo(out: Fields, source: Fields): Fields {
+  const slo = cleanSlo(source.slo);
+  if (slo !== undefined) out.slo = slo;
+  return out;
+}
+
+function cleanLatency(entry: Fields): Fields {
+  const out = pick(entry, ["checkId"]);
+  if (Array.isArray(entry.days)) {
+    out.days = entry.days
+      .filter(isObject)
+      .map((day) => pick(day, ["date", "p50Ms", "p95Ms", "count"]));
+  }
+  return out;
+}
 // The contract validator requires these result fields. They carry no target data.
 const RESULT_FIELDS = [
   "timestamp",
@@ -140,7 +168,7 @@ function cleanCheck(check: Fields, isHidden: boolean): Fields {
       .filter((entry): entry is Fields => entry !== null);
   }
   if (isObject(check.maintenance)) out.maintenance = pick(check.maintenance, WINDOW_FIELDS);
-  return { ...out, ...cleanTarget(check, isHidden) };
+  return withSlo({ ...out, ...cleanTarget(check, isHidden) }, check);
 }
 
 function cleanIncident(incident: Fields, isHidden: boolean): Fields {
@@ -162,7 +190,7 @@ function cleanUptime(entry: Fields): Fields {
 }
 
 function cleanComponent(component: Fields): Fields {
-  return pick(component, [
+  const out = pick(component, [
     "id",
     "name",
     "description",
@@ -172,6 +200,7 @@ function cleanComponent(component: Fields): Fields {
     "uptime",
     "incidentIds",
   ]);
+  return withSlo(out, component);
 }
 
 function cleanComponentUptime(entry: Fields): Fields {
@@ -214,13 +243,21 @@ const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
   "/api/components": cleanComponent,
   "/api/components/uptime": cleanComponentUptime,
   "/api/manual-incidents": cleanManualIncident,
+  "/api/latency": cleanLatency,
 };
 
 /**
  * Builds the served JSON from an allow-list per endpoint: unlisted fields, new upstream ones
- * included, never leave the server. URLs are sanitized and, when hidden, details removed.
+ * included, never leave the server. `hasChecks` is false when PULSE_STATUS_SHOW_CHECKS is off. URLs are sanitized and, when hidden, details removed.
  */
-export function filterApiBody(pathname: string, body: unknown, isHidden: boolean): unknown {
+export function filterApiBody(
+  pathname: string,
+  body: unknown,
+  isHidden: boolean,
+  hasChecks = true,
+): unknown {
+  // Latency is per check: it is never served while the checks are hidden.
+  if (pathname === "/api/latency" && !hasChecks) return [];
   if (!Array.isArray(body)) return body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;

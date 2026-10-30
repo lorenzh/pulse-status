@@ -80,6 +80,11 @@ const textPairs: [string, string][] = [
 const controlPairs: [string, string][] = [
   ["field-line", "bg"],
   ["accent", "bg"],
+  // Latency chart lines: p95 accent, p50 info, objective warning; the chart sits on the card.
+  ...["accent", "info", "warning"].flatMap((fg): [string, string][] => [
+    [fg, "bg"],
+    [fg, "surface"],
+  ]),
 ];
 // Not checked: `line-strong` is a decorative card outline (1.7:1 light, 2.0:1 dark with the
 // approved values), so it is not a control border; `field-line` is the control border.

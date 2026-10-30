@@ -29,6 +29,8 @@ Manual incidents: the page polls `/api/manual-incidents` (public, read-only). Op
 
 Components: when pulse-api has `components` configured, the page lists them (grouped, with state, 90-day uptime and incident counts) instead of raw checks. The page also polls `/api/components` and `/api/components/uptime`, so pulse-api must serve them (deploy the contract, then pulse-api, then this server). Setting: `PULSE_STATUS_SHOW_CHECKS` (default `false`; `true` lists the member checks under each component). See [docs/operation.md](docs/operation.md#components).
 
+Latency and availability: with `PULSE_STATUS_SHOW_CHECKS=true` the page polls `/api/latency` and draws a 90-day p50/p95 chart per HTTP check (inline SVG, a `<details>` table of the values). Checks and components with an `availabilityTarget` show their 30-day availability and remaining error budget. See [docs/operation.md](docs/operation.md#latency-and-availability).
+
 ## Docker
 
 ```sh
