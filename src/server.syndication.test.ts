@@ -205,9 +205,9 @@ test("syndication shares the proxy cache and adds no upstream paths", async () =
   await fetch(`${h.base}/api/checks`);
   assert.deepEqual(
     [...h.calls].sort((a, b) => a.localeCompare(b)),
-    ["/checks", "/incidents?status=open", "/incidents?status=resolved", "/uptime"],
+    ["/checks", "/components", "/incidents?status=open", "/incidents?status=resolved", "/uptime"],
   );
-  assert.equal(ALLOWED_API_PATHS.length, 5);
+  assert.equal(ALLOWED_API_PATHS.length, 7);
   for (const path of ["/api/feed.atom", "/api/badge/web.svg"]) {
     assert.equal((await fetch(h.base + path)).status, 404, path);
   }
@@ -267,4 +267,129 @@ test("badge: uptime outside 0-100 means no data", async () => {
     assert.equal(res.status, 200);
     assert.doesNotMatch(await res.text(), /150|-1%/);
   }
+});
+
+const components = [
+  { id: "shop", name: "Shop <b>", checkIds: ["web", "api"], state: "down", uptime: 98.5 },
+  { id: "docs", name: "Docs", checkIds: ["web"], state: "up", uptime: null },
+];
+const componentUptime = [
+  { componentId: "shop", uptime: 98.5, days: [] },
+  { componentId: "docs", uptime: null, days: [] },
+];
+
+async function startWithComponents(options: Partial<ServerOptions> = {}): Promise<Harness> {
+  const h = await start(options);
+  h.bodies["/components"] = components;
+  h.bodies["/components/uptime"] = componentUptime;
+  return h;
+}
+
+test("component badge: component name, state and uptime from the component routes", async () => {
+  const h = await startWithComponents();
+  const r = await fetch(`${h.base}/badge/component/shop.svg`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type") ?? "", /image\/svg\+xml/);
+  const svg = await r.text();
+  assert.match(svg, /Shop &lt;b&gt;/);
+  assert.match(svg, /down 98\.5%/);
+  const none = await (await fetch(`${h.base}/badge/component/docs.svg?label=Documentation`)).text();
+  assert.match(none, /Documentation/);
+  assert.match(none, /up no data/);
+});
+
+test("component badge: unknown component and a nested path answer 404; bad label 400", async () => {
+  const h = await startWithComponents();
+  for (const path of [
+    "/badge/component/nope.svg",
+    "/badge/component/a/b.svg",
+    "/badge/component/.svg",
+  ]) {
+    assert.equal((await fetch(h.base + path)).status, 404, path);
+  }
+  assert.equal(
+    (await fetch(`${h.base}/badge/component/shop.svg?label=${"x".repeat(40)}`)).status,
+    400,
+  );
+});
+
+test("component badge: unavailable when the components answer is bad", async () => {
+  const h = await startWithComponents();
+  h.failing.add("/components");
+  assert.equal((await fetch(`${h.base}/badge/component/shop.svg`)).status, 503);
+});
+
+test("check badges of hidden checks answer 404 exactly like an unknown id", async () => {
+  const h = await startWithComponents();
+  const ghost = await fetch(`${h.base}/badge/ghost.svg`);
+  const ghostBody = await ghost.text();
+  assert.equal(ghost.status, 404);
+  for (const id of ["web", "api"]) {
+    const res = await fetch(`${h.base}/badge/${id}.svg`);
+    const body = await res.text();
+    assert.equal(res.status, 404, id);
+    assert.equal(body, ghostBody);
+    assert.deepEqual(
+      [...res.headers].filter(([k]) => k !== "date"),
+      [...ghost.headers].filter(([k]) => k !== "date"),
+    );
+    for (const hidden of ["web", "Web", "api", "API"]) assert.ok(!body.includes(hidden), hidden);
+  }
+});
+
+test("check badges with components and shown checks, or without components, still render", async () => {
+  const shown = await startWithComponents({ showChecks: true });
+  const res = await fetch(`${shown.base}/badge/web.svg`);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /Web/);
+  const plain = await start();
+  assert.equal((await fetch(`${plain.base}/badge/web.svg`)).status, 200);
+});
+
+test("check badges are unavailable when /api/components fails and checks may be hidden", async () => {
+  const h = await startWithComponents();
+  h.failing.add("/components");
+  for (const id of ["web", "ghost"]) {
+    assert.equal((await fetch(`${h.base}/badge/${id}.svg`)).status, 503, id);
+  }
+});
+
+test("feed with components names the components and never the hidden check", async () => {
+  const h = await startWithComponents();
+  const xml = await (await fetch(`${h.base}/feed.atom`)).text();
+  assert.match(xml, /<title>Shop &lt;b&gt;: Open<\/title>/);
+  assert.match(xml, /<title>Shop &lt;b&gt;, Docs: Resolved<\/title>/);
+  assert.ok(!xml.includes("API"), "check name API is hidden");
+  assert.ok(!xml.includes(">web"), "check id is hidden");
+});
+
+test("feed with components keeps incidents of checks in no component without naming them", async () => {
+  const h = await startWithComponents();
+  h.bodies["/components"] = [components[1]];
+  const xml = await (await fetch(`${h.base}/feed.atom`)).text();
+  assert.ok(xml.includes("incident-7"));
+  assert.match(xml, /<title>Service: Open<\/title>/);
+  assert.ok(xml.includes("incident-6"));
+  for (const hidden of ["web", "Web", "api", "API"]) assert.ok(!xml.includes(hidden), hidden);
+});
+
+test("feed with components and shown checks names component and check", async () => {
+  const h = await startWithComponents({ showChecks: true });
+  h.bodies["/components"] = [components[1]];
+  const xml = await (await fetch(`${h.base}/feed.atom`)).text();
+  assert.match(xml, /<title>API: Open<\/title>/);
+  assert.match(xml, /<title>Docs: Web: Resolved<\/title>/);
+});
+
+test("feed without components is unchanged", async () => {
+  const h = await start();
+  const xml = await (await fetch(`${h.base}/feed.atom`)).text();
+  assert.match(xml, /<title>API: Open<\/title>/);
+  assert.match(xml, /<title>Web: Resolved<\/title>/);
+});
+
+test("feed is unavailable when /api/components fails", async () => {
+  const h = await start();
+  h.failing.add("/components");
+  assert.equal((await fetch(`${h.base}/feed.atom`)).status, 503);
 });

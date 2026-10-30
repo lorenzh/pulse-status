@@ -21,6 +21,8 @@ export interface Settings {
   /** Normalized, without a trailing slash; undefined means no feed. */
   publicUrl: string | undefined;
   hideDetails: boolean;
+  /** Lists the member checks under each component; no effect without components. */
+  showChecks: boolean;
   cacheMs: number;
   upstreamTimeoutMs: number;
 }
@@ -63,6 +65,7 @@ export function readSettings(env: Env): Settings {
     logo: readString(env, "PULSE_STATUS_LOGO"),
     publicUrl: readPublicUrl(env),
     hideDetails: readBool(env, "PULSE_STATUS_HIDE_DETAILS", true),
+    showChecks: readBool(env, "PULSE_STATUS_SHOW_CHECKS", false),
     cacheMs: readMs(env, "PULSE_STATUS_CACHE_MS", { fallback: 2000, min: 0 }),
     upstreamTimeoutMs: readMs(env, "PULSE_STATUS_UPSTREAM_TIMEOUT_MS", {
       fallback: 4000,

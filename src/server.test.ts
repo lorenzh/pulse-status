@@ -201,7 +201,7 @@ test("the page carries poll interval and a browser timeout above the proxy timeo
     createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, upstreamTimeoutMs: 4000 }),
   );
   const page = await (await fetch(`${base}/`)).text();
-  assert.match(page, /<body data-poll-ms="5000" data-timeout-ms="6000">/);
+  assert.match(page, /<body data-poll-ms="5000" data-timeout-ms="6000" data-show-checks="false">/);
   const custom = await listen(
     createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000, upstreamTimeoutMs: 1500 }),
   );

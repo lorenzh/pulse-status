@@ -40,6 +40,7 @@ export function startFromEnv(
     logo,
     publicUrl,
     hideDetails,
+    showChecks,
     cacheMs,
     upstreamTimeoutMs,
   } = readSettings(env);
@@ -52,6 +53,7 @@ export function startFromEnv(
     logo,
     publicUrl,
     hideDetails,
+    showChecks,
     cacheMs,
     upstreamTimeoutMs,
     fetch: doFetch,
