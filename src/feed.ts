@@ -5,6 +5,11 @@ export interface FeedCheck {
   name: string;
 }
 
+export interface FeedComponent {
+  name: string;
+  checkIds: readonly string[];
+}
+
 export interface FeedIncident {
   id: number;
   checkId: string;
@@ -20,6 +25,10 @@ export interface FeedInput {
   /** Product name. */
   name: string;
   checks: readonly FeedCheck[];
+  /** Configured components; when not empty, entries name components instead of checks. */
+  components?: readonly FeedComponent[];
+  /** PULSE_STATUS_SHOW_CHECKS: entries may also name the check. */
+  showChecks?: boolean;
   open: readonly FeedIncident[];
   resolved: readonly FeedIncident[];
 }
@@ -38,13 +47,30 @@ function rfc3339(ms: number): string {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-function toEntry(incident: FeedIncident, check: FeedCheck): Entry {
+/**
+ * What an entry calls its check. Without components it is the check name. With components it is
+ * the names of the components the check belongs to; the check name is added only when checks are
+ * shown. Undefined means the entry is left out: a hidden check in no component.
+ */
+function entryLabel(check: FeedCheck, input: FeedInput): string | undefined {
+  const components = input.components ?? [];
+  if (components.length === 0) return check.name;
+  const owners = components
+    .filter((component) => component.checkIds.includes(check.id))
+    .map((component) => component.name);
+  if (input.showChecks === true) {
+    return owners.length === 0 ? check.name : `${owners.join(", ")}: ${check.name}`;
+  }
+  return owners.length === 0 ? undefined : owners.join(", ");
+}
+
+function toEntry(incident: FeedIncident, label: string): Entry {
   const lines = [`Opened ${rfc3339(incident.openedAt)}`];
   if (incident.resolvedAt !== null) lines.push(`Resolved ${rfc3339(incident.resolvedAt)}`);
   if (typeof incident.reason === "string") lines.push(`Reason: ${incident.reason}`);
   return {
     incidentId: incident.id,
-    title: `${check.name}: ${incident.resolvedAt === null ? "Open" : "Resolved"}`,
+    title: `${label}: ${incident.resolvedAt === null ? "Open" : "Resolved"}`,
     updated: incident.resolvedAt ?? incident.openedAt,
     summary: lines.join("\n"),
   };
@@ -58,8 +84,10 @@ function entries(input: FeedInput): Entry[] {
   for (const incident of [...input.resolved, ...input.open]) {
     const check = checks.get(incident.checkId);
     if (check === undefined || seen.has(incident.id)) continue;
+    const label = entryLabel(check, input);
+    if (label === undefined) continue;
     seen.add(incident.id);
-    out.push(toEntry(incident, check));
+    out.push(toEntry(incident, label));
   }
   return out.sort((a, b) => b.updated - a.updated || b.incidentId - a.incidentId);
 }

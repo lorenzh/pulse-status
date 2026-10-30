@@ -1,11 +1,15 @@
 import {
   type ChecksResponse,
+  type ComponentsResponse,
+  type ComponentsUptimeResponse,
   type FetchJsonError,
   fetchJson,
   type IncidentsResponse,
   type MaintenanceResponse,
   type UptimeResponse,
   validateChecksResponse,
+  validateComponentsResponse,
+  validateComponentsUptimeResponse,
   validateIncidentsResponse,
   validateMaintenanceResponse,
   validateUptimeResponse,
@@ -23,6 +27,10 @@ export interface PollerState {
   resolved: IncidentsResponse;
   /** 90-day uptime; empty when the uptime request failed. */
   uptime: UptimeResponse;
+  /** Configured components in order; empty means the page shows checks. */
+  components: ComponentsResponse;
+  /** 90-day uptime per component; always present with `components`. */
+  componentUptime: ComponentsUptimeResponse;
   /** Set when the last refresh failed; data is from the last success. Details go to the log. */
   error: PollerErrorKind | null;
   /** Clock time of the last successful refresh. */
@@ -135,6 +143,8 @@ export function createPoller(options: PollerOptions): Poller {
     maintenance: [],
     resolved: [],
     uptime: [],
+    components: [],
+    componentUptime: [],
     error: null,
     updatedAt: null,
   };
@@ -245,23 +255,33 @@ export function createPoller(options: PollerOptions): Poller {
 
   async function load(signal: AbortSignal): Promise<void> {
     try {
-      const [checks, incidents, maintenance, resolved, uptime] = await Promise.all([
-        getJson(`${base}/checks`, signal).then(validServedChecks),
-        getJson(`${base}/incidents?status=open`, signal).then((b) =>
-          valid(validateIncidentsResponse(b, "incidents")),
-        ),
-        getJson(`${base}/maintenance`, signal).then((b) =>
-          valid(validateMaintenanceResponse(b, "maintenance")),
-        ),
-        getResolved(signal),
-        getUptime(signal),
-      ]);
+      const [checks, incidents, maintenance, resolved, uptime, components, componentUptime] =
+        await Promise.all([
+          getJson(`${base}/checks`, signal).then(validServedChecks),
+          getJson(`${base}/incidents?status=open`, signal).then((b) =>
+            valid(validateIncidentsResponse(b, "incidents")),
+          ),
+          getJson(`${base}/maintenance`, signal).then((b) =>
+            valid(validateMaintenanceResponse(b, "maintenance")),
+          ),
+          getResolved(signal),
+          getUptime(signal),
+          // Required, unlike uptime: a failed or invalid path fails the refresh, a 404 included.
+          getJson(`${base}/components`, signal).then((b) =>
+            valid(validateComponentsResponse(b, "components")),
+          ),
+          getJson(`${base}/components/uptime`, signal).then((b) =>
+            valid(validateComponentsUptimeResponse(b, "componentsUptime")),
+          ),
+        ]);
       state = {
         checks,
         incidents,
         maintenance,
         resolved,
         uptime,
+        components,
+        componentUptime,
         error: null,
         updatedAt: options.now(),
       };

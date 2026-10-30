@@ -1,6 +1,8 @@
 import type {
   ChecksResponse,
   CheckWithState,
+  ComponentUptime,
+  ComponentWithState,
   IncidentsResponse,
   LocationResult,
   MaintenanceResponse,
@@ -62,7 +64,7 @@ function summaryLine(status: string, text: string): string {
 }
 
 /** Healthy text only when something is up, or all checks are in maintenance. */
-function quietSummary(checks: ChecksResponse): { status: string; text: string } {
+function quietSummary(checks: readonly { state: string }[]): { status: string; text: string } {
   const hasUp = checks.some((check) => check.state === "up");
   const hasUnknown = checks.some((check) => check.state === "unknown");
   if (!hasUp && hasUnknown) return { status: "unknown", text: "Status unknown" };
@@ -90,24 +92,28 @@ export function renderSummary(
   incidents: IncidentsResponse,
   error: PollerErrorKind | null = null,
   hasData = true,
+  components: readonly ComponentWithState[] = [],
 ): string {
   if (!hasData) {
     if (error === null) return "";
     return summaryLine("warning", error === "version" ? VERSION_SUMMARY : "Status unavailable");
   }
   if (error === "version") return summaryLine("warning", VERSION_SUMMARY);
-  if (checks.length === 0) {
+  // With components the summary counts components, so it never reveals the checks behind them.
+  const items: readonly { state: string }[] = components.length > 0 ? components : checks;
+  const noun = components.length > 0 ? "component" : "check";
+  if (items.length === 0) {
     return '<p class="summary status-none" role="status">No checks configured</p>';
   }
-  const down = checks.filter((check) => check.state === "down").length;
-  const degraded = checks.filter((check) => check.state === "degraded").length;
-  let { status, text } = quietSummary(checks);
+  const down = items.filter((item) => item.state === "down").length;
+  const degraded = items.filter((item) => item.state === "degraded").length;
+  let { status, text } = quietSummary(items);
   if (down > 0) {
     status = "error";
-    text = `${countWord(down, "check")} down`;
+    text = `${countWord(down, noun)} down`;
   } else if (degraded > 0) {
     status = "warning";
-    text = `${countWord(degraded, "check")} degraded`;
+    text = `${countWord(degraded, noun)} degraded`;
   } else if (error !== null) {
     status = "warning";
     text = "Status may be outdated";
@@ -168,7 +174,7 @@ function formatPercent(uptime: number): string {
   return `${uptime.toFixed(1)} %`;
 }
 
-export function renderUptime(entry: UptimeResponse[number]): string {
+export function renderUptime(entry: Pick<ComponentUptime, "days" | "uptime">): string {
   const groupLabel = entry.uptime === null ? "no data" : formatPercent(entry.uptime);
   const total = entry.uptime === null ? "no data" : `${groupLabel} uptime, 90 days`;
   const bars = entry.days.map((day) => {
@@ -262,7 +268,11 @@ export function renderChecks(
   return `<ul class="checks">${items.join("")}</ul>`;
 }
 
-function checkNames(checks: ChecksResponse): Map<string, string> {
+/** Check id to the text an incident or maintenance entry shows for it. */
+export type CheckLabels = ReadonlyMap<string, string>;
+
+function checkNames(checks: ChecksResponse | CheckLabels): CheckLabels {
+  if (!Array.isArray(checks)) return checks;
   return new Map(checks.map((check) => [check.id, check.name]));
 }
 
@@ -272,7 +282,7 @@ function reasonSpan(reason: string | null): string {
 
 export function renderIncidents(
   incidents: IncidentsResponse,
-  checks: ChecksResponse,
+  checks: ChecksResponse | CheckLabels,
   env: TimeEnv,
 ): string {
   const open = incidents.filter((incident) => incident.resolvedAt === null);
@@ -296,7 +306,7 @@ export const RESOLVED_LIMIT = 10;
 
 export function renderResolvedIncidents(
   incidents: IncidentsResponse,
-  checks: ChecksResponse,
+  checks: ChecksResponse | CheckLabels,
   env: TimeEnv,
 ): string {
   const recent = incidents
@@ -357,7 +367,7 @@ function renderExactSpan(window: MaintenanceResponse[number], env: TimeEnv): str
 
 export function renderUpcomingMaintenance(
   maintenance: MaintenanceResponse,
-  checks: ChecksResponse,
+  checks: ChecksResponse | CheckLabels,
   env: TimeEnv,
 ): string {
   const upcoming = maintenance

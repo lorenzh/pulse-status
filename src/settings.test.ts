@@ -13,6 +13,7 @@ test("defaults apply for an empty environment", () => {
     logo: undefined,
     publicUrl: undefined,
     hideDetails: true,
+    showChecks: false,
     cacheMs: 2000,
     upstreamTimeoutMs: 4000,
   });
@@ -89,4 +90,21 @@ test("PULSE_STATUS_PUBLIC_URL: rejects other schemes, userinfo, query, fragment 
       bad,
     );
   }
+});
+
+test("PULSE_STATUS_SHOW_CHECKS: default and empty are false; true, false, 1 and 0 are accepted", () => {
+  const read = (v: string): boolean => readSettings({ PULSE_STATUS_SHOW_CHECKS: v }).showChecks;
+  assert.equal(readSettings({}).showChecks, false);
+  assert.equal(read(""), false);
+  assert.equal(read("true"), true);
+  assert.equal(read("1"), true);
+  assert.equal(read("false"), false);
+  assert.equal(read("0"), false);
+});
+
+test("PULSE_STATUS_SHOW_CHECKS: any other value stops the start", () => {
+  assert.throws(
+    () => readSettings({ PULSE_STATUS_SHOW_CHECKS: "yes" }),
+    (err) => err instanceof StartupError && err.message.includes("PULSE_STATUS_SHOW_CHECKS"),
+  );
 });

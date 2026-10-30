@@ -146,7 +146,7 @@ test("stores uptime; an uptime failure still yields checks without error", async
   const uptime = [{ checkId: "a", days: [], uptime: null }];
   let uptimeOk = true;
   const fakeFetch = (async (url: string) => {
-    if (url.endsWith("/uptime")) {
+    if (url.endsWith("/api/uptime")) {
       return uptimeOk ? json(uptime) : new Response("x", { status: 500 });
     }
     return url.endsWith("/checks") ? json([checkOf("a", "A")]) : json([]);
@@ -236,7 +236,7 @@ test("an invalid uptime response degrades to an empty list and is logged", async
   const logs: string[] = [];
   const poller = createPoller({
     fetch: (async (url: string) =>
-      json(url.endsWith("/uptime") ? [{ checkId: 1 }] : [])) as unknown as typeof fetch,
+      json(url.endsWith("/api/uptime") ? [{ checkId: 1 }] : [])) as unknown as typeof fetch,
     timer: fakeTimer(),
     now: () => 5,
     pollMs: 1,
@@ -562,7 +562,7 @@ test("a failed request aborts the other pending requests", async () => {
     onUpdate: () => {},
   });
   await poller.refresh();
-  assert.equal(signals.length, 5);
+  assert.equal(signals.length, 7);
   assert.ok(signals.every((s) => s.aborted));
 });
 
@@ -589,7 +589,7 @@ test("the first error stays published after the abort", async () => {
   await poller.refresh();
   await flush();
   // The failure itself aborts the pending siblings; their rejections must not replace the error.
-  assert.equal(abortedSiblings, 4);
+  assert.equal(abortedSiblings, 6);
   assert.equal(updates.length, 1);
   assert.equal(updates[0]?.error, "unreachable");
 });
@@ -614,7 +614,7 @@ test("a hidden tab aborts all pending requests", async () => {
   poller.start();
   await flush();
   visibility.set(true);
-  assert.equal(signals.length, 5);
+  assert.equal(signals.length, 7);
   assert.ok(signals.every((s) => s.aborted));
 });
 
@@ -728,7 +728,7 @@ test("a redacted check is still validated by the contract", async () => {
 });
 
 test("a wire version mismatch on uptime or resolved incidents fails the poll", async () => {
-  for (const path of ["/uptime", "/incidents?status=resolved"]) {
+  for (const path of ["/api/uptime", "/incidents?status=resolved"]) {
     const state = await pollOnce((async (url: string) =>
       url.endsWith(path) ? json([], "2") : json([])) as unknown as typeof fetch);
     assert.equal(state?.error, "version", path);
@@ -830,7 +830,7 @@ test("uptime as served without per-day results still validates", async () => {
     true,
   );
   const state = await pollOnce((async (url: string) =>
-    url.endsWith("/uptime") ? json(served) : json([])) as unknown as typeof fetch);
+    url.endsWith("/api/uptime") ? json(served) : json([])) as unknown as typeof fetch);
   assert.equal(state?.error, null);
   assert.equal(state?.uptime.length, 1);
 });
@@ -862,4 +862,85 @@ test("the next tick starts only after a slow refresh ends", async () => {
   await flush();
   assert.equal(calls, firstRound, "no new round before the timer fires");
   assert.equal(timer.pending.size, 1, "the next tick is scheduled after the refresh ended");
+});
+
+const component = {
+  id: "shop",
+  name: "Shop",
+  checkIds: ["a"],
+  state: "up",
+  uptime: 100,
+  incidentIds: [],
+};
+const componentDays = { componentId: "shop", uptime: 100, days: [] };
+
+function withComponents(
+  components: () => Response,
+  componentsUptime: () => Response,
+): typeof fetch {
+  return (async (url: string) => {
+    if (url.endsWith("/components/uptime")) return componentsUptime();
+    if (url.endsWith("/components")) return components();
+    return url.endsWith("/checks") ? json([checkOf("a", "A")]) : json([]);
+  }) as unknown as typeof fetch;
+}
+
+test("stores components and their uptime from /components and /components/uptime", async () => {
+  const state = await pollOnce(
+    withComponents(
+      () => json([component]),
+      () => json([componentDays]),
+    ),
+  );
+  assert.equal(state?.error, null);
+  assert.deepEqual(state?.components, [component]);
+  assert.deepEqual(state?.componentUptime, [componentDays]);
+});
+
+test("a failed, missing or invalid component path fails the refresh", async () => {
+  const bad: Array<[string, () => Response]> = [
+    ["404", () => new Response("{}", { status: 404 })],
+    ["500", () => new Response("x", { status: 500 })],
+    ["invalid", () => json([{ id: 1 }])],
+  ];
+  for (const [label, response] of bad) {
+    const first = await pollOnce(withComponents(response, () => json([])));
+    assert.notEqual(first?.error, null, `components ${label}`);
+    assert.equal(first?.updatedAt, null, `components ${label}`);
+    const second = await pollOnce(withComponents(() => json([]), response));
+    assert.notEqual(second?.error, null, `uptime ${label}`);
+    assert.equal(second?.updatedAt, null, `uptime ${label}`);
+  }
+});
+
+test("a component failure keeps the last good snapshot", async () => {
+  let isUp = true;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: withComponents(
+      () => (isUp ? json([component]) : new Response("x", { status: 503 })),
+      () => json([componentDays]),
+    ),
+    timer: fakeTimer(),
+    now: () => 5,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
+    log: () => {},
+  });
+  await poller.refresh();
+  isUp = false;
+  await poller.refresh();
+  assert.equal(updates[1]?.error, "unreachable");
+  assert.deepEqual(updates[1]?.components, [component]);
+});
+
+test("an empty components list is not an error", async () => {
+  const state = await pollOnce(
+    withComponents(
+      () => json([]),
+      () => json([]),
+    ),
+  );
+  assert.equal(state?.error, null);
+  assert.deepEqual(state?.components, []);
 });

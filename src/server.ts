@@ -34,6 +34,8 @@ export interface ServerOptions {
   publicUrl?: string | undefined;
   /** Hide check targets, keywords and reasons in proxied JSON (PULSE_STATUS_HIDE_DETAILS), default true. */
   hideDetails?: boolean | undefined;
+  /** List member checks under each component (PULSE_STATUS_SHOW_CHECKS), default false. */
+  showChecks?: boolean | undefined;
   /** How long a proxied answer, error answers included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
   cacheMs?: number;
   /** Time limit for one upstream request, headers and body (PULSE_STATUS_UPSTREAM_TIMEOUT_MS). */
@@ -140,6 +142,7 @@ const tsModules: Record<string, string> = {
   "/poller.js": "poller.ts",
   "/theme.js": "theme.ts",
   "/sections.js": "sections.ts",
+  "/components-view.js": "components-view.ts",
 };
 
 // Runtime files of the contract package, served to the browser under /pulse-contract/.
@@ -150,6 +153,7 @@ const contractModules = new Set([
   "validate.js",
   "version.js",
   "client.js",
+  "components.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
@@ -362,6 +366,7 @@ export function createStatusServer(options: ServerOptions): Server {
     read: (path) => cachedAnswer(path, new URL(path, "http://localhost"), ctx),
     publicUrl: options.publicUrl,
     name,
+    showChecks: options.showChecks,
     maxAgeSeconds: Math.max(1, Math.ceil(Math.max(ctx.cacheMs, options.pollMs) / 1000)),
   });
   const feedLink =
@@ -377,7 +382,7 @@ export function createStatusServer(options: ServerOptions): Server {
       .replace(
         "<body>",
         () =>
-          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}">`,
+          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}" data-show-checks="${options.showChecks === true}">`,
       )
       .replaceAll("{{title}}", () => escapeHtml(title))
       .replace("{{wordmark}}", () => mark)

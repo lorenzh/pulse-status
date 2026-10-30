@@ -27,6 +27,7 @@ themeSwitch.addEventListener("change", (event) => {
 
 const pollMs = Number(document.body.dataset.pollMs) || 5000;
 const timeoutMs = Number(document.body.dataset.timeoutMs) || undefined;
+const showChecks = document.body.dataset.showChecks === "true";
 
 const exactFormat = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -73,7 +74,7 @@ function showUpdated(state) {
 
 function draw(state) {
   // Build every section first: a throwing renderer leaves the page as it was.
-  const sections = buildSections(state, makeEnv());
+  const sections = buildSections(state, makeEnv(), undefined, { showChecks });
   showSections(sections, show);
   lastState = state;
 }

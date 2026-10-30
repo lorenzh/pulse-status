@@ -166,6 +166,21 @@ li {
   border-radius: var(--radius-md);
   min-width: 0;
 }
+.component-group + .component-group {
+  margin-top: 1.5rem;
+}
+.group-heading {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+.description {
+  margin: 0.25rem 0 0;
+  color: var(--lead);
+  overflow-wrap: anywhere;
+}
+.component > ul.checks {
+  margin-top: 0.75rem;
+}
 .summary {
   margin: 0;
   padding: 1rem 1.25rem;

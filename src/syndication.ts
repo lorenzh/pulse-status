@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 import { parseBadgeLabel, renderBadge } from "./badge.ts";
-import { buildAtom, type FeedCheck, type FeedIncident } from "./feed.ts";
+import { buildAtom, type FeedCheck, type FeedComponent, type FeedIncident } from "./feed.ts";
 
 /** A cached, already filtered answer of the API proxy. */
 export interface CachedAnswer {
@@ -14,11 +14,14 @@ export interface SyndicationOptions {
   /** Normalized PULSE_STATUS_PUBLIC_URL; without it the feed is off. */
   publicUrl: string | undefined;
   name: string;
+  /** PULSE_STATUS_SHOW_CHECKS: feed entries may name the check under its components. */
+  showChecks?: boolean | undefined;
   /** Seconds a successful answer may be reused. */
   maxAgeSeconds: number;
 }
 
 const BADGE_PREFIX = "/badge/";
+const COMPONENT_BADGE_PREFIX = "/badge/component/";
 const BADGE_SUFFIX = ".svg";
 const BADGE_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 const MAX_TIME_MS = 8.64e15;
@@ -67,6 +70,32 @@ function parseChecks(answer: CachedAnswer): ListedCheck[] | undefined {
   return out;
 }
 
+interface ListedComponent extends FeedComponent {
+  id: string;
+  state: string;
+}
+
+function parseComponents(answer: CachedAnswer): ListedComponent[] | undefined {
+  const list = jsonList(answer);
+  if (list === undefined) return undefined;
+  const out: ListedComponent[] = [];
+  for (const item of list) {
+    if (
+      !isObject(item) ||
+      typeof item.id !== "string" ||
+      typeof item.name !== "string" ||
+      typeof item.state !== "string" ||
+      item.state === "" ||
+      !Array.isArray(item.checkIds) ||
+      !item.checkIds.every((id: unknown) => typeof id === "string")
+    ) {
+      return undefined;
+    }
+    out.push({ id: item.id, name: item.name, state: item.state, checkIds: item.checkIds });
+  }
+  return out;
+}
+
 function parseIncidents(answer: CachedAnswer): FeedIncident[] | undefined {
   const list = jsonList(answer);
   if (list === undefined) return undefined;
@@ -92,10 +121,14 @@ function parseIncidents(answer: CachedAnswer): FeedIncident[] | undefined {
   return out;
 }
 
-/** The overall uptime of one check; undefined when the answer is unusable or lacks the check. */
-function uptimeOf(answer: CachedAnswer, checkId: string): number | undefined {
+/** The overall uptime of one entry; undefined when the answer is unusable or lacks the entry. */
+function uptimeOf(
+  answer: CachedAnswer,
+  key: "checkId" | "componentId",
+  id: string,
+): number | undefined {
   const list = jsonList(answer);
-  const entry = list?.find((item) => isObject(item) && item.checkId === checkId);
+  const entry = list?.find((item) => isObject(item) && item[key] === id);
   if (!isObject(entry)) return undefined;
   const value = entry.uptime;
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
@@ -114,10 +147,10 @@ function sendText(res: ServerResponse, status: number, body: string): void {
 const unavailable = (res: ServerResponse): void => sendText(res, 503, "unavailable");
 const notFound = (res: ServerResponse): void => sendText(res, 404, "not found");
 
-/** The check id of a `/badge/<id>.svg` path, else undefined (also for a malformed escape). */
-function badgeId(pathname: string): string | undefined {
-  if (!pathname.startsWith(BADGE_PREFIX) || !pathname.endsWith(BADGE_SUFFIX)) return undefined;
-  const segment = pathname.slice(BADGE_PREFIX.length, -BADGE_SUFFIX.length);
+/** The id of a `/badge/<id>.svg` (or component badge) path, else undefined (also for a malformed escape). */
+function badgeId(pathname: string, prefix = BADGE_PREFIX): string | undefined {
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(BADGE_SUFFIX)) return undefined;
+  const segment = pathname.slice(prefix.length, -BADGE_SUFFIX.length);
   if (segment === "" || segment.includes("/")) return undefined;
   try {
     return decodeURIComponent(segment);
@@ -131,19 +164,34 @@ async function serveFeed(
   opts: SyndicationOptions,
   publicUrl: string,
 ): Promise<void> {
-  const [checksAnswer, openAnswer, resolvedAnswer] = await Promise.all([
+  const [checksAnswer, openAnswer, resolvedAnswer, componentsAnswer] = await Promise.all([
     opts.read("/api/checks"),
     opts.read("/api/incidents?status=open"),
     opts.read("/api/incidents?status=resolved"),
+    opts.read("/api/components"),
   ]);
   const checks = parseChecks(checksAnswer);
   const open = parseIncidents(openAnswer);
   const resolved = parseIncidents(resolvedAnswer);
-  if (checks === undefined || open === undefined || resolved === undefined) {
+  const components = parseComponents(componentsAnswer);
+  if (
+    checks === undefined ||
+    open === undefined ||
+    resolved === undefined ||
+    components === undefined
+  ) {
     unavailable(res);
     return;
   }
-  const xml = buildAtom({ publicUrl, name: opts.name, checks, open, resolved });
+  const xml = buildAtom({
+    publicUrl,
+    name: opts.name,
+    checks,
+    components,
+    showChecks: opts.showChecks === true,
+    open,
+    resolved,
+  });
   res.writeHead(200, {
     "content-type": "application/atom+xml; charset=utf-8",
     "cache-control": `public, max-age=${opts.maxAgeSeconds}`,
@@ -181,7 +229,45 @@ async function serveBadge(
   const svg = renderBadge({
     label: label.label ?? check.name,
     state: check.state,
-    uptime: uptimeOf(uptimeAnswer, id),
+    uptime: uptimeOf(uptimeAnswer, "checkId", id),
+  });
+  res.writeHead(200, {
+    "content-type": "image/svg+xml; charset=utf-8",
+    "content-security-policy": BADGE_CSP,
+    "cache-control": `public, max-age=${opts.maxAgeSeconds}`,
+  });
+  res.end(svg);
+}
+
+async function serveComponentBadge(
+  res: ServerResponse,
+  opts: SyndicationOptions,
+  id: string,
+  search: string,
+): Promise<void> {
+  const label = parseBadgeLabel(new URLSearchParams(search).get("label"));
+  if (!label.isValid) {
+    sendText(res, 400, "invalid label");
+    return;
+  }
+  const [componentsAnswer, uptimeAnswer] = await Promise.all([
+    opts.read("/api/components"),
+    opts.read("/api/components/uptime"),
+  ]);
+  const components = parseComponents(componentsAnswer);
+  if (components === undefined) {
+    unavailable(res);
+    return;
+  }
+  const component = components.find((item) => item.id === id);
+  if (component === undefined) {
+    notFound(res);
+    return;
+  }
+  const svg = renderBadge({
+    label: label.label ?? component.name,
+    state: component.state,
+    uptime: uptimeOf(uptimeAnswer, "componentId", id),
   });
   res.writeHead(200, {
     "content-type": "image/svg+xml; charset=utf-8",
@@ -201,6 +287,12 @@ export function createSyndication(
   return async (url, res) => {
     if (url.pathname === "/feed.atom" && opts.publicUrl !== undefined) {
       await serveFeed(res, opts, opts.publicUrl);
+      return true;
+    }
+    if (url.pathname.startsWith(COMPONENT_BADGE_PREFIX)) {
+      const id = badgeId(url.pathname, COMPONENT_BADGE_PREFIX);
+      if (id === undefined) notFound(res);
+      else await serveComponentBadge(res, opts, id, url.search);
       return true;
     }
     if (url.pathname.startsWith(BADGE_PREFIX)) {

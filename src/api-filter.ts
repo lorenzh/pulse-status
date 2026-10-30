@@ -5,6 +5,8 @@ export const ALLOWED_API_PATHS = [
   "/api/maintenance",
   "/api/incidents?status=open",
   "/api/incidents?status=resolved",
+  "/api/components",
+  "/api/components/uptime",
 ] as const;
 
 export function isAllowedApiPath(pathname: string, search: string): boolean {
@@ -153,11 +155,34 @@ function cleanUptime(entry: Fields): Fields {
   return out;
 }
 
+function cleanComponent(component: Fields): Fields {
+  return pick(component, [
+    "id",
+    "name",
+    "description",
+    "group",
+    "checkIds",
+    "state",
+    "uptime",
+    "incidentIds",
+  ]);
+}
+
+function cleanComponentUptime(entry: Fields): Fields {
+  const out = pick(entry, ["componentId", "uptime"]);
+  if (Array.isArray(entry.days)) {
+    out.days = entry.days.filter(isObject).map((day) => pick(day, ["date", "uptime", "results"]));
+  }
+  return out;
+}
+
 const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
   "/api/checks": cleanCheck,
   "/api/incidents": cleanIncident,
   "/api/maintenance": cleanMaintenance,
   "/api/uptime": cleanUptime,
+  "/api/components": cleanComponent,
+  "/api/components/uptime": cleanComponentUptime,
 };
 
 /**

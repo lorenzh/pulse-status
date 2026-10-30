@@ -117,6 +117,11 @@ test("other API paths give 404 and never reach the API", async () => {
     "/api/../checks",
     "/api/",
     "/api/uptime?",
+    "/api/components?x=1",
+    "/api/components/",
+    "/api/components/uptime?x=1",
+    "/api/components/shop",
+    "/api/components/uptime/",
   ]) {
     const r = await fetch(base + path);
     assert.equal(r.status, 404, path);

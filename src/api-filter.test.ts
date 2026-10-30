@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   validateChecksResponse,
+  validateComponentsResponse,
+  validateComponentsUptimeResponse,
   validateIncidentsResponse,
   validateMaintenanceResponse,
   validateResult,
   validateUptimeResponse,
 } from "@lorenzh/pulse-contract";
-import { filterApiBody } from "./api-filter.ts";
+import { ALLOWED_API_PATHS, filterApiBody, isAllowedApiPath } from "./api-filter.ts";
 
 const result = {
   checkId: "a",
@@ -135,4 +137,43 @@ test("default method and expectedStatus are not served", () => {
   assert.ok(Array.isArray(out));
   assert.equal("method" in out[0], false);
   assert.equal("expectedStatus" in out[0], false);
+});
+
+test("the allow-list holds exactly the two component paths, without a query", () => {
+  assert.ok(isAllowedApiPath("/api/components", ""));
+  assert.ok(isAllowedApiPath("/api/components/uptime", ""));
+  assert.ok(!isAllowedApiPath("/api/components", "?x=1"));
+  assert.ok(!isAllowedApiPath("/api/components/uptime", "?x=1"));
+  assert.ok(!isAllowedApiPath("/api/components/shop", ""));
+  assert.equal(ALLOWED_API_PATHS.length, 7);
+});
+
+test("components and component uptime serve only their allow-listed keys", () => {
+  const component = {
+    id: "shop",
+    name: "Shop",
+    description: "d",
+    group: "G",
+    checkIds: ["a"],
+    state: "up",
+    uptime: 99,
+    incidentIds: [1],
+    secret: "x",
+  };
+  const served = filterApiBody("/api/components", [component], true);
+  assert.deepEqual(
+    served,
+    [{ ...component, secret: undefined }].map(({ secret: _s, ...rest }) => rest),
+  );
+  assert.ok(validateComponentsResponse(served, "components").ok);
+  const day = { date: "2026-01-01", uptime: 100, results: 3, extra: 1 };
+  const uptime = filterApiBody(
+    "/api/components/uptime",
+    [{ componentId: "shop", uptime: 100, days: [day], extra: 1 }],
+    true,
+  );
+  assert.deepEqual(uptime, [
+    { componentId: "shop", uptime: 100, days: [{ date: "2026-01-01", uptime: 100, results: 3 }] },
+  ]);
+  assert.ok(validateComponentsUptimeResponse(uptime, "componentsUptime").ok);
 });

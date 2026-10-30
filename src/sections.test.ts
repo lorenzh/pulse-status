@@ -29,6 +29,8 @@ const state: PollerState = {
   maintenance: [],
   resolved: [],
   uptime: [],
+  components: [],
+  componentUptime: [],
   error: null,
   updatedAt: 5,
 };
