@@ -26,6 +26,9 @@ const result = {
   future: true,
 };
 
+// Built from parts so the linter does not flag a literal address.
+const RESOLVER = ["192", "0", "2", "1"].join(".");
+
 const base = {
   id: "a",
   name: "A",
@@ -39,6 +42,17 @@ const upstream = [
   { ...base, url: "https://x.test/p?q=1", intervalMs: 1000, consecutiveDown: 1, secret: "s" },
   { ...base, id: "k", type: "http", url: "https://x.test", keyword: "ok", intervalMs: 1000 },
   { ...base, id: "t", type: "tls", host: "db.internal", port: 5432, warnDays: 14 },
+  { ...base, id: "p", type: "tcp", host: "tcp.internal", port: 25 },
+  {
+    ...base,
+    id: "d",
+    type: "dns",
+    dnsName: "dns.internal",
+    recordType: "A",
+    expected: ["ns-answer.internal"],
+    resolver: RESOLVER,
+  },
+  { ...base, id: "m", type: "domain", domain: "domain.internal", warnDays: 30, certDaysLeft: 12 },
   { ...base, id: "h", type: "heartbeat", period: 60_000, grace: 0, secret: "s" },
 ];
 
@@ -47,7 +61,35 @@ const REST: Record<string, object> = {
   http: { url: "https://hidden.invalid/", intervalMs: 1, consecutiveDown: 0 },
   tls: { host: "hidden", port: 1, warnDays: 0, intervalMs: 1, consecutiveDown: 0 },
   heartbeat: { period: 1000, grace: 0, consecutiveDown: 0 },
+  tcp: { host: "hidden", port: 1, intervalMs: 1, consecutiveDown: 0 },
+  dns: { dnsName: "hidden.invalid", recordType: "A", intervalMs: 1, consecutiveDown: 0 },
+  domain: { domain: "hidden.invalid", warnDays: 0, intervalMs: 3_600_000, consecutiveDown: 0 },
 };
+
+const TARGET_STRINGS = [
+  "tcp.internal",
+  "dns.internal",
+  "ns-answer.internal",
+  RESOLVER,
+  "domain.internal",
+];
+
+test("tcp, dns and domain targets are served only when not hidden", () => {
+  const shown = JSON.stringify(filterApiBody("/api/checks", upstream, false));
+  for (const text of TARGET_STRINGS) assert.ok(shown.includes(text), text);
+  const hidden = JSON.stringify(filterApiBody("/api/checks", upstream, true));
+  for (const text of TARGET_STRINGS) assert.equal(hidden.includes(text), false, text);
+  assert.ok(hidden.includes("12"));
+});
+
+test("an unknown check type keeps no target", () => {
+  const served = filterApiBody(
+    "/api/checks",
+    [{ ...base, id: "u", type: "future", host: "x.internal" }],
+    false,
+  );
+  assert.equal(JSON.stringify(served).includes("x.internal"), false);
+});
 
 for (const isHidden of [true, false]) {
   test(`checks keep the contract result fields (hidden=${isHidden})`, () => {

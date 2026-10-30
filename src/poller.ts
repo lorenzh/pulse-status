@@ -85,7 +85,7 @@ class WireVersionError extends Error {
 
 /**
  * Validates `/checks` as the server serves it: an allow-list keeps only what the page reads, so
- * the target (`url`, or `host` and `port`; a heartbeat's `period` and `grace`) is absent when
+ * the target (`url`, `host` and `port`, `dnsName`, `domain`; a heartbeat's `period` and `grace`) is absent when
  * hidden, and fields only the contract requires (`intervalMs`, `warnDays`) are never served.
  * The per-location `location`, `checkId`, `statusCode` and `attempts` are served. Placeholders fill only the
  * copy that is validated, so the returned checks carry no fake values.
@@ -107,6 +107,13 @@ function withPlaceholders(item: unknown): unknown {
   if (item.type === "heartbeat") return { period: 1000, grace: 0, ...state };
   if (item.type === "tls") {
     return { host: "hidden", port: 1, warnDays: 0, intervalMs: 1, ...state };
+  }
+  if (item.type === "tcp") return { host: "hidden", port: 1, intervalMs: 1, ...state };
+  if (item.type === "dns") {
+    return { dnsName: "hidden.invalid", recordType: "A", intervalMs: 1, ...state };
+  }
+  if (item.type === "domain") {
+    return { domain: "hidden.invalid", warnDays: 0, intervalMs: 3_600_000, ...state };
   }
   return { url: "https://hidden.invalid/", intervalMs: 1, ...state };
 }
