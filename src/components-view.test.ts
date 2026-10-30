@@ -163,7 +163,7 @@ test("the summary counts components, not checks", () => {
 
 test("without components the page is as before", () => {
   const sections = buildSections(state({ components: [], componentUptime: [] }), env);
-  assert.equal("checksTitle" in sections, false);
+  assert.equal(sections.checksTitle, "Checks");
   assert.match(sections.checks ?? "", /class="checks"/);
   assert.match(sections.checks ?? "", /Secret DB/);
   assert.match(sections.summary ?? "", /1 check down/);

@@ -211,17 +211,21 @@ async function serveBadge(
     sendText(res, 400, "invalid label");
     return;
   }
-  // Both reads always happen, so the work does not differ between known and unknown ids.
-  const [checksAnswer, uptimeAnswer] = await Promise.all([
+  // All reads always happen, so the work does not differ between known, hidden and unknown ids.
+  const isShown = opts.showChecks === true;
+  const [checksAnswer, uptimeAnswer, componentsAnswer] = await Promise.all([
     opts.read("/api/checks"),
     opts.read("/api/uptime"),
+    isShown ? undefined : opts.read("/api/components"),
   ]);
   const checks = parseChecks(checksAnswer);
-  if (checks === undefined) {
+  const components = componentsAnswer === undefined ? [] : parseComponents(componentsAnswer);
+  if (checks === undefined || components === undefined) {
     unavailable(res);
     return;
   }
-  const check = checks.find((item) => item.id === id);
+  // With components and hidden checks every check badge answers like an unknown id.
+  const check = components.length > 0 ? undefined : checks.find((item) => item.id === id);
   if (check === undefined) {
     notFound(res);
     return;

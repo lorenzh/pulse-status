@@ -319,11 +319,39 @@ test("component badge: unavailable when the components answer is bad", async () 
   assert.equal((await fetch(`${h.base}/badge/component/shop.svg`)).status, 503);
 });
 
-test("the check badge route is unchanged and does not read components", async () => {
+test("check badges of hidden checks answer 404 exactly like an unknown id", async () => {
   const h = await startWithComponents();
-  const r = await fetch(`${h.base}/badge/web.svg`);
-  assert.equal(r.status, 200);
-  assert.ok(!h.calls.includes("/components"));
+  const ghost = await fetch(`${h.base}/badge/ghost.svg`);
+  const ghostBody = await ghost.text();
+  assert.equal(ghost.status, 404);
+  for (const id of ["web", "api"]) {
+    const res = await fetch(`${h.base}/badge/${id}.svg`);
+    const body = await res.text();
+    assert.equal(res.status, 404, id);
+    assert.equal(body, ghostBody);
+    assert.deepEqual(
+      [...res.headers].filter(([k]) => k !== "date"),
+      [...ghost.headers].filter(([k]) => k !== "date"),
+    );
+    for (const hidden of ["web", "Web", "api", "API"]) assert.ok(!body.includes(hidden), hidden);
+  }
+});
+
+test("check badges with components and shown checks, or without components, still render", async () => {
+  const shown = await startWithComponents({ showChecks: true });
+  const res = await fetch(`${shown.base}/badge/web.svg`);
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /Web/);
+  const plain = await start();
+  assert.equal((await fetch(`${plain.base}/badge/web.svg`)).status, 200);
+});
+
+test("check badges are unavailable when /api/components fails and checks may be hidden", async () => {
+  const h = await startWithComponents();
+  h.failing.add("/components");
+  for (const id of ["web", "ghost"]) {
+    assert.equal((await fetch(`${h.base}/badge/${id}.svg`)).status, 503, id);
+  }
 });
 
 test("feed with components names the components and never the hidden check", async () => {
@@ -335,12 +363,14 @@ test("feed with components names the components and never the hidden check", asy
   assert.ok(!xml.includes(">web"), "check id is hidden");
 });
 
-test("feed with components leaves out incidents of checks in no component", async () => {
+test("feed with components keeps incidents of checks in no component without naming them", async () => {
   const h = await startWithComponents();
   h.bodies["/components"] = [components[1]];
   const xml = await (await fetch(`${h.base}/feed.atom`)).text();
-  assert.ok(!xml.includes("incident-7"));
+  assert.ok(xml.includes("incident-7"));
+  assert.match(xml, /<title>Service: Open<\/title>/);
   assert.ok(xml.includes("incident-6"));
+  for (const hidden of ["web", "Web", "api", "API"]) assert.ok(!xml.includes(hidden), hidden);
 });
 
 test("feed with components and shown checks names component and check", async () => {

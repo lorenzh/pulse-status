@@ -77,6 +77,8 @@ export function buildSections(
   if (state.components.length > 0) {
     return componentSections(state, env, renderers, options, sections);
   }
+  // Set on both paths, so the heading goes back to "Checks" when components are removed.
+  sections.checksTitle = "Checks";
   sections.checks = renderers.checks(state.checks, state.uptime, env);
   sections.incidents = renderers.incidents(state.incidents, state.checks, env);
   sections.resolved = renderers.resolved(state.resolved, state.checks, env);

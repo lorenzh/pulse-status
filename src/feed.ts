@@ -47,12 +47,15 @@ function rfc3339(ms: number): string {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+/** The label of an entry whose check is hidden and belongs to no component. */
+const HIDDEN_CHECK_LABEL = "Service";
+
 /**
  * What an entry calls its check. Without components it is the check name. With components it is
  * the names of the components the check belongs to; the check name is added only when checks are
- * shown. Undefined means the entry is left out: a hidden check in no component.
+ * shown. A hidden check in no component gets the neutral `HIDDEN_CHECK_LABEL`.
  */
-function entryLabel(check: FeedCheck, input: FeedInput): string | undefined {
+function entryLabel(check: FeedCheck, input: FeedInput): string {
   const components = input.components ?? [];
   if (components.length === 0) return check.name;
   const owners = components
@@ -61,7 +64,7 @@ function entryLabel(check: FeedCheck, input: FeedInput): string | undefined {
   if (input.showChecks === true) {
     return owners.length === 0 ? check.name : `${owners.join(", ")}: ${check.name}`;
   }
-  return owners.length === 0 ? undefined : owners.join(", ");
+  return owners.length === 0 ? HIDDEN_CHECK_LABEL : owners.join(", ");
 }
 
 function toEntry(incident: FeedIncident, label: string): Entry {
@@ -84,10 +87,8 @@ function entries(input: FeedInput): Entry[] {
   for (const incident of [...input.resolved, ...input.open]) {
     const check = checks.get(incident.checkId);
     if (check === undefined || seen.has(incident.id)) continue;
-    const label = entryLabel(check, input);
-    if (label === undefined) continue;
     seen.add(incident.id);
-    out.push(toEntry(incident, label));
+    out.push(toEntry(incident, entryLabel(check, input)));
   }
   return out.sort((a, b) => b.updated - a.updated || b.incidentId - a.incidentId);
 }

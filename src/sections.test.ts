@@ -40,6 +40,7 @@ test("builds every section of a page with data", () => {
   assert.deepEqual(Object.keys(sections).sort(byName), [
     "banner",
     "checks",
+    "checksTitle",
     "incidents",
     "maintenance",
     "resolved",
@@ -88,5 +89,19 @@ test("a throwing renderer yields no partial result and nothing is shown", () => 
 test("showSections assigns every built section", () => {
   const dom = new Map<string, string>();
   showSections(buildSections(state, env), (id, html) => dom.set(id, html));
-  assert.equal(dom.size, 7);
+  assert.equal(dom.size, 8);
+});
+
+test("the checks heading goes back to Checks after components are removed", () => {
+  const withComponents = buildSections(
+    {
+      ...state,
+      components: [
+        { id: "c", name: "C", checkIds: ["a"], state: "up", uptime: null, incidentIds: [] },
+      ],
+    },
+    env,
+  );
+  assert.equal(withComponents.checksTitle, "Components");
+  assert.equal(buildSections(state, env).checksTitle, "Checks");
 });
