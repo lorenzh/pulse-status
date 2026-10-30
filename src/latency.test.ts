@@ -196,3 +196,56 @@ test("filter: slo is kept on checks and components, numbers and null only", () =
   const extra = filterApiBody("/api/components", [{ id: "c", slo: { ...slo, note: "n" } }], true);
   assert.equal(Object.hasOwn((extra as { slo: object }[])[0]?.slo ?? {}, "note"), false);
 });
+
+const roundingCases: readonly (readonly [number, string])[] = [
+  [1.2342099999950733, "1.2 ms"],
+  [1502.040158000018, "1502 ms"],
+  [9.96, "10 ms"],
+  [0, "0 ms"],
+];
+
+test("display rounding: live line, summary and daily table", () => {
+  for (const [value, text] of roundingCases) {
+    const live = renderChecks([
+      {
+        ...check,
+        locations: [
+          {
+            location: "a",
+            stale: false,
+            result: {
+              checkId: "web",
+              timestamp: 1,
+              status: "up",
+              statusCode: 200,
+              latencyMs: value,
+              reason: null,
+              attempts: 1,
+              location: "a",
+            },
+          },
+        ],
+      },
+    ]);
+    assert.match(live, new RegExp(`<span class="latency">${text}`));
+    const chart = renderLatencyChart(
+      latency((i) => day(i, value, value, 1)),
+      undefined,
+      "Web",
+    );
+    assert.match(chart, new RegExp(`days ${text}`));
+    assert.match(chart, new RegExp(`<td>${text}</td><td>${text}</td>`));
+    assert.doesNotMatch(chart, /\.\d\d\d* ms/);
+    assert.doesNotMatch(live, /\.\d\d\d* ms/);
+  }
+});
+
+test("display rounding: null stays no data and the objective is formatted", () => {
+  const chart = renderLatencyChart(
+    latency((i) => day(i, null, i === 89 ? 2.345 : null, i === 89 ? 1 : 0)),
+    300,
+    "Web",
+  );
+  assert.match(chart, /no data/);
+  assert.match(chart, /days 2\.3 ms, objective 300 ms/);
+});
