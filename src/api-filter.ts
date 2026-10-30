@@ -7,6 +7,7 @@ export const ALLOWED_API_PATHS = [
   "/api/incidents?status=resolved",
   "/api/components",
   "/api/components/uptime",
+  "/api/manual-incidents",
 ] as const;
 
 export function isAllowedApiPath(pathname: string, search: string): boolean {
@@ -176,6 +177,30 @@ function cleanComponentUptime(entry: Fields): Fields {
   return out;
 }
 
+const MANUAL_UPDATE_FIELDS = ["at", "status", "message"] as const;
+
+/**
+ * Manual incidents are written for the public, so their text is not subject to hide-details and
+ * not rewritten. The output is escaped where it is shown.
+ */
+function cleanManualIncident(incident: Fields): Fields {
+  const out = pick(incident, [
+    "id",
+    "title",
+    "componentIds",
+    "impact",
+    "status",
+    "createdAt",
+    "resolvedAt",
+  ]);
+  if (Array.isArray(incident.updates)) {
+    out.updates = incident.updates
+      .filter(isObject)
+      .map((update) => pick(update, MANUAL_UPDATE_FIELDS));
+  }
+  return out;
+}
+
 const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
   "/api/checks": cleanCheck,
   "/api/incidents": cleanIncident,
@@ -183,6 +208,7 @@ const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
   "/api/uptime": cleanUptime,
   "/api/components": cleanComponent,
   "/api/components/uptime": cleanComponentUptime,
+  "/api/manual-incidents": cleanManualIncident,
 };
 
 /**

@@ -130,6 +130,7 @@ function state(extra: Partial<PollerState> = {}): PollerState {
     uptime,
     components,
     componentUptime,
+    manualIncidents: [],
     error: null,
     updatedAt: 5,
     ...extra,

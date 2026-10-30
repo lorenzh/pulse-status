@@ -107,7 +107,7 @@ The page title is `Acme status`, the wordmark is an `<img class="logo" src="/log
 The page reads pulse-api through this server, so the browser needs no direct access to the API.
 
 - `GET` and `HEAD` are the only methods. Any other method answers `405` with `allow: GET, HEAD`.
-- Only seven reads are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open`, `/api/incidents?status=resolved`, `/api/components` and `/api/components/uptime` (no query on the last two). Each becomes `GET <PULSE_API_URL>/<path>?<query>`, for example `/api/checks` becomes `GET <PULSE_API_URL>/checks`. Any other path or query answers `404` with `{"error":"not found"}` and does not reach the API. No auth header is added.
+- Only eight reads are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open`, `/api/incidents?status=resolved`, `/api/components`, `/api/components/uptime` and `/api/manual-incidents` (no query on the last three). Each becomes `GET <PULSE_API_URL>/<path>?<query>`, for example `/api/checks` becomes `GET <PULSE_API_URL>/checks`. Any other path or query answers `404` with `{"error":"not found"}` and does not reach the API. No auth header is added.
 - The JSON is filtered before it is sent, see [What is public](operation.md#what-is-public).
 - If the API answers with an error status, the proxy sends the same status with `{"error":"API error"}`. The API body is not passed on.
 - If the API answer is not valid JSON, the proxy answers `502` with `{"error":"invalid API response"}`.

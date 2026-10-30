@@ -410,3 +410,63 @@ ul.resolved li {
   margin: 0;
   color: var(--muted);
 }
+.manual-incidents {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.manual-incident {
+  padding: 0.75rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-left-width: 6px;
+  border-radius: var(--radius-md);
+}
+.manual-incident.impact-none {
+  border-left-color: var(--info);
+}
+.manual-incident.impact-minor {
+  border-left-color: var(--warning);
+}
+.manual-incident.impact-major,
+.manual-incident.impact-critical {
+  border-left-color: var(--error);
+}
+.manual-incident.resolved {
+  opacity: 0.9;
+}
+.manual-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  align-items: baseline;
+}
+.manual-head .name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.manual-impact,
+.manual-status {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  font-size: 0.8rem;
+}
+.manual-components {
+  color: var(--lead);
+  overflow-wrap: anywhere;
+}
+.manual-updates {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+.manual-update-status {
+  font-weight: 600;
+}
+.manual-message {
+  margin: 0.25rem 0 0.5rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

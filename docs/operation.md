@@ -63,7 +63,7 @@ When pulse-api returns at least one component from `/api/components`, the page s
 
 The page and its `/api/*` proxy are meant to be reachable by anyone who can reach this server. They expose only what the page needs.
 
-- **Seven API reads** are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open`, `/api/incidents?status=resolved`, `/api/components` and `/api/components/uptime`. Everything else under `/api/` answers `404` without calling pulse-api. Only `GET` and `HEAD` work.
+- **Eight API reads** are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open`, `/api/incidents?status=resolved`, `/api/components`, `/api/components/uptime` and `/api/manual-incidents` (no query; the default list is open plus recently resolved). Everything else under `/api/` answers `404` without calling pulse-api. Only `GET` and `HEAD` work.
 - **Allow-list:** the proxy builds each answer from a fixed list of fields per endpoint and check type, so a new upstream field stays private. Checks carry `id`, `name`, `type`, `state`, `lastResultAt`, `lastReason`, `certDaysLeft`, `maintenance` (`checkId`, `start`, `end`, `note`) and `locations` (`location`, `stale` and the result `checkId`, `location`, `timestamp`, `status`, `statusCode`, `latencyMs`, `attempts`, `reason`), plus `latencyObjectiveMs` for http checks. Never served: `secret`, `retries`, `retryDelayMs`, `timeoutMs`, `intervalMs`, `warnDays`, `consecutiveDown`. Incidents carry `id`, `checkId`, `openedAt`, `resolvedAt`, `reason`; maintenance `checkId`, `start`, `end`, `note`; uptime `checkId`, `uptime` and `days[].date`, `days[].uptime` and `days[].results`. A check of an unknown `type` gets the common fields only.
 - **`/api/checks` is not a full `CheckWithState`:** the allow-list drops fields the contract requires (`intervalMs`, `warnDays`, and with details hidden the target). That is intended. The browser validates the answer with placeholders for the missing fields, and the returned checks carry no fake values.
 - **Always shown:** check name, state, latency, locations down, TLS days left, incident ids and times, maintenance windows with their notes, and the 90-day uptime. Names, incident times and maintenance notes are written by the operator, so they stay public.
@@ -113,3 +113,12 @@ When every check is `unknown` (or `unknown` and `maintenance`, with nothing up),
 A hidden tab makes no requests and aborts the one in flight. When the tab is visible again the page refreshes at once and resumes the schedule. An error while drawing is logged to the browser console and does not stop the polling.
 
 The response shapes come from [pulse-contract](https://github.com/lorenzh/pulse-contract). The page checks them in the browser and rejects a malformed answer.
+
+## Manual incidents
+
+- The page shows open manual incidents in a block above the checks: title, `Impact: <level>`, `Status: <status>`, the latest update and the names of the affected components. Impact and status are words, so the level never depends on colour.
+- Resolved manual incidents of the last 14 days (at most 50, newest first) are listed with every update, oldest first.
+- The proxy serves `id`, `title`, `componentIds`, `impact`, `status`, `createdAt`, `resolvedAt` and `updates[]` (`at`, `status`, `message`). `PULSE_STATUS_HIDE_DETAILS` does not change them: an operator wrote them for visitors. All text is escaped in the page and the feed.
+- Component state: an open incident (`investigating`, `identified`, `monitoring`) raises the state of each component it names to the worst of the check state and `minor` = `degraded`, `major` and `critical` = `down`; `none` and resolved incidents change nothing. Uptime numbers are unchanged. Component badges still show the state from pulse-api.
+- `/feed.atom` has one entry per update with the id `tag:<host>,2026:manual:<id>:<n>`; update `0` is the creation message. The feed answers `503` when the read fails with anything but `404`.
+- A `404` from `/manual-incidents` (an older pulse-api) is treated as "no manual incidents" without an error. A list from an earlier success is kept. Any other failure fails the refresh like the components read.

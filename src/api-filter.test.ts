@@ -139,13 +139,13 @@ test("default method and expectedStatus are not served", () => {
   assert.equal("expectedStatus" in out[0], false);
 });
 
-test("the allow-list holds exactly the two component paths, without a query", () => {
+test("the allow-list holds exactly the component and manual incident paths, without a query", () => {
   assert.ok(isAllowedApiPath("/api/components", ""));
   assert.ok(isAllowedApiPath("/api/components/uptime", ""));
   assert.ok(!isAllowedApiPath("/api/components", "?x=1"));
   assert.ok(!isAllowedApiPath("/api/components/uptime", "?x=1"));
   assert.ok(!isAllowedApiPath("/api/components/shop", ""));
-  assert.equal(ALLOWED_API_PATHS.length, 7);
+  assert.equal(ALLOWED_API_PATHS.length, 8);
 });
 
 test("components and component uptime serve only their allow-listed keys", () => {

@@ -6,6 +6,8 @@ export interface FeedCheck {
 }
 
 export interface FeedComponent {
+  /** Needed only to name the components of manual incidents. */
+  id?: string;
   name: string;
   checkIds: readonly string[];
 }
@@ -17,6 +19,20 @@ export interface FeedIncident {
   resolvedAt: number | null;
   /** Only set when the cached answer carries a reason; the filter nulls it in hide mode. */
   reason?: string | null | undefined;
+}
+
+export interface FeedManualUpdate {
+  at: number;
+  status: string;
+  message: string;
+}
+
+export interface FeedManualIncident {
+  id: number;
+  title: string;
+  componentIds: readonly string[];
+  impact: string;
+  updates: readonly FeedManualUpdate[];
 }
 
 export interface FeedInput {
@@ -31,9 +47,13 @@ export interface FeedInput {
   showChecks?: boolean;
   open: readonly FeedIncident[];
   resolved: readonly FeedIncident[];
+  /** Manual incidents with their updates; one entry per update. Absent means none. */
+  manual?: readonly FeedManualIncident[];
 }
 
 interface Entry {
+  /** The tag suffix: `incident-<id>` or `manual:<id>:<n>`. */
+  key: string;
   incidentId: number;
   title: string;
   updated: number;
@@ -72,11 +92,37 @@ function toEntry(incident: FeedIncident, label: string): Entry {
   if (incident.resolvedAt !== null) lines.push(`Resolved ${rfc3339(incident.resolvedAt)}`);
   if (typeof incident.reason === "string") lines.push(`Reason: ${incident.reason}`);
   return {
+    key: `incident-${incident.id}`,
     incidentId: incident.id,
     title: `${label}: ${incident.resolvedAt === null ? "Open" : "Resolved"}`,
     updated: incident.resolvedAt ?? incident.openedAt,
     summary: lines.join("\n"),
   };
+}
+
+/** One entry per update, numbered by position: update 0 is the creation message. */
+function manualEntries(input: FeedInput): Entry[] {
+  const names = new Map<string, string>();
+  for (const component of input.components ?? []) {
+    if (component.id !== undefined) names.set(component.id, component.name);
+  }
+  return (input.manual ?? []).flatMap((incident) => {
+    const affected = incident.componentIds.map((id) => names.get(id) ?? id).join(", ");
+    const sorted = incident.updates
+      .map((update, n) => ({ update, n }))
+      .sort((a, b) => a.update.at - b.update.at || a.n - b.n);
+    return sorted.map(({ update, n }) => {
+      const lines = [update.message, `Impact: ${incident.impact}`];
+      if (affected !== "") lines.push(`Affects: ${affected}`);
+      return {
+        key: `manual:${incident.id}:${n}`,
+        incidentId: incident.id,
+        title: `${incident.title}: ${update.status}`,
+        updated: update.at,
+        summary: lines.join("\n"),
+      };
+    });
+  });
 }
 
 function entries(input: FeedInput): Entry[] {
@@ -90,7 +136,9 @@ function entries(input: FeedInput): Entry[] {
     seen.add(incident.id);
     out.push(toEntry(incident, entryLabel(check, input)));
   }
-  return out.sort((a, b) => b.updated - a.updated || b.incidentId - a.incidentId);
+  return [...out, ...manualEntries(input)].sort(
+    (a, b) => b.updated - a.updated || b.incidentId - a.incidentId || (a.key < b.key ? 1 : -1),
+  );
 }
 
 /** The Atom 1.0 document for the incidents of listed checks. Deterministic for equal input. */
@@ -112,7 +160,7 @@ export function buildAtom(input: FeedInput): string {
     `<link rel="self" type="application/atom+xml" href="${url}/feed.atom"/>`,
   ];
   for (const entry of list) {
-    const tagId = escapeXml(`tag:${tagHost},2026:incident-${entry.incidentId}`);
+    const tagId = escapeXml(`tag:${tagHost},2026:${entry.key}`);
     parts.push(
       "<entry>",
       `<title>${escapeXml(entry.title)}</title>`,

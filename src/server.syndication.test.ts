@@ -205,9 +205,16 @@ test("syndication shares the proxy cache and adds no upstream paths", async () =
   await fetch(`${h.base}/api/checks`);
   assert.deepEqual(
     [...h.calls].sort((a, b) => a.localeCompare(b)),
-    ["/checks", "/components", "/incidents?status=open", "/incidents?status=resolved", "/uptime"],
+    [
+      "/checks",
+      "/components",
+      "/incidents?status=open",
+      "/incidents?status=resolved",
+      "/manual-incidents",
+      "/uptime",
+    ],
   );
-  assert.equal(ALLOWED_API_PATHS.length, 7);
+  assert.equal(ALLOWED_API_PATHS.length, 8);
   for (const path of ["/api/feed.atom", "/api/badge/web.svg"]) {
     assert.equal((await fetch(h.base + path)).status, 404, path);
   }
@@ -392,4 +399,32 @@ test("feed is unavailable when /api/components fails", async () => {
   const h = await start();
   h.failing.add("/components");
   assert.equal((await fetch(`${h.base}/feed.atom`)).status, 503);
+});
+
+test("feed: manual incidents give one escaped entry per update; a 404 means none", async () => {
+  const h = await start({ hideDetails: true });
+  h.bodies["/manual-incidents"] = [
+    {
+      id: 7,
+      title: "Down <script>",
+      componentIds: [],
+      impact: "major",
+      status: "resolved",
+      createdAt: NOW - 2000,
+      resolvedAt: NOW - 1000,
+      updates: [
+        { at: NOW - 2000, status: "investigating", message: "<script>one</script>" },
+        { at: NOW - 1000, status: "resolved", message: "fixed" },
+      ],
+    },
+  ];
+  const text = await (await fetch(`${h.base}/feed.atom`)).text();
+  const feed = parseXml(text);
+  assert.ok(!text.includes("<script>"));
+  assert.ok(text.includes(":manual:7:0"));
+  assert.ok(text.includes(":manual:7:1"));
+  assert.ok(text.includes("fixed"));
+  assert.equal(feed.children.filter((c) => c.name === "entry").length >= 2, true);
+  const api = await (await fetch(`${h.base}/api/manual-incidents`)).json();
+  assert.equal(Array.isArray(api) && api.length, 1);
 });
