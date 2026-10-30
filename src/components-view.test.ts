@@ -124,6 +124,7 @@ test("with show-checks, member checks sit under their component and loose checks
 function state(extra: Partial<PollerState> = {}): PollerState {
   return {
     checks,
+    latency: null,
     incidents: [incident, { ...incident, id: 5, checkId: "loose" }],
     maintenance: [
       { checkId: "secret-web", start: 2_000_000, end: 3_000_000, note: "n" },

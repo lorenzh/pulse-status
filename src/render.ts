@@ -1,4 +1,5 @@
 import type {
+  CheckLatency,
   CheckStateFields,
   ChecksResponse,
   CheckWithState,
@@ -6,10 +7,12 @@ import type {
   ComponentWithState,
   HttpCheck,
   IncidentsResponse,
+  LatencyResponse,
   LocationResult,
   MaintenanceResponse,
   ManualIncident,
   ManualIncidentsResponse,
+  Slo,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
 // Browser module: the server rewrites these two imports to /pulse-kit/ (see tsModules in server.ts).
@@ -277,10 +280,165 @@ function targetOf(check: CheckWithState): string {
   }
 }
 
+function trimNumber(value: number, decimals: number): string {
+  return String(Number(value.toFixed(decimals)));
+}
+
+/** The availability objective of a check or component; empty without a target. */
+export function renderSlo(slo: Slo | undefined): string {
+  if (slo === undefined) return "";
+  const target = `${trimNumber(slo.target, 3)} %`;
+  let text: string;
+  if (slo.availability === null || slo.budgetRemaining === null) {
+    text = `Availability target ${target}: no availability data yet`;
+  } else {
+    const head = `Availability ${trimNumber(slo.availability, 3)} % of ${target} target`;
+    text =
+      slo.budgetRemaining < 0
+        ? `${head}, budget exceeded by ${trimNumber(-slo.budgetRemaining, 1)} %`
+        : `${head}, ${trimNumber(slo.budgetRemaining, 1)} % budget left`;
+  }
+  return `<p class="slo" data-key="slo">${escapeHtml(text)}</p>`;
+}
+
+const CHART_WIDTH = 360;
+const CHART_HEIGHT = 80;
+const CHART_PAD = 4;
+const SUMMARY_DAYS = 7;
+
+type Latencies = CheckLatency["days"];
+type Series = "p50Ms" | "p95Ms";
+
+/** Count-weighted mean of the daily p95 over the last days; null without results. */
+function recentP95(days: Latencies): number | null {
+  let sum = 0;
+  let count = 0;
+  for (const day of days.slice(-SUMMARY_DAYS)) {
+    if (day.p95Ms === null) continue;
+    sum += day.p95Ms * day.count;
+    count += day.count;
+  }
+  return count === 0 ? null : Math.round(sum / count);
+}
+
+function latencySummary(days: Latencies, objectiveMs: number | undefined): string {
+  const p95 = recentP95(days);
+  if (p95 === null) {
+    return days.some((day) => day.count > 0)
+      ? `no latency data in the last ${SUMMARY_DAYS} days`
+      : "no latency data yet";
+  }
+  const objective = objectiveMs === undefined ? "" : `, objective ${objectiveMs} ms`;
+  return `p95 last ${SUMMARY_DAYS} days ${p95} ms${objective}`;
+}
+
+/** Runs of consecutive days with a value, as [x, value]; a `null` day is a gap. */
+function runsOf(days: Latencies, series: Series): [number, number][][] {
+  const runs: [number, number][][] = [];
+  let current: [number, number][] = [];
+  days.forEach((day, index) => {
+    const value = day[series];
+    if (value === null) {
+      if (current.length > 0) runs.push(current);
+      current = [];
+    } else {
+      current.push([index, value]);
+    }
+  });
+  if (current.length > 0) runs.push(current);
+  return runs;
+}
+
+function renderSeries(days: Latencies, series: Series, cls: string, max: number): string {
+  const x = (index: number): string =>
+    ((index / Math.max(1, days.length - 1)) * CHART_WIDTH).toFixed(1);
+  const y = (value: number): string =>
+    (CHART_PAD + (1 - value / max) * (CHART_HEIGHT - 2 * CHART_PAD)).toFixed(1);
+  const parts = runsOf(days, series).map((run) => {
+    const [first] = run;
+    if (run.length === 1 && first !== undefined) {
+      return `<circle class="${cls}-dot" cx="${x(first[0])}" cy="${y(first[1])}" r="1.5"/>`;
+    }
+    const points = run.map(([index, value]) => `${x(index)},${y(value)}`).join(" ");
+    return `<polyline class="${cls}" points="${points}" fill="none"/>`;
+  });
+  return `<g data-key="${series}">${parts.join("")}</g>`;
+}
+
+function objectiveLine(objectiveMs: number, max: number): string {
+  const y = (CHART_PAD + (1 - objectiveMs / max) * (CHART_HEIGHT - 2 * CHART_PAD)).toFixed(1);
+  return `<line class="lat-objective" data-key="objective" x1="0" x2="${CHART_WIDTH}" y1="${y}" y2="${y}"/>`;
+}
+
+function renderChartSvg(days: Latencies, objectiveMs: number | undefined): string {
+  const values = days.flatMap((day) => [day.p50Ms, day.p95Ms]);
+  const max = Math.max(
+    1,
+    objectiveMs ?? 0,
+    ...values.filter((value): value is number => value !== null),
+  );
+  const objective = objectiveMs === undefined ? "" : objectiveLine(objectiveMs, max);
+  return (
+    `<svg class="latency-svg" aria-hidden="true" focusable="false" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" preserveAspectRatio="none">` +
+    objective +
+    renderSeries(days, "p50Ms", "lat-p50", max) +
+    renderSeries(days, "p95Ms", "lat-p95", max) +
+    `</svg>`
+  );
+}
+
+function renderLatencyTable(days: Latencies, name: string): string {
+  const cell = (value: number | null): string => (value === null ? "no data" : `${value} ms`);
+  const rows = [...days]
+    .reverse()
+    .map(
+      (day) =>
+        `<tr data-key="day:${escapeHtml(day.date)}"><th scope="row">${escapeHtml(day.date)}</th>` +
+        `<td>${cell(day.p50Ms)}</td><td>${cell(day.p95Ms)}</td><td>${day.count}</td></tr>`,
+    );
+  return (
+    `<details class="latency-details" data-key="details">` +
+    `<summary>${escapeHtml("Daily latency values, " + name)}</summary>` +
+    `<table><thead><tr><th scope="col">Date (UTC)</th><th scope="col">p50</th>` +
+    `<th scope="col">p95</th><th scope="col">Results</th></tr></thead>` +
+    `<tbody>${rows.join("")}</tbody></table></details>`
+  );
+}
+
+/**
+ * The 90-day latency of one check: a text summary, an inline SVG (decorative, `aria-hidden`) and
+ * a `<details>` table with the values, the only tab stop. A day without results is a gap.
+ */
+export function renderLatencyChart(
+  entry: CheckLatency | undefined,
+  objectiveMs: number | undefined,
+  name: string,
+): string {
+  const days = entry?.days ?? [];
+  const summary = `<p class="latency-summary" data-key="summary">${escapeHtml(latencySummary(days, objectiveMs))}</p>`;
+  if (!days.some((day) => day.count > 0)) {
+    return `<div class="latency-chart" data-key="latency">${summary}</div>`;
+  }
+  const legend =
+    '<p class="latency-legend" data-key="legend">Solid line p95, dashed line p50, dotted line objective. Days are UTC days.</p>';
+  return (
+    `<div class="latency-chart" data-key="latency">${summary}${renderChartSvg(days, objectiveMs)}` +
+    `${legend}${renderLatencyTable(days, name)}</div>`
+  );
+}
+
+/** HTTP checks only, and only when the latency read is on (`latency` is not null). */
+function renderCheckLatency(check: CheckWithState, latency: LatencyResponse | null): string {
+  if (latency === null || !hasHttpFields(check)) return "";
+  const entry = latency.find((item) => item.checkId === check.id);
+  return renderLatencyChart(entry, check.latencyObjectiveMs ?? undefined, check.name);
+}
+
 function renderCheck(
   check: CheckWithState,
   entry: UptimeResponse[number] | undefined,
   env: TimeEnv | undefined,
+  latency: LatencyResponse | null,
 ): string {
   const targetText = targetOf(check);
   return (
@@ -289,7 +447,9 @@ function renderCheck(
     `<span class="name">${escapeHtml(check.name)}</span></div>` +
     (targetText === "" ? "" : `<div class="url" data-key="url">${escapeHtml(targetText)}</div>`) +
     renderMeta(check, env) +
+    renderSlo(check.slo) +
     (entry ? renderUptime(entry, check.name) : "") +
+    renderCheckLatency(check, latency) +
     `</li>`
   );
 }
@@ -299,12 +459,13 @@ export function renderChecks(
   uptime: UptimeResponse = [],
   env?: TimeEnv,
   hasLegend = true,
+  latency: LatencyResponse | null = null,
 ): string {
   if (checks.length === 0) {
     return '<p class="empty">No checks configured.</p>';
   }
   const uptimeById = new Map(uptime.map((entry) => [entry.checkId, entry]));
-  const items = checks.map((check) => renderCheck(check, uptimeById.get(check.id), env));
+  const items = checks.map((check) => renderCheck(check, uptimeById.get(check.id), env, latency));
   return `${hasLegend ? renderUptimeLegend() : ""}<ul class="checks" data-key="checks">${items.join("")}</ul>`;
 }
 

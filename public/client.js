@@ -127,6 +127,7 @@ createPoller({
   now: () => Date.now(),
   pollMs,
   timeoutMs,
+  hasLatency: showChecks,
   visibility: {
     isHidden: () => document.visibilityState === "hidden",
     onChange: (fn) => document.addEventListener("visibilitychange", fn),

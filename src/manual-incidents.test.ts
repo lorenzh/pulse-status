@@ -137,6 +137,7 @@ test("open incidents set component state by decision 7; resolved ones do not", (
 test("sections: hide-details does not apply and the summary follows incident state", () => {
   const state: PollerState = {
     checks: [],
+    latency: null,
     incidents: [],
     maintenance: [],
     resolved: [],

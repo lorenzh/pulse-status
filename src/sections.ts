@@ -82,7 +82,7 @@ export function buildSections(
   addManualSections(state, env, renderers, sections);
   // Set on both paths, so the heading goes back to "Checks" when components are removed.
   sections.checksTitle = "Checks";
-  sections.checks = renderers.checks(state.checks, state.uptime, env);
+  sections.checks = renderers.checks(state.checks, state.uptime, env, true, state.latency);
   sections.incidents = renderers.incidents(state.incidents, state.checks, env);
   sections.resolved = renderers.resolved(state.resolved, state.checks, env);
   sections.maintenance = renderers.maintenance(state.maintenance, state.checks, env);
@@ -104,6 +104,7 @@ function componentSections(
     checks: state.checks,
     uptime: state.uptime,
     showChecks: options.showChecks,
+    latency: state.latency,
   };
   const labels = checkLabels(view);
   sections.checksTitle = "Components";

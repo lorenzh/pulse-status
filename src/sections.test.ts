@@ -12,6 +12,7 @@ const env = {
 };
 
 const state: PollerState = {
+  latency: null,
   checks: [
     {
       id: "a",

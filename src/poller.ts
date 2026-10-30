@@ -5,6 +5,7 @@ import {
   type FetchJsonError,
   fetchJson,
   type IncidentsResponse,
+  type LatencyResponse,
   type MaintenanceResponse,
   type ManualIncidentsResponse,
   type UptimeResponse,
@@ -12,6 +13,7 @@ import {
   validateComponentsResponse,
   validateComponentsUptimeResponse,
   validateIncidentsResponse,
+  validateLatencyResponse,
   validateMaintenanceResponse,
   validateManualIncidentsResponse,
   validateUptimeResponse,
@@ -31,6 +33,8 @@ export interface PollerState {
   uptime: UptimeResponse;
   /** Configured components in order; empty means the page shows checks. */
   components: ComponentsResponse;
+  /** 90-day latency per HTTP check; null when not read (checks hidden) or never fetched. */
+  latency: LatencyResponse | null;
   /** 90-day uptime per component; always present with `components`. */
   componentUptime: ComponentsUptimeResponse;
   /** Open and recently resolved manual incidents; empty when the API has none or lacks the route. */
@@ -58,6 +62,8 @@ export interface PollerOptions {
   timeoutMs?: number;
   /** Receives errors thrown by `onUpdate`; default `console.error`. */
   log?: (message: string, error: unknown) => void;
+  /** Reads `/latency` (the page shows per-check latency); default false. */
+  hasLatency?: boolean;
   /** Page visibility: while hidden the poller makes no requests. */
   visibility?: Visibility;
 }
@@ -154,6 +160,7 @@ export function createPoller(options: PollerOptions): Poller {
     maintenance: [],
     resolved: [],
     uptime: [],
+    latency: null,
     components: [],
     componentUptime: [],
     manualIncidents: [],
@@ -233,6 +240,23 @@ export function createPoller(options: PollerOptions): Poller {
     }
   }
 
+  /**
+   * Optional like uptime. Off: null. A failed or malformed response keeps the last good value, so
+   * the charts do not flicker away.
+   */
+  async function getLatency(signal: AbortSignal): Promise<LatencyResponse | null> {
+    if (options.hasLatency !== true) return null;
+    try {
+      const result = validateLatencyResponse(await getJson(`${base}/latency`, signal), "latency");
+      if (result.ok) return result.value;
+      log("latency response is invalid", result.error);
+    } catch (err) {
+      if (err instanceof WireVersionError) throw err;
+      // Charts are optional: the page still shows the checks without them.
+    }
+    return state.latency;
+  }
+
   /** Optional like uptime: a failed or malformed response yields an empty list. */
   async function getResolved(signal: AbortSignal): Promise<IncidentsResponse> {
     try {
@@ -294,6 +318,7 @@ export function createPoller(options: PollerOptions): Poller {
         maintenance,
         resolved,
         uptime,
+        latency,
         components,
         componentUptime,
         manualIncidents,
@@ -307,6 +332,7 @@ export function createPoller(options: PollerOptions): Poller {
         ),
         getResolved(signal),
         getUptime(signal),
+        getLatency(signal),
         // Required, unlike uptime: a failed or invalid path fails the refresh, a 404 included.
         getJson(`${base}/components`, signal).then((b) =>
           valid(validateComponentsResponse(b, "components")),
@@ -322,6 +348,7 @@ export function createPoller(options: PollerOptions): Poller {
         maintenance,
         resolved,
         uptime,
+        latency,
         components,
         componentUptime,
         manualIncidents,
