@@ -111,7 +111,12 @@ function cleanTarget(check: Fields, isHidden: boolean): Fields {
     case "heartbeat":
       return isHidden ? {} : pick(check, ["period", "grace"]);
     case "tls":
+    case "tcp":
       return isHidden ? {} : pick(check, ["host", "port"]);
+    case "dns":
+      return isHidden ? {} : pick(check, ["dnsName", "recordType", "expected", "resolver"]);
+    case "domain":
+      return isHidden ? {} : pick(check, ["domain", "warnDays"]);
     case undefined:
     case "http": {
       const out = pick(check, ["latencyObjectiveMs"]);

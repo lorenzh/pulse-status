@@ -1,8 +1,10 @@
 import type {
+  CheckStateFields,
   ChecksResponse,
   CheckWithState,
   ComponentUptime,
   ComponentWithState,
+  HttpCheck,
   IncidentsResponse,
   LocationResult,
   MaintenanceResponse,
@@ -157,7 +159,7 @@ export function renderLatency(check: CheckWithState): string {
   );
   if (newest === null) return "";
   const objective =
-    check.type !== "tls" && check.type !== "heartbeat" && check.latencyObjectiveMs != null
+    hasHttpFields(check) && check.latencyObjectiveMs != null
       ? ` · objective ${check.latencyObjectiveMs} ms`
       : "";
   const text = `${newest.result.latencyMs} ms${objective}`;
@@ -230,12 +232,12 @@ function renderRequest(check: {
 }
 
 function renderMeta(check: CheckWithState, env: TimeEnv | undefined): string {
-  const days = check.type === "tls" ? check.certDaysLeft : null;
+  const days = check.type === "tls" || check.type === "domain" ? check.certDaysLeft : null;
   const reasonIsDays = days != null && check.state === "down" && Boolean(check.lastReason);
   const parts = [renderLatency(check), renderLastPing(check, env)];
-  if (check.type !== "tls" && check.type !== "heartbeat" && check.keyword)
+  if (hasHttpFields(check) && check.keyword)
     parts.push(span("keyword", `keyword "${check.keyword}"`));
-  if (check.type !== "tls" && check.type !== "heartbeat") parts.push(...renderRequest(check));
+  if (hasHttpFields(check)) parts.push(...renderRequest(check));
   if (days != null) {
     parts.push(span("cert-days", reasonIsDays ? (check.lastReason ?? "") : `${days} days left`));
   }
@@ -246,12 +248,33 @@ function renderMeta(check: CheckWithState, env: TimeEnv | undefined): string {
   return filled.length === 0 ? "" : `<div class="meta" data-key="meta">${filled.join("")}</div>`;
 }
 
-/** Empty when the server hides the target. */
+function hasHttpFields(check: CheckWithState): check is HttpCheck & CheckStateFields {
+  return check.type === undefined || check.type === "http";
+}
+
+function hostPort(host: string | undefined, port: number | undefined): string {
+  if (host == null) return "";
+  return port == null ? host : `${host}:${port}`;
+}
+
+/** Empty when the server hides the target, and for a type this page does not know. */
 function targetOf(check: CheckWithState): string {
-  if (check.type === "heartbeat") return "";
-  if (check.type !== "tls") return check.url ?? "";
-  if (check.host == null) return "";
-  return check.port == null ? check.host : `${check.host}:${check.port}`;
+  switch (check.type) {
+    case "heartbeat":
+      return "";
+    case "tls":
+    case "tcp":
+      return hostPort(check.host, check.port);
+    case "dns":
+      return check.dnsName == null ? "" : `${check.recordType ?? ""} ${check.dnsName}`.trim();
+    case "domain":
+      return check.domain ?? "";
+    case undefined:
+    case "http":
+      return check.url ?? "";
+    default:
+      return "";
+  }
 }
 
 function renderCheck(

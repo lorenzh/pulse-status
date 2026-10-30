@@ -711,3 +711,55 @@ test("manual incident entries are keyed and named by their title", () => {
   assert.match(html, /id="manual-name-7">Db down/);
   assert.match(html, /data-key="manual-update:7:5"/);
 });
+
+const tcpCheck: CheckWithState = {
+  id: "p",
+  name: "Mail",
+  type: "tcp",
+  host: "mail.test",
+  port: 25,
+  intervalMs: 1000,
+  state: "up",
+  consecutiveDown: 0,
+  lastResultAt: 1,
+  lastReason: null,
+  locations: [],
+};
+
+test("tcp shows host:port; hidden shows none and no undefined", () => {
+  assert.match(renderChecks([tcpCheck]), /mail\.test:25/);
+  const hidden = { ...tcpCheck, host: undefined, port: undefined } as unknown as CheckWithState;
+  const html = renderChecks([hidden]);
+  assert.doesNotMatch(html, /undefined|mail\.test/);
+});
+
+test("dns shows the record type and name", () => {
+  const dns: CheckWithState = {
+    ...tcpCheck,
+    type: "dns",
+    dnsName: "api.test",
+    recordType: "A",
+  } as CheckWithState;
+  assert.match(renderChecks([dns]), /A api\.test/);
+});
+
+test("domain shows the name and days left", () => {
+  const domain = {
+    ...tcpCheck,
+    type: "domain",
+    domain: "example.test",
+    warnDays: 30,
+    certDaysLeft: 12,
+    state: "degraded",
+    lastReason: "domain expires in 12 days",
+  } as CheckWithState;
+  const html = renderChecks([domain]);
+  assert.match(html, /example\.test/);
+  assert.match(html, /12 days left/);
+  assert.doesNotMatch(html, /undefined/);
+});
+
+test("an unknown type renders without a crash", () => {
+  const unknown = { ...tcpCheck, type: "future" } as unknown as CheckWithState;
+  assert.match(renderChecks([unknown]), /Mail/);
+});
