@@ -137,14 +137,15 @@ function state(extra: Partial<PollerState> = {}): PollerState {
   };
 }
 
-test("incident, resolved and maintenance sections name components and skip loose checks", () => {
+test("incident, resolved and maintenance sections name components and label loose checks Service", () => {
   const sections = buildSections(state(), env);
   const all = Object.values(sections).join("\n");
   for (const hidden of ["secret-db", "secret-web", "Secret", "Loose", "loose"]) {
     assert.ok(!all.includes(hidden), hidden);
   }
   assert.match(sections.incidents ?? "", /Shop, Public API/);
-  assert.equal((sections.incidents ?? "").match(/class="incident"/g)?.length, 1);
+  assert.match(sections.incidents ?? "", /Service/);
+  assert.equal((sections.incidents ?? "").match(/class="incident"/g)?.length, 2);
   assert.match(sections.resolved ?? "", /Shop, Docs, Blog, Misc/);
   assert.match(sections.maintenance ?? "", /Shop, Docs, Blog, Misc/);
   assert.equal(sections.checksTitle, "Components");
@@ -174,5 +175,5 @@ test("without components the page is as before", () => {
 test("labels: components of a check in several components are all named", () => {
   const labels = checkLabels(view);
   assert.equal(labels.get("secret-web"), "Shop, Docs, Blog, Misc");
-  assert.equal(labels.has("loose"), false);
+  assert.equal(labels.get("loose"), "Service");
 });

@@ -1,11 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import {
-  type ManualIncident,
-  validateManualIncidentsResponse,
-  WIRE_VERSION,
-  WIRE_VERSION_HEADER,
-} from "@lorenzh/pulse-contract";
+import { type ManualIncident, WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { filterApiBody, isAllowedApiPath } from "./api-filter.ts";
 import { componentsWithIncidents } from "./components-view.ts";
 import { buildAtom } from "./feed.ts";
@@ -41,8 +36,8 @@ const resolved: ManualIncident = {
   status: "resolved",
   resolvedAt: NOW - 500,
   updates: [
-    { at: NOW - 900, status: "resolved", message: "done" },
     { at: NOW - 2000, status: "investigating", message: "began" },
+    { at: NOW - 500, status: "resolved", message: "done" },
   ],
 };
 
@@ -55,9 +50,37 @@ const component = (id: string, state: "up" | "down" | "degraded" | "maintenance"
   incidentIds: [],
 });
 
-test("the fixtures satisfy the contract validator", () => {
-  const checked = validateManualIncidentsResponse([open], "m");
-  assert.equal(checked.ok, true);
+test("the poller accepts the fixtures and rejects an invalid manual incident", async () => {
+  const serve = (manual: unknown): typeof fetch =>
+    (async (input: string) => {
+      const path = String(input).replace("http://api.test/api", "");
+      const bodies: Record<string, unknown> = { "/manual-incidents": manual };
+      return new Response(JSON.stringify(bodies[path] ?? []), {
+        headers: {
+          "content-type": "application/json",
+          [WIRE_VERSION_HEADER]: String(WIRE_VERSION),
+        },
+      });
+    }) as unknown as typeof fetch;
+  const run = async (manual: unknown): Promise<PollerState | undefined> => {
+    let last: PollerState | undefined;
+    const poller = createPoller({
+      fetch: serve(manual),
+      baseUrl: "http://api.test/api",
+      timer: { setTimeout: () => 0, clearTimeout: () => {} },
+      now: () => NOW,
+      pollMs: 5000,
+      onUpdate: (s) => {
+        last = s;
+      },
+    });
+    await poller.refresh();
+    return last;
+  };
+  const good = await run([open, resolved]);
+  assert.deepEqual(good?.manualIncidents, [open, resolved]);
+  const bad = await run([{ ...open, impact: "huge" }]);
+  assert.notEqual(bad?.error, null);
 });
 
 test("the proxy allows exactly the list path and keeps the text of manual incidents", () => {
@@ -82,7 +105,8 @@ test("open incident block shows title, impact, status, latest update, components
 });
 
 test("history lists resolved incidents with all updates in time order", () => {
-  const html = renderResolvedManualIncidents([open, resolved], new Map(), env);
+  const unsorted = { ...resolved, updates: [...resolved.updates].reverse() };
+  const html = renderResolvedManualIncidents([open, unsorted], new Map(), env);
   assert.match(html, /Old one/);
   assert.ok(html.indexOf("began") < html.indexOf("done"));
   assert.ok(!html.includes("&lt;script"));
