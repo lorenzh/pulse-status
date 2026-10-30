@@ -2,7 +2,7 @@
 
 The default look is losoft: warm paper, deep plum ink, one amethyst accent, Space Grotesk and JetBrains Mono. Both fonts are self-hosted, so the page makes no request to a font CDN. An operator changes name, logo, colours, fonts and radii with settings and a theme file, without code changes.
 
-An unreadable file, invalid JSON or an invalid value stops the server at start and names the file and the key. There is no silent fallback.
+An unreadable file, invalid JSON or an invalid value stops the server at start and names the file and the key path on one line, for example `theme file t.json: light.bg: invalid value`. There is no silent fallback.
 
 ## Name and logo
 
