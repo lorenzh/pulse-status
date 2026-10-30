@@ -30,6 +30,13 @@ test("accepts legal numeric references", () => {
   assert.equal(root.text, "\n\u{1F600}");
 });
 
+test("rejects a duplicate __proto__ attribute", () => {
+  assert.throws(
+    () => parseXml('<a __proto__="1" __proto__="2"/>'),
+    /duplicate attribute __proto__/,
+  );
+});
+
 test("rejects a duplicate attribute name", () => {
   assert.throws(() => parseXml('<a b="1" b="2"/>'), /duplicate attribute/);
 });

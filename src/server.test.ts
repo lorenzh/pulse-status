@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -103,6 +103,21 @@ test("a malformed upstream URL answers 502 and does not crash the process", asyn
   const r = await fetch(base + "/api/checks");
   assert.equal(r.status, 502);
   assert.deepEqual(await r.json(), { error: "API unreachable" });
+});
+
+test("an unparsable request target drops the socket and does not crash the process", async () => {
+  const base = await listen(createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 1 }));
+  const port = Number(new URL(base).port);
+  const closed = new Promise<void>((resolve) => {
+    const socket = connect(port, "127.0.0.1", () =>
+      socket.write("GET http://[ HTTP/1.1\r\nHost: x\r\n\r\n"),
+    );
+    socket.on("error", () => {}); // a reset is an expected way to drop the socket
+    socket.on("close", () => resolve());
+  });
+  await closed;
+  const r = await fetch(base + "/healthz");
+  assert.ok(r.status < 600);
 });
 
 async function proxyWith(headers: Record<string, string>, body: string): Promise<Response> {

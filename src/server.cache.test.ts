@@ -175,11 +175,16 @@ test("a body above the size cap answers 502 invalid API response", async () => {
 test("a wire version mismatch of the api reaches the page with the original header", async () => {
   const base = await start(
     {},
-    async () => new Response("[]", { headers: { ...JSON_HEADERS, "x-pulse-contract": "99" } }),
+    async () =>
+      new Response('[{"checkId":"leak","start":1,"end":2,"note":null}]', {
+        headers: { ...JSON_HEADERS, "x-pulse-contract": "99" },
+      }),
   );
   const res = await fetch(`${base}/api/maintenance`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("x-pulse-contract"), "99");
+  // The upstream data is not forwarded, only the mismatch marker with the original header.
+  assert.deepEqual(await res.json(), { error: "API version mismatch" });
 });
 
 const ERROR_ANSWERS: {

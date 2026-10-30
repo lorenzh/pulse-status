@@ -54,7 +54,8 @@ const ATTRIBUTE = /^\s+([\w:-]+)="([^"<]*)"/;
 
 /** Parses the inside of a start tag (after the name) into attributes; the rest must be empty. */
 function parseAttributes(rest: string): Record<string, string> {
-  const attrs: Record<string, string> = {};
+  // No prototype: a `__proto__` attribute must become an own key, so a duplicate is detected.
+  const attrs: Record<string, string> = Object.create(null);
   let remaining = rest;
   for (let m = ATTRIBUTE.exec(remaining); m !== null; m = ATTRIBUTE.exec(remaining)) {
     const attrName = m[1] ?? "";
