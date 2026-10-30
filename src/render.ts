@@ -195,12 +195,25 @@ function renderLastPing(check: CheckWithState, env: TimeEnv | undefined): string
   return `<span class="last-ping">last ping ${renderTime(check.lastResultAt, env)}</span>`;
 }
 
+/** Only present when the server shows details and the check differs from the defaults. */
+function renderRequest(check: {
+  method?: string | undefined;
+  expectedStatus?: readonly (number | string)[] | undefined;
+}): string[] {
+  const parts: string[] = [];
+  if (check.method && check.method !== "GET") parts.push(span("method", check.method));
+  if (check.expectedStatus && check.expectedStatus.length > 0)
+    parts.push(span("expected-status", `expects ${check.expectedStatus.join(", ")}`));
+  return parts;
+}
+
 function renderMeta(check: CheckWithState, env: TimeEnv | undefined): string {
   const days = check.type === "tls" ? check.certDaysLeft : null;
   const reasonIsDays = days != null && check.state === "down" && Boolean(check.lastReason);
   const parts = [renderLatency(check), renderLastPing(check, env)];
   if (check.type !== "tls" && check.type !== "heartbeat" && check.keyword)
     parts.push(span("keyword", `keyword "${check.keyword}"`));
+  if (check.type !== "tls" && check.type !== "heartbeat") parts.push(...renderRequest(check));
   if (days != null) {
     parts.push(span("cert-days", reasonIsDays ? (check.lastReason ?? "") : `${days} days left`));
   }

@@ -87,6 +87,22 @@ function cleanLocation(entry: unknown, isHidden: boolean): Fields | null {
   };
 }
 
+const DEFAULT_EXPECTED_STATUS = "200-299";
+
+/**
+ * Only `method` and `expectedStatus` may be public, and only when they differ from the default.
+ * `headers`, `body` and `jsonAssert` can hold secrets and are never copied.
+ */
+function nonDefaultRequest(check: Fields): Fields {
+  const out: Fields = {};
+  if (typeof check.method === "string" && check.method !== "GET") out.method = check.method;
+  const expected = check.expectedStatus;
+  const isDefault =
+    Array.isArray(expected) && expected.length === 1 && expected[0] === DEFAULT_EXPECTED_STATUS;
+  if (Array.isArray(expected) && expected.length > 0 && !isDefault) out.expectedStatus = expected;
+  return out;
+}
+
 function cleanTarget(check: Fields, isHidden: boolean): Fields {
   switch (check.type) {
     case "heartbeat":
@@ -97,7 +113,7 @@ function cleanTarget(check: Fields, isHidden: boolean): Fields {
     case "http": {
       const out = pick(check, ["latencyObjectiveMs"]);
       if (isHidden) return out;
-      Object.assign(out, pick(check, ["keyword"]));
+      Object.assign(out, pick(check, ["keyword"]), nonDefaultRequest(check));
       const url = typeof check.url === "string" ? sanitizeUrl(check.url) : null;
       if (url !== null) out.url = url;
       return out;
