@@ -1,8 +1,8 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
 
 interface Run {
   code: number | null;
@@ -39,7 +39,7 @@ function assertOneLine(r: Run, pattern: RegExp): void {
 }
 
 const blockers: Server[] = [];
-after(() => {
+afterAll(() => {
   for (const s of blockers) s.close();
 });
 

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createRequire, stripTypeScriptTypes } from "node:module";
+import { createRequire } from "node:module";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchJson, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
@@ -133,6 +133,9 @@ function wordmark(name: string, logo: Logo | null): string {
   return `<img class="logo" src="${escapeHtml(logo.src)}" alt="${safe}">`;
 }
 
+// Types are erased without other rewriting; imports and layout stay as written.
+const tsTranspiler = new Bun.Transpiler({ loader: "ts", trimUnusedImports: false });
+
 const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 const srcDir = fileURLToPath(new URL("./", import.meta.url));
 
@@ -242,12 +245,16 @@ async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> 
   // The shared client does not expose headers; this wrapper records those the proxy forwards.
   let contentType = "";
   let wireHeader: string | undefined;
-  const recordingFetch: typeof fetch = async (input, init) => {
-    const response = await ctx.doFetch(input, init);
-    contentType = response.headers.get("content-type") ?? "";
-    wireHeader = response.headers.get(WIRE_VERSION_HEADER) ?? undefined;
-    return response;
-  };
+  // Bun's fetch type also carries `preconnect`; keep it from the wrapped function.
+  const recordingFetch: typeof fetch = Object.assign(
+    async (input: string | Request | URL, init?: RequestInit): Promise<Response> => {
+      const response = await ctx.doFetch(input, init);
+      contentType = response.headers.get("content-type") ?? "";
+      wireHeader = response.headers.get(WIRE_VERSION_HEADER) ?? undefined;
+      return response;
+    },
+    { preconnect: ctx.doFetch.preconnect },
+  );
   const target = ctx.apiBase + url.pathname.slice("/api".length) + url.search;
   const result = await fetchJson<unknown>(target, {
     fetch: recordingFetch,
@@ -461,7 +468,8 @@ export function createStatusServer(options: ServerOptions): Server {
       const tsFile = tsModules[url.pathname];
       if (tsFile !== undefined) {
         // Relative ".ts" imports point at sibling modules served as ".js".
-        const js = stripTypeScriptTypes(await readFile(srcDir + tsFile, "utf8"))
+        const js = tsTranspiler
+          .transformSync(await readFile(srcDir + tsFile, "utf8"))
           .replace(/from "\.\/([\w-]+)\.ts"/g, 'from "/$1.js"')
           .replace(/from "@lorenzh\/pulse-contract"/g, 'from "/pulse-contract/index.js"')
           .replace(/from "@lorenzh\/pulse-kit\/([\w-]+)"/g, 'from "/pulse-kit/$1.js"');

@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { startApiPoll } from "./api-poll.ts";
 import { createMetrics } from "./metrics.ts";
@@ -15,10 +15,10 @@ test("polls the API, records outcomes and stops", async () => {
     pollMs: 5000,
     timeoutMs: 100,
     metrics,
-    doFetch: async (url) => {
+    doFetch: (async (url: string | Request | URL) => {
       urls.push(String(url));
       return new Response("[]", { status });
-    },
+    }) as unknown as typeof fetch,
     setTimeout: (fn) => timers.push(fn),
     clearTimeout: () => {},
   });
@@ -43,9 +43,9 @@ test("a failing fetch counts as an error", async () => {
     pollMs: 5000,
     timeoutMs: 100,
     metrics,
-    doFetch: async () => {
+    doFetch: (async () => {
       throw new Error("down");
-    },
+    }) as unknown as typeof fetch,
     setTimeout: () => 0,
     clearTimeout: () => {},
   });
@@ -62,7 +62,7 @@ async function pollWithHeader(headers: Record<string, string>) {
     pollMs: 5000,
     timeoutMs: 100,
     metrics,
-    doFetch: async () => new Response("[]", { status: 200, headers }),
+    doFetch: (async () => new Response("[]", { status: 200, headers })) as unknown as typeof fetch,
     setTimeout: () => 0,
     clearTimeout: () => {},
   });
@@ -91,7 +91,8 @@ test("a body above the size cap counts as an error", async () => {
     pollMs: 5000,
     timeoutMs: 100,
     metrics,
-    doFetch: async () => new Response(`[${" ".repeat(5 * 1024 * 1024 + 1)}]`),
+    doFetch: (async () =>
+      new Response(`[${" ".repeat(5 * 1024 * 1024 + 1)}]`)) as unknown as typeof fetch,
     setTimeout: () => 0,
     clearTimeout: () => {},
   });

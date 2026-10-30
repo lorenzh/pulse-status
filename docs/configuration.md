@@ -24,7 +24,7 @@ pulse-status reads these environment variables, all in `src/main.ts`. It has no 
 Example:
 
 ```sh
-PORT=9000 PULSE_API_URL=http://api.internal:3000 POLL_MS=10000 npm start
+PORT=9000 PULSE_API_URL=http://api.internal:3000 POLL_MS=10000 bun start
 ```
 
 A trailing `/` in `PULSE_API_URL` is removed. An invalid theme file, name or logo stops the server at start. See [troubleshooting.md](troubleshooting.md).

@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { applyTheme, loadTheme, parseTheme, saveTheme, type ThemeStorage } from "./theme.ts";
 
 function fakeStorage(initial: Record<string, string> = {}): ThemeStorage & {

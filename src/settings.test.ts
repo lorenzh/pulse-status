@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { StartupError } from "@lorenzh/pulse-kit";
 import { readSettings } from "./settings.ts";
 

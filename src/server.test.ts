@@ -1,10 +1,10 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
 import { createLogger } from "@lorenzh/pulse-kit";
 import { createStatusServer } from "./server.ts";
 
@@ -15,7 +15,7 @@ async function listen(s: Server): Promise<string> {
   return `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
 }
 const tmp = mkdtempSync(join(tmpdir(), "status-"));
-after(() => {
+afterAll(() => {
   for (const s of servers) s.close();
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -329,4 +329,18 @@ test("no external URL in the served page or CSS", async () => {
   const pageCss = await (await fetch(base + "/page.css")).text();
   assert.doesNotMatch(pageCss, /https?:\/\//);
   assert.match(pageCss, /url\("\/fonts\/space-grotesk\.woff2"\)/);
+});
+
+test("serves the public files byte for byte", async () => {
+  const apiUrl = await listen(api);
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  for (const [path, file] of [
+    ["/client.js", "client.js"],
+    ["/page.css", "page.css"],
+    ["/theme-init.js", "theme-init.js"],
+  ] as const) {
+    const served = Buffer.from(await (await fetch(base + path)).arrayBuffer());
+    const onDisk = readFileSync(new URL(`../public/${file}`, import.meta.url));
+    assert.ok(served.equals(onDisk), path);
+  }
 });

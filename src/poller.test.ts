@@ -1,6 +1,6 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { ALLOWED_API_PATHS, filterApiBody } from "./api-filter.ts";
 import { createPoller, type PollerState } from "./poller.ts";
@@ -360,10 +360,10 @@ test("a keyword is passed through and a non-string keyword is malformed", async 
 test("poller requests only allow-listed API paths", async () => {
   const requested: string[] = [];
   const poller = createPoller({
-    fetch: async (input) => {
+    fetch: (async (input: string | Request | URL) => {
       requested.push(String(input));
       return new Response("[]", { headers: { "content-type": "application/json" } });
-    },
+    }) as unknown as typeof fetch,
     timer: { setTimeout: () => 0, clearTimeout: () => undefined },
     now: () => 0,
     pollMs: 1,
@@ -737,16 +737,16 @@ test("a wire version mismatch on uptime or resolved incidents fails the poll", a
 });
 
 const e2eServers: { close(): unknown }[] = [];
-after(() => {
+afterAll(() => {
   for (const s of e2eServers) s.close();
 });
 
 test("end to end: the page polls the real server with details hidden by default", async () => {
-  const apiFetch: typeof fetch = async (input) => {
+  const apiFetch = (async (input: string | Request | URL) => {
     const url = String(input);
     const body = url.endsWith("/checks") ? [checkOf("a", "A"), tlsCheckOf("t")] : [];
     return json(body);
-  };
+  }) as unknown as typeof fetch;
   const server = createStatusServer({ apiUrl: "http://api.test", pollMs: 1, fetch: apiFetch });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   e2eServers.push(server);

@@ -1,17 +1,17 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
 import type { ChecksResponse, IncidentsResponse } from "@lorenzh/pulse-contract";
 import { ALLOWED_API_PATHS } from "./api-filter.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
 
 const servers: Server[] = [];
 const tmp = mkdtempSync(join(tmpdir(), "status-privacy-"));
-after(() => {
+afterAll(() => {
   for (const s of servers) s.close();
   rmSync(tmp, { recursive: true, force: true });
 });
@@ -65,7 +65,7 @@ interface Fake {
 
 async function start(options: Partial<ServerOptions> = {}, fake?: Partial<Fake>) {
   const state: Fake = { calls: [], status: 200, body: "", ...fake };
-  const fakeFetch: typeof fetch = async (input) => {
+  const fakeFetch = (async (input: string | Request | URL) => {
     const url = String(input);
     state.calls.push(url);
     if (state.body !== "")
@@ -74,7 +74,7 @@ async function start(options: Partial<ServerOptions> = {}, fake?: Partial<Fake>)
     if (url.endsWith("/checks")) body = [httpCheck, tlsCheck];
     else if (url.includes("/incidents")) body = [incident];
     return new Response(JSON.stringify(body), { status: state.status, headers: JSON_HEADERS });
-  };
+  }) as unknown as typeof fetch;
   const server = createStatusServer({
     apiUrl: "http://api.test",
     pollMs: 1,

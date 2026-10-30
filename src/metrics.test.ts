@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { createMetrics } from "./metrics.ts";
 
 test("not ready before a successful poll, ready after, stale later", () => {

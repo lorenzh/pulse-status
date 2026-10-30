@@ -1,7 +1,7 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
 import type { ComponentsResponse, ComponentsUptimeResponse } from "@lorenzh/pulse-contract";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { createPoller, type PollerState } from "./poller.ts";
@@ -9,7 +9,7 @@ import { buildSections } from "./sections.ts";
 import { createStatusServer } from "./server.ts";
 
 const servers: Server[] = [];
-after(() => {
+afterAll(() => {
   for (const s of servers) s.close();
 });
 
@@ -80,7 +80,7 @@ const withComponents = {
 async function pollPage(base: string): Promise<PollerState> {
   let latest: PollerState | undefined;
   const poller = createPoller({
-    fetch: (input, init) => fetch(input, init),
+    fetch,
     timer: { setTimeout: () => 0, clearTimeout: () => {} },
     now: () => 2000,
     pollMs: 1,

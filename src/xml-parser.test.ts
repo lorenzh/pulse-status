@@ -1,5 +1,5 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { test } from "node:test";
 import { child, parseXml } from "./xml-parser.ts";
 
 test("rejects numeric references to illegal characters in text and attributes", () => {
