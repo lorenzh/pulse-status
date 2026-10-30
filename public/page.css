@@ -307,9 +307,10 @@ li {
   cursor: default;
 }
 .time:hover::after,
-.time:focus::after,
 .bar:hover::after,
-.bar:focus::after {
+.bar:focus::after,
+.check:focus-within .time[data-exact]::after,
+.component:focus-within .time[data-exact]::after {
   content: attr(data-exact);
   position: absolute;
   bottom: calc(100% + 0.35rem);
@@ -363,6 +364,27 @@ li {
 .bar:hover,
 .bar:focus {
   opacity: 0.8;
+}
+.bar:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.legend,
+.no-js-note {
+  margin: 0.5rem 0;
+  color: var(--lead);
+  font-size: 0.875rem;
 }
 .bar:nth-child(-n + 20)::after {
   left: 0;

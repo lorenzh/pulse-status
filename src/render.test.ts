@@ -6,11 +6,15 @@ import {
   renderBanner,
   renderChecks,
   renderIncidents,
+  renderManualIncidents,
   renderResolvedIncidents,
   renderSummary,
+  renderTime,
   renderUnavailable,
   renderUpcomingMaintenance,
   renderUpdated,
+  renderUptime,
+  renderUptimeLegend,
   type TimeEnv,
 } from "./render.ts";
 
@@ -65,10 +69,7 @@ test("open incidents: name, since <time>, reason; resolved ignored", () => {
   ];
   const html = renderIncidents(incidents, [base], env);
   assert.match(html, /Site/);
-  assert.match(
-    html,
-    /since <time class="time" datetime="[^"]+" tabindex="0"[^>]*>3 min ago<\/time>/,
-  );
+  assert.match(html, /since <time class="time" datetime="[^"]+"[^>]*>3 min ago<\/time>/);
   assert.match(html, /data-exact="exact&lt;/);
   assert.match(html, /HTTP 500/);
   assert.doesNotMatch(html, /gone/);
@@ -388,7 +389,7 @@ const tls: CheckWithState = {
 
 test("tls up shows host:port and days left", () => {
   const html = renderChecks([tls]);
-  assert.match(html, /<div class="url">example\.test:443<\/div>/);
+  assert.match(html, /<div class="url" data-key="url">example\.test:443<\/div>/);
   assert.match(html, /<span class="cert-days">90 days left<\/span>/);
   assert.doesNotMatch(html, /class="reason"/);
 });
@@ -420,9 +421,9 @@ test("tls without certificate shows only the reason; host is escaped", () => {
 test("http row structure: state, name, target; no meta line", () => {
   assert.equal(
     renderChecks([base]),
-    '<ul class="checks"><li class="check state-up"><div class="check-head">' +
+    `${renderUptimeLegend()}<ul class="checks" data-key="checks"><li class="check state-up" data-key="check:a"><div class="check-head">` +
       '<span class="state">up</span><span class="name">Site</span></div>' +
-      '<div class="url">http://x.test/</div></li></ul>',
+      '<div class="url" data-key="url">http://x.test/</div></li></ul>',
   );
 });
 
@@ -502,18 +503,18 @@ test("uptime: 90 bars, classes at the boundaries, labels and total", () => {
     "down",
     "nodata",
   ]);
-  assert.match(html, /aria-label="2026-08-06: 76\.0 %"/);
-  assert.match(html, /title="2026-08-07: no data"/);
-  assert.match(html, /tabindex="0"/);
-  assert.match(html, /role="group" aria-label="90-day uptime 99\.2 %"/);
+  assert.match(html, /aria-label="2026-08-06 UTC: 76\.0 %"/);
+  assert.match(html, /title="2026-08-07 UTC: no data"/);
+  assert.equal(html.match(/tabindex="0"/g)?.length, 1);
+  assert.match(html, /role="group" aria-label="Site, 90-day uptime 99\.2 %"/);
   assert.match(html, /99\.2 % uptime, 90 days/);
 });
 
 test("uptime: total null reads no data; missing entry gives no bars; escaping", () => {
   const html = renderChecks([base], [uptimeEntry([], null)]);
-  assert.match(html, /aria-label="90-day uptime no data"/);
+  assert.match(html, /aria-label="Site, 90-day uptime no data"/);
   assert.match(html, /<span class="uptime-total">no data<\/span>/);
-  assert.doesNotMatch(renderChecks([base]), /class="bar|uptime/);
+  assert.doesNotMatch(renderChecks([base]), /class="bar|uptime-total/);
   assert.doesNotMatch(renderChecks([base], [{ ...uptimeEntry([], null), checkId: "z" }]), /bar/);
   const evil = uptimeEntry([], null);
   evil.days[0]!.date = '"><script>';
@@ -671,4 +672,42 @@ test("request secrets in an upstream payload are not rendered", () => {
     { ...base, headers: { "X-Key": "sentinel-secret" }, body: "sentinel-secret" },
   ] as CheckWithState[]);
   assert.doesNotMatch(html, /sentinel-secret/);
+});
+
+test("uptime group name holds the entry name; one tab stop; keys on groups and days", () => {
+  const html = renderUptime(uptimeEntry([100, 99], 99.5), "Checkout API");
+  assert.match(html, /aria-label="Checkout API, 90-day uptime 99\.5 %" data-key="bars"/);
+  assert.match(html, /data-key="day:2026-08-01"/);
+  assert.equal(html.match(/tabindex="0"/g)?.length, 1);
+  assert.match(html, /tabindex="0" title="2026-08-06 UTC/);
+});
+
+test("time has no tab stop and names its exact time; summary and banner have no role", () => {
+  const time = renderTime(NOW - 3 * MIN, env);
+  assert.doesNotMatch(time, /tabindex/);
+  assert.match(time, /aria-label="exact&lt;/);
+  assert.doesNotMatch(renderSummary([base], []), /role=/);
+  assert.doesNotMatch(renderBanner("unreachable", true), /role=/);
+});
+
+test("manual incident entries are keyed and named by their title", () => {
+  const html = renderManualIncidents(
+    [
+      {
+        id: 7,
+        title: "Db down",
+        impact: "major",
+        status: "investigating",
+        componentIds: [],
+        createdAt: 1,
+        resolvedAt: null,
+        updates: [{ at: 5, status: "investigating", message: "m" }],
+      },
+    ],
+    new Map(),
+    env,
+  );
+  assert.match(html, /data-key="manual:7" aria-labelledby="manual-name-7"/);
+  assert.match(html, /id="manual-name-7">Db down/);
+  assert.match(html, /data-key="manual-update:7:5"/);
 });

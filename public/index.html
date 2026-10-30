@@ -20,19 +20,22 @@
     <label><input type="radio" name="theme" value="system" checked> System</label>
   </fieldset>
 </header>
-<div id="banner"></div>
-<div id="summary"></div>
-<div id="updated"></div>
-<section id="manual" aria-label="Ongoing incidents"></section>
-<h2 id="checksTitle">Checks</h2>
-<div id="checks"><p class="empty">Loading…</p></div>
+{{renderedLine}}
+<div id="live" role="status" aria-live="polite" aria-atomic="true" class="visually-hidden"></div>
+<div id="alert" role="alert" class="visually-hidden"></div>
+<div id="banner">{{banner}}</div>
+<div id="summary">{{summary}}</div>
+<div id="updated">{{updated}}</div>
+<section id="manual" aria-label="Ongoing incidents">{{manual}}</section>
+<h2 id="checksTitle">{{checksTitle}}</h2>
+<div id="checks">{{checks}}</div>
 <h2>Incidents</h2>
-<div id="incidents"></div>
+<div id="incidents">{{incidents}}</div>
 <h3>Resolved in the last 7 days</h3>
-<div id="resolved"></div>
-<section id="manualResolved" aria-label="Resolved manual incidents"></section>
+<div id="resolved">{{resolved}}</div>
+<section id="manualResolved" aria-label="Resolved manual incidents">{{manualResolved}}</section>
 <h2>Maintenance</h2>
-<div id="maintenance"></div>
+<div id="maintenance">{{maintenance}}</div>
 <script type="module" src="/client.js"></script>
 </body>
 </html>

@@ -91,14 +91,17 @@ test("groups follow first appearance; ungrouped components form one unheaded blo
   // the first appearance of an ungrouped component (position 2), misc joins it.
   const names = [...html.matchAll(/<span class="name">([^<]*)<\/span>/g)].map((m) => m[1]);
   assert.deepEqual(names, ["Shop", "Public API", "Docs", "Misc", "Blog"]);
-  assert.match(html, /<\/ul><\/div><div class="component-group"><ul class="components">/);
+  assert.match(
+    html,
+    /<\/ul><\/div><div class="component-group" data-key="group:"><ul class="components">/,
+  );
 });
 
 test("a component shows name, state, escaped description, bars and open incident count", () => {
   const html = renderComponents(view, env);
   assert.match(html, /class="component state-down"/);
   assert.match(html, /<span class="state">down<\/span>/);
-  assert.match(html, /<p class="description">Buy &lt;things&gt;<\/p>/);
+  assert.match(html, /<p class="description" data-key="description">Buy &lt;things&gt;<\/p>/);
   assert.match(html, /1 open incident/);
   assert.match(html, /class="bar degraded"/);
   assert.match(html, /98\.0 % uptime, 90 days/);

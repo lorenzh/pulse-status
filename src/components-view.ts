@@ -15,7 +15,13 @@ import {
 } from "@lorenzh/pulse-contract";
 // Browser module: the server rewrites this import to /pulse-kit/ (see tsModules in server.ts).
 import { escapeHtml } from "@lorenzh/pulse-kit/escape";
-import { type CheckLabels, renderChecks, renderUptime, type TimeEnv } from "./render.ts";
+import {
+  type CheckLabels,
+  renderChecks,
+  renderUptime,
+  renderUptimeLegend,
+  type TimeEnv,
+} from "./render.ts";
 
 export interface ComponentView {
   components: ComponentsResponse;
@@ -56,20 +62,22 @@ function renderComponent(component: ComponentWithState, view: ComponentView, env
   const incidents =
     component.incidentIds.length === 0
       ? ""
-      : `<div class="meta"><span class="incident-count">${escapeHtml(countOpen(component.incidentIds.length))}</span></div>`;
+      : `<div class="meta" data-key="meta"><span class="incident-count">${escapeHtml(countOpen(component.incidentIds.length))}</span></div>`;
   const description =
     component.description === undefined || component.description === ""
       ? ""
-      : `<p class="description">${escapeHtml(component.description)}</p>`;
+      : `<p class="description" data-key="description">${escapeHtml(component.description)}</p>`;
   const checks =
-    view.showChecks && memberChecks.length > 0 ? renderChecks(memberChecks, view.uptime, env) : "";
+    view.showChecks && memberChecks.length > 0
+      ? renderChecks(memberChecks, view.uptime, env, false)
+      : "";
   return (
-    `<li class="component state-${component.state}">` +
+    `<li class="component state-${component.state}" data-key="component:${escapeHtml(component.id)}">` +
     `<div class="check-head"><span class="state">${component.state}</span>` +
     `<span class="name">${escapeHtml(component.name)}</span></div>` +
     description +
     incidents +
-    (entry ? renderUptime(entry) : "") +
+    (entry ? renderUptime(entry, component.name) : "") +
     checks +
     `</li>`
   );
@@ -81,7 +89,8 @@ function renderBlock(block: Block, view: ComponentView, env: TimeEnv): string {
       ? ""
       : `<h3 class="group-heading">${escapeHtml(block.heading)}</h3>`;
   const items = block.items.map((item) => renderComponent(item, view, env));
-  return `<div class="component-group">${heading}<ul class="components">${items.join("")}</ul></div>`;
+  const key = escapeHtml(block.heading ?? "");
+  return `<div class="component-group" data-key="group:${key}">${heading}<ul class="components">${items.join("")}</ul></div>`;
 }
 
 /** Checks that belong to no component, listed after the components when checks are shown. */
@@ -89,13 +98,14 @@ function renderLooseChecks(view: ComponentView, env: TimeEnv): string {
   const members = new Set(view.components.flatMap((component) => component.checkIds));
   const loose = view.checks.filter((check) => !members.has(check.id));
   if (!view.showChecks || loose.length === 0) return "";
-  return `<div class="component-group loose-checks">${renderChecks(loose, view.uptime, env)}</div>`;
+  return `<div class="component-group loose-checks">${renderChecks(loose, view.uptime, env, false)}</div>`;
 }
 
 /** The checks area of a page with components. Checks appear only when `showChecks` is set. */
 export function renderComponents(view: ComponentView, env: TimeEnv): string {
   const blocks = blocksOf(view.components).map((block) => renderBlock(block, view, env));
-  return blocks.join("") + renderLooseChecks(view, env);
+  if (blocks.length === 0) return "";
+  return renderUptimeLegend() + blocks.join("") + renderLooseChecks(view, env);
 }
 
 /** The label of an entry whose check is hidden and belongs to no component. */
