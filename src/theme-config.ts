@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { z } from "zod";
 
 /** Server-side theme: loading, validating and merging the theme file, and generating CSS. */
 
@@ -52,56 +53,45 @@ function isFontValue(value: string): boolean {
 }
 export const NAME_MAX = 60;
 
-type Fields = Record<string, unknown>;
+const colorValue = z.string().regex(COLOR_RE);
+const fontValue = z.string().refine(isFontValue);
+const radiusValue = z.string().regex(RADIUS_RE);
 
-function isObject(value: unknown): value is Fields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function optionalKeys(keys: readonly string[], value: z.ZodType<string>) {
+  return Object.fromEntries(keys.map((key) => [key, value.optional()]));
 }
 
-function fail(file: string, key: string, why: string): never {
-  throw new Error(`theme file ${file}: ${key}: ${why}`);
-}
+// z.object strips unknown keys, so only the known ones reach the theme.
+const themeSchema = z.object({
+  light: z.object(optionalKeys(COLOR_KEYS, colorValue)).optional(),
+  dark: z.object(optionalKeys(COLOR_KEYS, colorValue)).optional(),
+  ...optionalKeys(FONT_KEYS, fontValue),
+  ...optionalKeys(RADIUS_KEYS, radiusValue),
+});
 
-function checkValue(file: string, key: string, value: unknown, isValid: (v: string) => boolean) {
-  if (typeof value !== "string" || !isValid(value)) fail(file, key, "invalid value");
-  return value;
-}
-
-function pickColors(file: string, mode: string, raw: unknown): Palette {
-  if (raw === undefined) return {};
-  if (!isObject(raw)) return fail(file, mode, "expected an object");
+function definedEntries(source: unknown, keys: readonly string[]): Palette {
   const out: Palette = {};
-  for (const key of COLOR_KEYS) {
-    const value = raw[key];
-    if (value === undefined) continue;
-    out[key] = checkValue(file, `${mode}.${key}`, value, (v) => COLOR_RE.test(v));
-  }
-  return out;
-}
-
-function pickScalars(
-  file: string,
-  raw: Fields,
-  keys: readonly string[],
-  isValid: (v: string) => boolean,
-): Palette {
-  const out: Palette = {};
+  if (typeof source !== "object" || source === null) return out;
   for (const key of keys) {
-    const value = raw[key];
-    if (value === undefined) continue;
-    out[key] = checkValue(file, key, value, isValid);
+    const value: unknown = Reflect.get(source, key);
+    if (typeof value === "string") out[key] = value;
   }
   return out;
 }
 
-/** Validates parsed theme JSON; keeps only known keys. Throws naming `file` and the key. */
+/** Validates parsed theme JSON; keeps only known keys. Throws naming `file` and the key path. */
 export function parseThemeFile(file: string, body: unknown): Partial<Theme> {
-  if (!isObject(body)) return fail(file, "(root)", "expected an object");
+  const result = themeSchema.safeParse(body);
+  if (!result.success) {
+    const path = result.error.issues[0]?.path.join(".") || "(root)";
+    throw new Error(`theme file ${file}: ${path}: invalid value`);
+  }
+  const data = result.data;
   return {
-    light: pickColors(file, "light", body.light),
-    dark: pickColors(file, "dark", body.dark),
-    fonts: pickScalars(file, body, FONT_KEYS, isFontValue),
-    radii: pickScalars(file, body, RADIUS_KEYS, (v) => RADIUS_RE.test(v)),
+    light: definedEntries(data.light, COLOR_KEYS),
+    dark: definedEntries(data.dark, COLOR_KEYS),
+    fonts: definedEntries(data, FONT_KEYS),
+    radii: definedEntries(data, RADIUS_KEYS),
   };
 }
 

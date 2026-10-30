@@ -40,7 +40,7 @@ test("invalid values stop with the file and key", () => {
     [{ light: { accent: "red" } }, /light\.accent/],
     [{ dark: { bg: "#12345" } }, /dark\.bg/],
     [{ light: { bg: "#fff;}body{" } }, /light\.bg/],
-    [{ light: "x" }, /light: expected an object/],
+    [{ light: "x" }, /light: invalid value/],
     [{ "radius-sm": "6" }, /radius-sm/],
     [{ "radius-sm": 6 }, /radius-sm/],
     [{ "font-sans": "x;}</style>" }, /font-sans/],
