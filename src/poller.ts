@@ -6,12 +6,14 @@ import {
   fetchJson,
   type IncidentsResponse,
   type MaintenanceResponse,
+  type ManualIncidentsResponse,
   type UptimeResponse,
   validateChecksResponse,
   validateComponentsResponse,
   validateComponentsUptimeResponse,
   validateIncidentsResponse,
   validateMaintenanceResponse,
+  validateManualIncidentsResponse,
   validateUptimeResponse,
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
@@ -31,6 +33,8 @@ export interface PollerState {
   components: ComponentsResponse;
   /** 90-day uptime per component; always present with `components`. */
   componentUptime: ComponentsUptimeResponse;
+  /** Open and recently resolved manual incidents; empty when the API has none or lacks the route. */
+  manualIncidents: ManualIncidentsResponse;
   /** Set when the last refresh failed; data is from the last success. Details go to the log. */
   error: PollerErrorKind | null;
   /** Clock time of the last successful refresh. */
@@ -145,6 +149,7 @@ export function createPoller(options: PollerOptions): Poller {
     uptime: [],
     components: [],
     componentUptime: [],
+    manualIncidents: [],
     error: null,
     updatedAt: null,
   };
@@ -244,6 +249,27 @@ export function createPoller(options: PollerOptions): Poller {
     }
   }
 
+  /**
+   * Required like components, except a 404: an older API without the route means "no manual
+   * incidents". The list from an earlier success is kept then, never cleared.
+   */
+  async function getManualIncidents(signal: AbortSignal): Promise<ManualIncidentsResponse> {
+    const url = `${base}/manual-incidents`;
+    const result = await fetchJson<ManualIncidentsResponse>(url, {
+      fetch: options.fetch,
+      validate: (raw) => validateManualIncidentsResponse(raw, "manualIncidents"),
+      timeoutMs,
+      signal,
+      schedule,
+      onWireAbsent: () => {},
+    });
+    if (result.ok) return result.value;
+    if (result.error.kind === "http" && result.error.status === 404) {
+      return state.manualIncidents;
+    }
+    throw failure(url, result.error);
+  }
+
   function publish(): void {
     try {
       options.onUpdate(state);
@@ -255,25 +281,34 @@ export function createPoller(options: PollerOptions): Poller {
 
   async function load(signal: AbortSignal): Promise<void> {
     try {
-      const [checks, incidents, maintenance, resolved, uptime, components, componentUptime] =
-        await Promise.all([
-          getJson(`${base}/checks`, signal).then(validServedChecks),
-          getJson(`${base}/incidents?status=open`, signal).then((b) =>
-            valid(validateIncidentsResponse(b, "incidents")),
-          ),
-          getJson(`${base}/maintenance`, signal).then((b) =>
-            valid(validateMaintenanceResponse(b, "maintenance")),
-          ),
-          getResolved(signal),
-          getUptime(signal),
-          // Required, unlike uptime: a failed or invalid path fails the refresh, a 404 included.
-          getJson(`${base}/components`, signal).then((b) =>
-            valid(validateComponentsResponse(b, "components")),
-          ),
-          getJson(`${base}/components/uptime`, signal).then((b) =>
-            valid(validateComponentsUptimeResponse(b, "componentsUptime")),
-          ),
-        ]);
+      const [
+        checks,
+        incidents,
+        maintenance,
+        resolved,
+        uptime,
+        components,
+        componentUptime,
+        manualIncidents,
+      ] = await Promise.all([
+        getJson(`${base}/checks`, signal).then(validServedChecks),
+        getJson(`${base}/incidents?status=open`, signal).then((b) =>
+          valid(validateIncidentsResponse(b, "incidents")),
+        ),
+        getJson(`${base}/maintenance`, signal).then((b) =>
+          valid(validateMaintenanceResponse(b, "maintenance")),
+        ),
+        getResolved(signal),
+        getUptime(signal),
+        // Required, unlike uptime: a failed or invalid path fails the refresh, a 404 included.
+        getJson(`${base}/components`, signal).then((b) =>
+          valid(validateComponentsResponse(b, "components")),
+        ),
+        getJson(`${base}/components/uptime`, signal).then((b) =>
+          valid(validateComponentsUptimeResponse(b, "componentsUptime")),
+        ),
+        getManualIncidents(signal),
+      ]);
       state = {
         checks,
         incidents,
@@ -282,6 +317,7 @@ export function createPoller(options: PollerOptions): Poller {
         uptime,
         components,
         componentUptime,
+        manualIncidents,
         error: null,
         updatedAt: options.now(),
       };

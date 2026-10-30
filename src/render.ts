@@ -6,6 +6,8 @@ import type {
   IncidentsResponse,
   LocationResult,
   MaintenanceResponse,
+  ManualIncident,
+  ManualIncidentsResponse,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
 // Browser module: the server rewrites these two imports to /pulse-kit/ (see tsModules in server.ts).
@@ -387,4 +389,91 @@ export function renderUpcomingMaintenance(
       `</li>`,
   );
   return `<ul class="maintenance">${items.join("")}</ul>`;
+}
+
+/** Component id to name, for the components an incident names. */
+export type ComponentNames = ReadonlyMap<string, string>;
+
+export const MANUAL_RESOLVED_WINDOW_MS = 14 * DAY;
+export const MANUAL_RESOLVED_LIMIT = 50;
+
+function manualComponents(incident: ManualIncident, names: ComponentNames): string {
+  if (incident.componentIds.length === 0) return "";
+  const list = incident.componentIds.map((id) => names.get(id) ?? id).join(", ");
+  return `<span class="manual-components">Affects: ${escapeHtml(list)}</span>`;
+}
+
+function manualHead(incident: ManualIncident, names: ComponentNames): string {
+  // Impact and status are words, so the level never depends on the colour.
+  const impact = escapeHtml(`Impact: ${incident.impact}`);
+  const status = escapeHtml(`Status: ${incident.status}`);
+  return (
+    `<div class="manual-head">` +
+    `<span class="manual-impact">${impact}</span>` +
+    `<span class="manual-status">${status}</span>` +
+    `<span class="name">${escapeHtml(incident.title)}</span>` +
+    manualComponents(incident, names) +
+    `</div>`
+  );
+}
+
+function manualUpdate(update: ManualIncident["updates"][number], env: TimeEnv): string {
+  return (
+    `<li class="manual-update">` +
+    `<span class="manual-update-status">${escapeHtml(update.status)}</span> ` +
+    `${renderTime(update.at, env)}` +
+    `<p class="manual-message">${escapeHtml(update.message)}</p>` +
+    `</li>`
+  );
+}
+
+function sortedUpdates(incident: ManualIncident): ManualIncident["updates"] {
+  return [...incident.updates].sort((a, b) => a.at - b.at);
+}
+
+/** The prominent block of open manual incidents: title, impact, status, latest update, components. */
+export function renderManualIncidents(
+  incidents: ManualIncidentsResponse,
+  names: ComponentNames,
+  env: TimeEnv,
+): string {
+  const open = incidents
+    .filter((incident) => incident.resolvedAt === null)
+    .sort((a, b) => b.createdAt - a.createdAt || b.id - a.id);
+  if (open.length === 0) return "";
+  const items = open.map((incident) => {
+    const latest = sortedUpdates(incident).at(-1);
+    return (
+      `<li class="manual-incident impact-${incident.impact}">` +
+      manualHead(incident, names) +
+      (latest === undefined ? "" : `<ul class="manual-updates">${manualUpdate(latest, env)}</ul>`) +
+      `</li>`
+    );
+  });
+  return `<h2>Ongoing incidents</h2><ul class="manual-incidents">${items.join("")}</ul>`;
+}
+
+/** Resolved manual incidents of the last 14 days, newest first, each with all its updates. */
+export function renderResolvedManualIncidents(
+  incidents: ManualIncidentsResponse,
+  names: ComponentNames,
+  env: TimeEnv,
+): string {
+  const recent = incidents
+    .filter(
+      (incident) =>
+        incident.resolvedAt !== null && incident.resolvedAt >= env.now - MANUAL_RESOLVED_WINDOW_MS,
+    )
+    .sort((a, b) => (b.resolvedAt ?? 0) - (a.resolvedAt ?? 0) || b.id - a.id)
+    .slice(0, MANUAL_RESOLVED_LIMIT);
+  if (recent.length === 0) return "";
+  const items = recent.map(
+    (incident) =>
+      `<li class="manual-incident resolved impact-${incident.impact}">` +
+      manualHead(incident, names) +
+      `<ul class="manual-updates">${sortedUpdates(incident)
+        .map((update) => manualUpdate(update, env))
+        .join("")}</ul></li>`,
+  );
+  return `<h3>Manual incidents resolved in the last 14 days</h3><ul class="manual-incidents">${items.join("")}</ul>`;
 }

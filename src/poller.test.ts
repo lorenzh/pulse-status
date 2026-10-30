@@ -562,7 +562,7 @@ test("a failed request aborts the other pending requests", async () => {
     onUpdate: () => {},
   });
   await poller.refresh();
-  assert.equal(signals.length, 7);
+  assert.equal(signals.length, 8);
   assert.ok(signals.every((s) => s.aborted));
 });
 
@@ -589,7 +589,7 @@ test("the first error stays published after the abort", async () => {
   await poller.refresh();
   await flush();
   // The failure itself aborts the pending siblings; their rejections must not replace the error.
-  assert.equal(abortedSiblings, 6);
+  assert.equal(abortedSiblings, 7);
   assert.equal(updates.length, 1);
   assert.equal(updates[0]?.error, "unreachable");
 });
@@ -614,7 +614,7 @@ test("a hidden tab aborts all pending requests", async () => {
   poller.start();
   await flush();
   visibility.set(true);
-  assert.equal(signals.length, 7);
+  assert.equal(signals.length, 8);
   assert.ok(signals.every((s) => s.aborted));
 });
 

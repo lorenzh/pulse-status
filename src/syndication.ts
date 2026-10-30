@@ -1,6 +1,12 @@
 import type { ServerResponse } from "node:http";
 import { parseBadgeLabel, renderBadge } from "./badge.ts";
-import { buildAtom, type FeedCheck, type FeedComponent, type FeedIncident } from "./feed.ts";
+import {
+  buildAtom,
+  type FeedCheck,
+  type FeedComponent,
+  type FeedIncident,
+  type FeedManualIncident,
+} from "./feed.ts";
 
 /** A cached, already filtered answer of the API proxy. */
 export interface CachedAnswer {
@@ -121,6 +127,49 @@ function parseIncidents(answer: CachedAnswer): FeedIncident[] | undefined {
   return out;
 }
 
+function isManualUpdate(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    isTime(value.at) &&
+    typeof value.status === "string" &&
+    typeof value.message === "string"
+  );
+}
+
+/**
+ * Manual incidents of the cached answer. A 404 (an older api) means none; any other failure or
+ * malformed answer gives undefined.
+ */
+function parseManualIncidents(answer: CachedAnswer): FeedManualIncident[] | undefined {
+  if (answer.status === 404) return [];
+  const list = jsonList(answer);
+  if (list === undefined) return undefined;
+  const out: FeedManualIncident[] = [];
+  for (const item of list) {
+    if (
+      !isObject(item) ||
+      typeof item.id !== "number" ||
+      typeof item.title !== "string" ||
+      typeof item.impact !== "string" ||
+      !Array.isArray(item.componentIds) ||
+      !item.componentIds.every((id: unknown) => typeof id === "string") ||
+      !Array.isArray(item.updates) ||
+      !item.updates.every(isManualUpdate)
+    ) {
+      return undefined;
+    }
+    out.push({
+      id: item.id,
+      title: item.title,
+      componentIds: item.componentIds,
+      impact: item.impact,
+      // Checked above.
+      updates: item.updates as FeedManualIncident["updates"],
+    });
+  }
+  return out;
+}
+
 /** The overall uptime of one entry; undefined when the answer is unusable or lacks the entry. */
 function uptimeOf(
   answer: CachedAnswer,
@@ -164,13 +213,16 @@ async function serveFeed(
   opts: SyndicationOptions,
   publicUrl: string,
 ): Promise<void> {
-  const [checksAnswer, openAnswer, resolvedAnswer, componentsAnswer] = await Promise.all([
-    opts.read("/api/checks"),
-    opts.read("/api/incidents?status=open"),
-    opts.read("/api/incidents?status=resolved"),
-    opts.read("/api/components"),
-  ]);
+  const [checksAnswer, openAnswer, resolvedAnswer, componentsAnswer, manualAnswer] =
+    await Promise.all([
+      opts.read("/api/checks"),
+      opts.read("/api/incidents?status=open"),
+      opts.read("/api/incidents?status=resolved"),
+      opts.read("/api/components"),
+      opts.read("/api/manual-incidents"),
+    ]);
   const checks = parseChecks(checksAnswer);
+  const manual = parseManualIncidents(manualAnswer);
   const open = parseIncidents(openAnswer);
   const resolved = parseIncidents(resolvedAnswer);
   const components = parseComponents(componentsAnswer);
@@ -178,7 +230,8 @@ async function serveFeed(
     checks === undefined ||
     open === undefined ||
     resolved === undefined ||
-    components === undefined
+    components === undefined ||
+    manual === undefined
   ) {
     unavailable(res);
     return;
@@ -191,6 +244,7 @@ async function serveFeed(
     showChecks: opts.showChecks === true,
     open,
     resolved,
+    manual,
   });
   res.writeHead(200, {
     "content-type": "application/atom+xml; charset=utf-8",

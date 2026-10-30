@@ -31,6 +31,7 @@ const state: PollerState = {
   uptime: [],
   components: [],
   componentUptime: [],
+  manualIncidents: [],
   error: null,
   updatedAt: 5,
 };
@@ -43,6 +44,8 @@ test("builds every section of a page with data", () => {
     "checksTitle",
     "incidents",
     "maintenance",
+    "manual",
+    "manualResolved",
     "resolved",
     "summary",
     "updated",
@@ -89,7 +92,7 @@ test("a throwing renderer yields no partial result and nothing is shown", () => 
 test("showSections assigns every built section", () => {
   const dom = new Map<string, string>();
   showSections(buildSections(state, env), (id, html) => dom.set(id, html));
-  assert.equal(dom.size, 8);
+  assert.equal(dom.size, 10);
 });
 
 test("the checks heading goes back to Checks after components are removed", () => {

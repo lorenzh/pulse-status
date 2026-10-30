@@ -7,6 +7,12 @@ import type {
   MaintenanceResponse,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
+import {
+  type CheckState,
+  combineStates,
+  incidentImpactState,
+  type ManualIncidentsResponse,
+} from "@lorenzh/pulse-contract";
 // Browser module: the server rewrites this import to /pulse-kit/ (see tsModules in server.ts).
 import { escapeHtml } from "@lorenzh/pulse-kit/escape";
 import { type CheckLabels, renderChecks, renderUptime, type TimeEnv } from "./render.ts";
@@ -127,4 +133,25 @@ export function labeledMaintenance(
   labels: CheckLabels,
 ): MaintenanceResponse {
   return maintenance.filter((window) => labels.has(window.checkId));
+}
+
+/**
+ * Components with the state that open manual incidents imply: the worst of the check-derived
+ * state and the state of each open incident that names the component (`monitoring` is open,
+ * `resolved` is not). Uptime numbers are unchanged.
+ */
+export function componentsWithIncidents(
+  components: ComponentsResponse,
+  manualIncidents: ManualIncidentsResponse,
+): ComponentsResponse {
+  const open = manualIncidents.filter((incident) => incident.resolvedAt === null);
+  if (open.length === 0) return components;
+  return components.map((component) => {
+    const implied = open
+      .filter((incident) => incident.componentIds.includes(component.id))
+      .map((incident) => incidentImpactState(incident.impact))
+      .filter((state): state is CheckState => state !== undefined);
+    if (implied.length === 0) return component;
+    return { ...component, state: combineStates([component.state, ...implied]) };
+  });
 }

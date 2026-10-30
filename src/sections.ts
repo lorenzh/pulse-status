@@ -1,5 +1,6 @@
 import {
   checkLabels,
+  componentsWithIncidents,
   labeledIncidents,
   labeledMaintenance,
   renderComponents,
@@ -9,7 +10,9 @@ import {
   renderBanner,
   renderChecks,
   renderIncidents,
+  renderManualIncidents,
   renderResolvedIncidents,
+  renderResolvedManualIncidents,
   renderSummary,
   renderUnavailable,
   renderUpcomingMaintenance,
@@ -27,6 +30,8 @@ export interface Renderers {
   components: typeof renderComponents;
   incidents: typeof renderIncidents;
   resolved: typeof renderResolvedIncidents;
+  manual: typeof renderManualIncidents;
+  manualResolved: typeof renderResolvedManualIncidents;
   maintenance: typeof renderUpcomingMaintenance;
 }
 
@@ -39,6 +44,8 @@ export const DEFAULT_RENDERERS: Renderers = {
   components: renderComponents,
   incidents: renderIncidents,
   resolved: renderResolvedIncidents,
+  manual: renderManualIncidents,
+  manualResolved: renderResolvedManualIncidents,
   maintenance: renderUpcomingMaintenance,
 };
 
@@ -59,15 +66,10 @@ export function buildSections(
   options: SectionOptions = { showChecks: false },
 ): Record<string, string> {
   const hasData = state.updatedAt !== null;
+  const components = componentsWithIncidents(state.components, state.manualIncidents);
   const sections: Record<string, string> = {
     banner: renderers.banner(state.error, hasData),
-    summary: renderers.summary(
-      state.checks,
-      state.incidents,
-      state.error,
-      hasData,
-      state.components,
-    ),
+    summary: renderers.summary(state.checks, state.incidents, state.error, hasData, components),
     updated: renderers.updated(state.updatedAt, state.error, env),
   };
   if (!hasData) {
@@ -75,8 +77,9 @@ export function buildSections(
     return sections;
   }
   if (state.components.length > 0) {
-    return componentSections(state, env, renderers, options, sections);
+    return componentSections(state, components, env, renderers, options, sections);
   }
+  addManualSections(state, env, renderers, sections);
   // Set on both paths, so the heading goes back to "Checks" when components are removed.
   sections.checksTitle = "Checks";
   sections.checks = renderers.checks(state.checks, state.uptime, env);
@@ -89,13 +92,14 @@ export function buildSections(
 /** The page of a configured set of components: entries name components, not hidden checks. */
 function componentSections(
   state: PollerState,
+  components: PollerState["components"],
   env: TimeEnv,
   renderers: Renderers,
   options: SectionOptions,
   sections: Record<string, string>,
 ): Record<string, string> {
   const view = {
-    components: state.components,
+    components,
     componentUptime: state.componentUptime,
     checks: state.checks,
     uptime: state.uptime,
@@ -111,7 +115,20 @@ function componentSections(
     labels,
     env,
   );
+  addManualSections(state, env, renderers, sections);
   return sections;
+}
+
+/** Manual incidents are written for visitors: hide-details does not apply to them. */
+function addManualSections(
+  state: PollerState,
+  env: TimeEnv,
+  renderers: Renderers,
+  sections: Record<string, string>,
+): void {
+  const names = new Map(state.components.map((component) => [component.id, component.name]));
+  sections.manual = renderers.manual(state.manualIncidents, names, env);
+  sections.manualResolved = renderers.manualResolved(state.manualIncidents, names, env);
 }
 
 /** Shows built sections. Runs only after `buildSections` returned. */
