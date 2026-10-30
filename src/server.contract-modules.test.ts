@@ -1,11 +1,11 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { after, test } from "node:test";
 import { createStatusServer } from "./server.ts";
 
 const servers: Server[] = [];
-after(() => {
+afterAll(() => {
   for (const s of servers) s.close();
 });
 

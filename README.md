@@ -12,11 +12,11 @@ Contributing: see [AGENTS.md](AGENTS.md).
 
 ## Run
 
-Requires Node >= 24.
+Requires Bun 1.4.0.
 
 ```sh
-npm ci
-npm start
+bun install --frozen-lockfile
+bun start
 ```
 
 Then open http://localhost:8080. Set `PULSE_API_URL` if pulse-api is not on `http://localhost:3000`.
@@ -44,7 +44,7 @@ Settings, white label and theming, operation and troubleshooting are in [docs/in
 
 ## Development
 
-`npm run check` runs lint, typecheck and tests. See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
+`bun run check` runs lint, typecheck and tests. See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md).
 
 Licensed under the MIT licence, see [LICENSE](LICENSE).
 

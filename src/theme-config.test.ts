@@ -1,12 +1,12 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
 import { loadDefaultTheme, loadTheme, themeCss, validateName } from "./theme-config.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "theme-"));
-after(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 function themeFile(body: unknown, name = "theme.json"): string {
   const path = join(dir, name);

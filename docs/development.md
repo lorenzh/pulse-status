@@ -5,11 +5,11 @@ This page holds only the points specific to pulse-status. The cross-repository t
 ## Run locally
 
 ```sh
-npm ci
-PULSE_API_URL=http://localhost:3000 npm start
+bun install --frozen-lockfile
+PULSE_API_URL=http://localhost:3000 bun start
 ```
 
-Node 24 or newer runs the TypeScript source directly (type stripping, no build step).
+Bun runs the TypeScript source directly (no build step).
 
 ## Code layout
 
@@ -28,19 +28,19 @@ Node 24 or newer runs the TypeScript source directly (type stripping, no build s
 ## Checks
 
 ```sh
-npm run lint    # Biome plus SonarJS (ESLint), cognitive complexity at most 15
-npm run typecheck
-npm test        # node:test with a line coverage gate of 80 %
-npm run format  # apply Biome fixes
-npm run check   # lint, typecheck and tests, as CI runs them
-node --test src/<name>.test.ts   # one test file
+bun run lint    # Biome plus SonarJS (ESLint), cognitive complexity at most 15
+bun run typecheck
+bun test        # bun:test with a line coverage gate of 80 %
+bun run format  # apply Biome fixes
+bun run check   # lint, typecheck and tests, as CI runs them
+bun test src/<name>.test.ts   # one test file
 ```
 
 Work test first. Tests sit next to the code as `src/<module>.test.ts`, use hand-written fakes, no real clock and no external network. Every endpoint or response change gets a test that starts the real server on `127.0.0.1` port `0` and drives it over HTTP (`src/server.test.ts`). Types of API answers come from `@lorenzh/pulse-contract` with `import type`. The SonarJS tooling comes with `@lorenzh/pulse-config`, which installs its own TypeScript 6 next to the root TypeScript 7.
 
 ## Lefthook
 
-`npm ci` installs a Lefthook pre-commit hook. It runs `biome check` on staged `.js`, `.ts` and `.json` files and `eslint` on staged `.js` and `.ts` files, and blocks the commit if they fail. `public/index.html` is not covered. Do not use `--no-verify`.
+`bun install --frozen-lockfile` installs a Lefthook pre-commit hook. It runs `biome check` on staged `.js`, `.ts` and `.json` files and `eslint` on staged `.js` and `.ts` files, and blocks the commit if they fail. `public/index.html` is not covered. Do not use `--no-verify`.
 
 ## CI
 

@@ -1,6 +1,6 @@
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
 import { COLOR_KEYS, loadDefaultTheme, loadTheme, themeCss } from "./theme-config.ts";
 
 const html = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");

@@ -89,7 +89,7 @@ PULSE_STATUS_NAME="Acme status" \
 PULSE_STATUS_LOGO=./acme-logo.svg \
 PULSE_STATUS_THEME=./acme-theme.json \
 PULSE_API_URL=http://localhost:3000 \
-npm start
+bun start
 ```
 
 Then fetch the pieces:

@@ -1,15 +1,15 @@
+import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
 import type { ChecksResponse } from "@lorenzh/pulse-contract";
 import { startFromEnv } from "./start.ts";
 
 const servers: Server[] = [];
-after(() => {
+afterAll(() => {
   for (const s of servers) s.close();
 });
 

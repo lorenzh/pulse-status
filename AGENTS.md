@@ -6,20 +6,20 @@ Instructions for coding agents in this repository. They bind every change.
 
 pulse is an uptime monitor with a status page, split over several repositories. Work arrives as an
 issue with an approved spec from the meta repository; implement only the section for this
-repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`tsc --noEmit`),
-`node:test`, Biome, Lefthook.
+repository. Bun 1.4.0 (runtime, package manager, test runner), ESM, strict TypeScript (`tsc --noEmit`),
+`bun:test`, Biome, Lefthook.
 
 ## Commands
 
-| Task                                                          | Command                                    |
-| ------------------------------------------------------------- | ------------------------------------------ |
-| Install from the lockfile (also installs the pre-commit hook) | `npm ci`                                   |
-| All checks: CI runs the same steps                            | `npm run check`                            |
-| One test file                                                 | `node --test src/<name>.test.ts`           |
-| Tests whose name matches                                      | `node --test --test-name-pattern "<text>"` |
-| Typecheck                                                     | `npm run typecheck`                        |
-| Lint and format check / apply fixes                           | `npm run lint` / `npm run format`          |
-- A change is done when `npm run check` passes; the pre-commit hook runs Biome and ESLint. Never run `git commit --no-verify`, and never weaken `biome.json`, `tsconfig.json`, or CI to pass.
+| Task                                                          | Command                                 |
+| ------------------------------------------------------------- | --------------------------------------- |
+| Install from the lockfile (also installs the pre-commit hook) | `bun install --frozen-lockfile`         |
+| All checks: CI runs the same steps                            | `bun run check`                         |
+| One test file                                                 | `bun test src/<name>.test.ts`           |
+| Tests whose name matches                                      | `bun test --test-name-pattern "<text>"` |
+| Typecheck                                                     | `bun run typecheck`                     |
+| Lint and format check / apply fixes                           | `bun run lint` / `bun run format`       |
+- A change is done when `bun run check` passes; the pre-commit hook runs Biome and ESLint. Never run `git commit --no-verify`, and never weaken `biome.json`, `tsconfig.json`, or CI to pass.
 
 ## Repository boundaries
 
@@ -33,7 +33,7 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 
 ## TypeScript
 
-- The source runs unbuilt under Node type stripping: erasable syntax only (no `enum`, `namespace`, parameter properties). Use string-literal unions or `as const` objects.
+- The source runs unbuilt under Bun: erasable syntax only (no `enum`, `namespace`, parameter properties). Use string-literal unions or `as const` objects.
 - Relative imports carry the `.ts` extension. Built-ins use the `node:` prefix.
 - Type-only imports use `import type`; mixed imports mark types inline: `import { type X, y }`.
 - No `any`, also not in tests. Use `unknown` and narrow it, or the contract type.
@@ -70,17 +70,17 @@ repository. Node 24+ with native type stripping, ESM, npm, strict TypeScript (`t
 - Test the main behavior, the spec's acceptance criteria, and the obvious failures (invalid input, unreachable service, timeout). Skip contrived edge cases.
 - Tests sit next to the code as `src/<module>.test.ts`; split a large suite by topic (`service.quorum.test.ts`).
 - Test through exported functions and HTTP, not private details. Do not export a function only for a test.
-- Use hand-written fakes passed as dependencies. Do not mock Node modules or globals.
+- Use hand-written fakes passed as dependencies. Do not mock built-in modules or globals.
 - No real clock and no real timers: inject `now` and a fake `setTimeout`, and advance them in the test.
 - No external network. Start servers on `127.0.0.1` port `0` inside the test and close them in `after`.
 - Each test writes only to its own `mkdtemp` directory or an in-memory database, and cleans it up.
-- `npm test` enforces at least 80 % line coverage and `npm run lint` limits cognitive complexity to 15 per function (SonarJS); never lower either to pass.
+- `bun test` enforces at least 80 % line coverage and `bun run lint` limits cognitive complexity to 15 per function (SonarJS); never lower either to pass.
 
 ## End-to-end checks
 
 - Each service has at least one test that starts its real server on port `0` and drives it over HTTP, with fake peers for other services.
 - A change to an endpoint or a response shape gets such a test, with the response typed by the contract.
-- Before handoff of a user-visible change, start the service with `npm start` and exercise the changed behavior once; report the command and result.
+- Before handoff of a user-visible change, start the service with `bun start` and exercise the changed behavior once; report the command and result.
 
 ## Documentation
 
