@@ -170,7 +170,10 @@ async function checkStructure(page: Page, entryName: string): Promise<void> {
 }
 
 async function checkLatencyChart(page: Page): Promise<void> {
-  assert.match((await page.textContent(".latency-summary")) ?? "", /^p95 last 7 days \d+ ms/);
+  assert.match(
+    (await page.textContent(".latency-summary")) ?? "",
+    /^highest daily p95, last 7 days \d+ ms/,
+  );
   assert.equal(await page.getAttribute(".latency-svg", "aria-hidden"), "true");
   assert.ok((await page.$$(".latency-svg polyline.lat-p95")).length > 1, "null days leave gaps");
   const sloText = (await page.textContent("body")) ?? "";

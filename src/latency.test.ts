@@ -88,13 +88,25 @@ test("slo: check and component entries show it, checks without a target show not
 
 test("chart: summary, objective, aria-hidden svg and one details table", () => {
   const html = renderLatencyChart(full, 300, "Web");
-  assert.match(html, /p95 last 7 days 180 ms, objective 300 ms/);
+  assert.match(html, /highest daily p95, last 7 days 180 ms, objective 300 ms/);
   assert.match(html, /<svg[^>]*aria-hidden="true"/);
   assert.match(html, /class="lat-objective"/);
   assert.equal(html.match(/<summary>/g)?.length, 1);
   assert.equal(html.match(/<tr data-key="day:/g)?.length, 90);
   assert.doesNotMatch(html, /tabindex/);
   assert.doesNotMatch(renderLatencyChart(full, undefined, "Web"), /lat-objective/);
+});
+
+test("chart: summary shows the highest daily p95 of the last 7 days, not a mean", () => {
+  // Day 88: 95 results at 1 ms and 5 at 1000 ms (daily p95 1 ms); day 89: 1 result at 100 ms.
+  // The true p95 over all 101 results is 100 ms; a count-weighted mean of daily p95 gives 2 ms.
+  const sample: Record<number, ReturnType<typeof day>> = {
+    88: day(88, 1, 1, 100),
+    89: day(89, 100, 100, 1),
+  };
+  const mixed = latency((i) => sample[i] ?? day(i, null, null, 0));
+  const html = renderLatencyChart(mixed, 300, "Web");
+  assert.match(html, />highest daily p95, last 7 days 100 ms, objective 300 ms</);
 });
 
 test("chart: a null day is a gap and a single day is a dot", () => {

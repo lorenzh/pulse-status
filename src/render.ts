@@ -309,27 +309,26 @@ const SUMMARY_DAYS = 7;
 type Latencies = CheckLatency["days"];
 type Series = "p50Ms" | "p95Ms";
 
-/** Count-weighted mean of the daily p95 over the last days; null without results. */
-function recentP95(days: Latencies): number | null {
-  let sum = 0;
-  let count = 0;
-  for (const day of days.slice(-SUMMARY_DAYS)) {
-    if (day.p95Ms === null) continue;
-    sum += day.p95Ms * day.count;
-    count += day.count;
-  }
-  return count === 0 ? null : Math.round(sum / count);
+/**
+ * Highest daily p95 of the last days; null without results. The api gives only daily
+ * percentiles, and percentiles cannot be averaged, so the page shows the worst day.
+ */
+function highestDailyP95(days: Latencies): number | null {
+  const values = days
+    .slice(-SUMMARY_DAYS)
+    .flatMap((day) => (day.p95Ms === null ? [] : [day.p95Ms]));
+  return values.length === 0 ? null : Math.max(...values);
 }
 
 function latencySummary(days: Latencies, objectiveMs: number | undefined): string {
-  const p95 = recentP95(days);
+  const p95 = highestDailyP95(days);
   if (p95 === null) {
     return days.some((day) => day.count > 0)
       ? `no latency data in the last ${SUMMARY_DAYS} days`
       : "no latency data yet";
   }
   const objective = objectiveMs === undefined ? "" : `, objective ${objectiveMs} ms`;
-  return `p95 last ${SUMMARY_DAYS} days ${p95} ms${objective}`;
+  return `highest daily p95, last ${SUMMARY_DAYS} days ${p95} ms${objective}`;
 }
 
 /** Runs of consecutive days with a value, as [x, value]; a `null` day is a gap. */
