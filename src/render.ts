@@ -153,6 +153,12 @@ export function renderLocations(check: Pick<CheckWithState, "locations">): strin
   return `<span class="locations">${down}/${active.length} locations down</span>`;
 }
 
+/** A latency for display: one decimal below 10 ms, whole ms from 10 ms (also when 9.96 rounds up). */
+function formatLatencyMs(ms: number): string {
+  const tenth = Math.round(ms * 10) / 10;
+  return tenth < 10 ? `${tenth} ms` : `${Math.round(ms)} ms`;
+}
+
 export function renderLatency(check: CheckWithState): string {
   if (check.state !== "up" && check.state !== "degraded") return "";
   const newest = (check.locations ?? []).reduce<LocationResult | null>(
@@ -163,9 +169,9 @@ export function renderLatency(check: CheckWithState): string {
   if (newest === null) return "";
   const objective =
     hasHttpFields(check) && check.latencyObjectiveMs != null
-      ? ` · objective ${check.latencyObjectiveMs} ms`
+      ? ` · objective ${formatLatencyMs(check.latencyObjectiveMs)}`
       : "";
-  const text = `${newest.result.latencyMs} ms${objective}`;
+  const text = `${formatLatencyMs(newest.result.latencyMs)}${objective}`;
   return `<span class="latency">${escapeHtml(text)}</span>`;
 }
 
@@ -327,8 +333,8 @@ function latencySummary(days: Latencies, objectiveMs: number | undefined): strin
       ? `no latency data in the last ${SUMMARY_DAYS} days`
       : "no latency data yet";
   }
-  const objective = objectiveMs === undefined ? "" : `, objective ${objectiveMs} ms`;
-  return `highest daily p95, last ${SUMMARY_DAYS} days ${p95} ms${objective}`;
+  const objective = objectiveMs === undefined ? "" : `, objective ${formatLatencyMs(objectiveMs)}`;
+  return `highest daily p95, last ${SUMMARY_DAYS} days ${formatLatencyMs(p95)}${objective}`;
 }
 
 /** Runs of consecutive days with a value, as [x, value]; a `null` day is a gap. */
@@ -387,7 +393,8 @@ function renderChartSvg(days: Latencies, objectiveMs: number | undefined): strin
 }
 
 function renderLatencyTable(days: Latencies, name: string): string {
-  const cell = (value: number | null): string => (value === null ? "no data" : `${value} ms`);
+  const cell = (value: number | null): string =>
+    value === null ? "no data" : formatLatencyMs(value);
   const rows = [...days]
     .reverse()
     .map(
