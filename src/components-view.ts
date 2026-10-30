@@ -98,9 +98,12 @@ export function renderComponents(view: ComponentView, env: TimeEnv): string {
   return blocks.join("") + renderLooseChecks(view, env);
 }
 
+/** The label of an entry whose check is hidden and belongs to no component. */
+export const HIDDEN_CHECK_LABEL = "Service";
+
 /**
  * What incident and maintenance entries call a check. Without `showChecks` it is the names of
- * its components, and a check in none has no label, so its entries are left out. With
+ * its components, and a check in none gets the neutral `HIDDEN_CHECK_LABEL`. With
  * `showChecks` the check name is used, after its components when it has any.
  */
 export function checkLabels(view: ComponentView): CheckLabels {
@@ -111,7 +114,9 @@ export function checkLabels(view: ComponentView): CheckLabels {
     }
   }
   if (!view.showChecks) {
-    return new Map([...owners].map(([id, names]) => [id, names.join(", ")]));
+    const hidden = new Map<string, string>(view.checks.map((c) => [c.id, HIDDEN_CHECK_LABEL]));
+    for (const [id, names] of owners) hidden.set(id, names.join(", "));
+    return hidden;
   }
   const labels = new Map<string, string>();
   for (const check of view.checks) {

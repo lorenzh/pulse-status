@@ -1,3 +1,4 @@
+import { HIDDEN_CHECK_LABEL } from "./components-view.ts";
 import { escapeXml } from "./xml.ts";
 
 export interface FeedCheck {
@@ -66,9 +67,6 @@ const EMPTY_FEED_UPDATED = "1970-01-01T00:00:00Z";
 function rfc3339(ms: number): string {
   return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
-
-/** The label of an entry whose check is hidden and belongs to no component. */
-const HIDDEN_CHECK_LABEL = "Service";
 
 /**
  * What an entry calls its check. Without components it is the check name. With components it is

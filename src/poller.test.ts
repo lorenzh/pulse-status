@@ -654,6 +654,45 @@ test("hiding the tab before a failure settles drops the result and keeps the fir
   assert.equal(updates.length, 0);
 });
 
+test("a failing request keeps its own error and aborts the sibling requests", async () => {
+  const timer = fakeTimer();
+  const updates: PollerState[] = [];
+  const failures: string[] = [];
+  const siblings: AbortSignal[] = [];
+  let n = 0;
+  let failFirst: () => void = () => {};
+  const poller = createPoller({
+    fetch: ((_url: string, init?: RequestInit) => {
+      if (n++ === 0) {
+        return new Promise<Response>((_, reject) => {
+          failFirst = () => reject(new Error("boom"));
+        });
+      }
+      if (init?.signal) siblings.push(init.signal);
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    }) as unknown as typeof fetch,
+    timer,
+    now: () => 1,
+    pollMs: 5000,
+    log: (m, e) => failures.push(`${m}: ${String(e)}`),
+    onUpdate: (s) => updates.push(s),
+  });
+  poller.start();
+  await flush();
+  assert.ok(siblings.length > 0);
+  assert.ok(siblings.every((s) => !s.aborted));
+  failFirst();
+  await flush();
+  // The failure itself, not a hide, aborts the siblings; their abort errors do not replace it.
+  assert.ok(siblings.every((s) => s.aborted));
+  assert.equal(failures.length, 1);
+  assert.match(failures[0] ?? "", /refresh failed.*\/api\/checks is unreachable/);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0]?.error, "unreachable");
+});
+
 test("the default timeout is a fixed 10000 ms, whatever pollMs is", async () => {
   for (const [pollMs, expected] of [
     [1000, 10_000],

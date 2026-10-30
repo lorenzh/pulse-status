@@ -34,12 +34,14 @@ interface Harness {
   base: string;
   calls: string[];
   failing: Set<string>;
+  missing: Set<string>;
   bodies: Record<string, unknown>;
 }
 
 async function start(options: Partial<ServerOptions> = {}): Promise<Harness> {
   const calls: string[] = [];
   const failing = new Set<string>();
+  const missing = new Set<string>();
   const bodies: Record<string, unknown> = {
     "/checks": checks,
     "/incidents?status=open": open,
@@ -49,6 +51,7 @@ async function start(options: Partial<ServerOptions> = {}): Promise<Harness> {
   const doFetch = (async (input: string) => {
     const path = String(input).replace("http://api.test", "");
     calls.push(path);
+    if (missing.has(path)) return new Response("{}", { status: 404 });
     if (failing.has(path)) return new Response("secret upstream text", { status: 500 });
     return new Response(JSON.stringify(bodies[path] ?? []), {
       headers: { "content-type": "application/json" },
@@ -68,6 +71,7 @@ async function start(options: Partial<ServerOptions> = {}): Promise<Harness> {
     base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     calls,
     failing,
+    missing,
     bodies,
   };
 }
@@ -427,4 +431,28 @@ test("feed: manual incidents give one escaped entry per update; a 404 means none
   assert.equal(feed.children.filter((c) => c.name === "entry").length >= 2, true);
   const api = await (await fetch(`${h.base}/api/manual-incidents`)).json();
   assert.equal(Array.isArray(api) && api.length, 1);
+});
+
+test("feed: a 404 of the manual incidents keeps the last successful list; an empty list clears it", async () => {
+  const h = await start({ cacheMs: 0 });
+  h.bodies["/manual-incidents"] = [
+    {
+      id: 9,
+      title: "Kept",
+      componentIds: [],
+      impact: "minor",
+      status: "investigating",
+      createdAt: NOW - 1000,
+      resolvedAt: null,
+      updates: [{ at: NOW - 1000, status: "investigating", message: "looking" }],
+    },
+  ];
+  assert.ok((await (await fetch(`${h.base}/feed.atom`)).text()).includes(":manual:9:0"));
+  h.missing.add("/manual-incidents");
+  assert.ok((await (await fetch(`${h.base}/feed.atom`)).text()).includes(":manual:9:0"));
+  h.missing.delete("/manual-incidents");
+  h.bodies["/manual-incidents"] = [];
+  assert.ok(!(await (await fetch(`${h.base}/feed.atom`)).text()).includes(":manual:9:0"));
+  h.missing.add("/manual-incidents");
+  assert.ok(!(await (await fetch(`${h.base}/feed.atom`)).text()).includes(":manual:9:0"));
 });

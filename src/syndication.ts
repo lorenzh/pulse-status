@@ -137,11 +137,14 @@ function isManualUpdate(value: unknown): boolean {
 }
 
 /**
- * Manual incidents of the cached answer. A 404 (an older api) means none; any other failure or
- * malformed answer gives undefined.
+ * Manual incidents of the cached answer. A 404 (an older api) keeps `previous`, the list of the
+ * last successful read; any other failure or malformed answer gives undefined.
  */
-function parseManualIncidents(answer: CachedAnswer): FeedManualIncident[] | undefined {
-  if (answer.status === 404) return [];
+function parseManualIncidents(
+  answer: CachedAnswer,
+  previous: FeedManualIncident[],
+): FeedManualIncident[] | undefined {
+  if (answer.status === 404) return previous;
   const list = jsonList(answer);
   if (list === undefined) return undefined;
   const out: FeedManualIncident[] = [];
@@ -212,6 +215,7 @@ async function serveFeed(
   res: ServerResponse,
   opts: SyndicationOptions,
   publicUrl: string,
+  lastManual: { list: FeedManualIncident[] },
 ): Promise<void> {
   const [checksAnswer, openAnswer, resolvedAnswer, componentsAnswer, manualAnswer] =
     await Promise.all([
@@ -222,7 +226,7 @@ async function serveFeed(
       opts.read("/api/manual-incidents"),
     ]);
   const checks = parseChecks(checksAnswer);
-  const manual = parseManualIncidents(manualAnswer);
+  const manual = parseManualIncidents(manualAnswer, lastManual.list);
   const open = parseIncidents(openAnswer);
   const resolved = parseIncidents(resolvedAnswer);
   const components = parseComponents(componentsAnswer);
@@ -236,6 +240,7 @@ async function serveFeed(
     unavailable(res);
     return;
   }
+  lastManual.list = manual;
   const xml = buildAtom({
     publicUrl,
     name: opts.name,
@@ -342,9 +347,11 @@ async function serveComponentBadge(
 export function createSyndication(
   opts: SyndicationOptions,
 ): (url: URL, res: ServerResponse) => Promise<boolean> {
+  // Kept across requests: a 404 from an older api must not clear what an earlier read returned.
+  const lastManual: { list: FeedManualIncident[] } = { list: [] };
   return async (url, res) => {
     if (url.pathname === "/feed.atom" && opts.publicUrl !== undefined) {
-      await serveFeed(res, opts, opts.publicUrl);
+      await serveFeed(res, opts, opts.publicUrl, lastManual);
       return true;
     }
     if (url.pathname.startsWith(COMPONENT_BADGE_PREFIX)) {
