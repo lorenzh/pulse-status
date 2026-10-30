@@ -88,3 +88,16 @@ test("every import of the served contract graph resolves to a served file", asyn
   assert.ok(seen.has("/pulse-contract/zod/index.js"));
   assert.ok(seen.size > 5);
 });
+
+test("serves the browser-safe kit modules and rewrites render.js to them", async () => {
+  const base = await start();
+  const render = await (await fetch(`${base}/render.js`)).text();
+  assert.match(render, /from "\/pulse-kit\/escape\.js"/);
+  assert.match(render, /from "\/pulse-kit\/format-duration\.js"/);
+  for (const file of ["escape.js", "format-duration.js"]) {
+    const r = await fetch(`${base}/pulse-kit/${file}`);
+    assert.equal(r.status, 200, file);
+    assert.doesNotMatch(await r.text(), /from "/, file);
+  }
+  assert.equal((await fetch(`${base}/pulse-kit/settings.js`)).status, 404);
+});

@@ -1,57 +1,61 @@
-import { createLogger, type LogLevel, parseLogLevel } from "./log.ts";
-import { createShutdown } from "./shutdown.ts";
+import { createLogger, readLogLevel, runService, StartupError } from "@lorenzh/pulse-kit";
 import { startFromEnv } from "./start.ts";
 
+const SHUTDOWN_TIMEOUT_MS = 5000;
 const EXIT_STARTUP = 2;
 const EXIT_RUNTIME = 1;
 
-function fatal(message: string, code: number): never {
-  console.error(`pulse-status: ${message.split("\n").join(" ")}`);
-  return process.exit(code);
-}
-
-// A bad level is reported below by startFromEnv; until then log at info.
-let level: LogLevel = "info";
+let level: ReturnType<typeof readLogLevel>;
 try {
-  level = parseLogLevel(process.env.PULSE_LOG_LEVEL);
+  level = readLogLevel(process.env);
 } catch (err) {
-  fatal(err instanceof Error ? err.message : String(err), EXIT_STARTUP);
+  const message = err instanceof StartupError ? err.message : String(err);
+  console.error(`pulse-status: ${message}`);
+  process.exit(EXIT_STARTUP);
 }
-const log = createLogger({
-  level,
-  now: Date.now,
-  stdout: (line) => console.log(line),
-  stderr: (line) => console.error(line),
-});
+const log = createLogger({ level });
 
-// Signal handlers come first, before config loading.
-const shutdown = createShutdown({
-  log,
-  exit: (code) => process.exit(code),
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
-  clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout | undefined),
-});
-process.on("SIGINT", () => shutdown.onSignal("SIGINT"));
-process.on("SIGTERM", () => shutdown.onSignal("SIGTERM"));
+let stopRunning: (() => Promise<void>) | undefined;
 
-try {
+// Listening and polling start inside `start`, so the signal handlers exist before config loading.
+async function start(): Promise<void> {
   const { server, port, apiUrl, pollMs, metrics, startPolling } = startFromEnv(
     process.env,
     undefined,
     log,
   );
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", (err) => {
+      reject(
+        new StartupError(`cannot listen on 0.0.0.0:${port} (PORT): ${err.message}`, {
+          setting: "PORT",
+          cause: err,
+        }),
+      );
+    });
+    server.listen(port, resolve);
+  });
   server.on("error", (err) => {
-    if (!server.listening) {
-      fatal(`cannot listen on 0.0.0.0:${port} (PORT): ${err.message}`, EXIT_STARTUP);
-    }
-    log("error", "server error", { error: err.message });
+    log.error("server error", { error: err.message });
     process.exit(EXIT_RUNTIME);
   });
-  server.listen(port, () => {
-    const stop = startPolling();
-    shutdown.attach({ server, setShuttingDown: metrics.setShuttingDown, stop });
-    log("info", "pulse-status listening", { port, apiUrl: new URL(apiUrl).origin, pollMs });
-  });
-} catch (err) {
-  fatal(err instanceof Error ? err.message : String(err), EXIT_STARTUP);
+  const stopPolling = startPolling();
+  stopRunning = () =>
+    new Promise<void>((resolve) => {
+      metrics.setShuttingDown();
+      stopPolling();
+      server.close(() => resolve());
+      server.closeIdleConnections();
+    });
+  log.info("pulse-status listening", { port, apiUrl: new URL(apiUrl).origin, pollMs });
 }
+
+await runService({
+  service: "status",
+  start,
+  stop: async () => {
+    await stopRunning?.();
+  },
+  timeoutMs: SHUTDOWN_TIMEOUT_MS,
+  log,
+});

@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { createLogger } from "@lorenzh/pulse-kit";
 import { createStatusServer } from "./server.ts";
 
 const servers: Server[] = [];
@@ -209,7 +210,12 @@ test("a forced 500 is generic and the detail goes to the log", async () => {
       apiUrl: "http://127.0.0.1:1",
       pollMs: 5000,
       logo,
-      log: (level, msg, fields) => logs.push({ level, msg, fields }),
+      log: createLogger({
+        write: (level, line) => {
+          const { msg, ...fields } = JSON.parse(line) as Record<string, unknown>;
+          logs.push({ level, msg: String(msg), fields });
+        },
+      }),
     }),
   );
   rmSync(logo);

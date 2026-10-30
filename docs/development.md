@@ -17,7 +17,7 @@ Node 24 or newer runs the TypeScript source directly (type stripping, no build s
 - `src/sections.ts` builds the HTML of all page sections before `public/client.js` shows them (browser module).
 - `src/server.ts` is the HTTP server: page, theme, logo, fonts, browser modules and the `/api/*` proxy.
 - `src/api-filter.ts` is the proxy path allow-list, the per-endpoint field allow-list that builds each served object, the URL and reason sanitizing, and the 7-day window of resolved incidents (pure functions). The proxy cache lives in `src/server.ts`.
-- `src/log.ts`, `src/metrics.ts`, `src/api-poll.ts` and `src/shutdown.ts` hold the JSON logger, health and metrics state, the background API poll and signal handling.
+- `src/metrics.ts` and `src/api-poll.ts` hold the health and metrics state and the background API poll. The JSON logger, signal handling and shutdown (`runService`), the ops endpoints, the env readers and `escapeHtml`/`formatDuration` come from `@lorenzh/pulse-kit`.
 - `src/settings.ts` parses `PULSE_STATUS_HIDE_DETAILS`, `PULSE_STATUS_CACHE_MS` and `PULSE_STATUS_UPSTREAM_TIMEOUT_MS`.
 - `public/page.css` and `public/theme-init.js` are the page style and the theme bootstrap script. The page has no inline script or style, because the CSP forbids them.
 - `src/theme-config.ts` loads and validates the theme file and generates the CSS.

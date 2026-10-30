@@ -67,3 +67,8 @@ test("an http PULSE_STATUS_LOGO prints one line and exits 2", async () => {
   const r = await run({ PORT: "0", PULSE_STATUS_LOGO: "http://x.test/l.png" });
   assertOneLine(r, /^pulse-status: PULSE_STATUS_LOGO: URL must use https$/);
 });
+
+test("an invalid PULSE_LOG_LEVEL prints one line and exits 2", async () => {
+  const r = await run({ PORT: "0", PULSE_LOG_LEVEL: "loud" });
+  assertOneLine(r, /^pulse-status: PULSE_LOG_LEVEL: must be one of debug, info, warn, error$/);
+});
