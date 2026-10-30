@@ -16,6 +16,7 @@ import {
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
+import { renderState } from "./ssr.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 
@@ -146,6 +147,9 @@ const tsModules: Record<string, string> = {
   "/theme.js": "theme.ts",
   "/sections.js": "sections.ts",
   "/components-view.js": "components-view.ts",
+  "/patch.js": "patch.ts",
+  "/bars.js": "bars.ts",
+  "/announce.js": "announce.ts",
 };
 
 // Runtime files of the contract package, served to the browser under /pulse-contract/.
@@ -384,16 +388,39 @@ export function createStatusServer(options: ServerOptions): Server {
   const log: Logger = options.log ?? createLogger({ write: () => {} });
   const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
 
-  const renderIndex = async (): Promise<string> =>
-    (await readFile(publicDir + "index.html", "utf8"))
+  /** Sections of the server-rendered view; empty strings when the render fails. */
+  const renderSections = async (): Promise<Record<string, string>> => {
+    try {
+      return await renderState({
+        read: (path) => cachedAnswer(path, new URL(path, "http://localhost"), ctx),
+        now: ctx.now,
+        showChecks: options.showChecks === true,
+      });
+    } catch (err) {
+      logFailure(log, "/", err);
+      return {};
+    }
+  };
+
+  const renderIndex = async (): Promise<string> => {
+    const sections = await renderSections();
+    // One pass, so text inside a rendered section is never read as a placeholder.
+    const values: Record<string, string> = {
+      ...sections,
+      title: escapeHtml(title),
+      wordmark: mark,
+      feedLink,
+      renderedLine: sections.rendered ?? "",
+      checksTitle: sections.checksTitle ?? "Checks",
+    };
+    return (await readFile(publicDir + "index.html", "utf8"))
       .replace(
         "<body>",
         () =>
           `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}" data-show-checks="${options.showChecks === true}">`,
       )
-      .replaceAll("{{title}}", () => escapeHtml(title))
-      .replace("{{wordmark}}", () => mark)
-      .replace("{{feedLink}}", () => feedLink);
+      .replace(/\{\{(\w+)\}\}/g, (_match, key: string) => values[key] ?? "");
+  };
 
   // Liveness never looks at the API or at shutdown.
   const ops = {

@@ -40,11 +40,11 @@ Logs come from pulse-kit. They are JSON lines (a field named `time`, `level` or 
 
 - A summary line at the top, worst state wins: "N check(s) down", else "N check(s) degraded", else "All systems operational", plus " · N incident(s) open" when incidents are open. Maintenance and checks without data do not count as problems. It always carries the words, never colour alone.
 - Every check as a row: state word (`up`, `degraded`, `down`, `unknown`, `maintenance`), name, target (URL or `host:port`) and a meta line with the latency of the newest result (and ` · objective N ms` when the check has one), `keyword "text"` for an HTTP check that has a keyword (in any state; the probe matches within the first 1 MiB of the body, and a 2xx answer without it is `down` with the reason `keyword "text" not found`), TLS "N days left", the maintenance note and the last reason. `degraded` means the check answered but slower than its objective. "N/M locations down" shows only when at least one active location is down. How locations combine into a state is described in the [quorum rule](https://github.com/lorenzh/pulse-api/blob/main/docs/concepts.md#quorum-and-incidents).
-- Under each check, 90 daily uptime bars (oldest first, today last) from `/api/uptime` and the 90-day total. A day is green at >= 99.9 %, amber at >= 95 %, red below and grey without data. The date and percentage show on hover and keyboard focus. If `/api/uptime` fails or lacks a check, that check shows no bars and no banner appears.
+- Under each check, 90 daily uptime bars (oldest first, today last) from `/api/uptime` and the 90-day total. A day is green at >= 99.9 %, amber at >= 95 %, red below and grey without data. The date and percentage show on hover and keyboard focus. Days are UTC days; a legend line says so. If `/api/uptime` fails or lacks a check, that check shows no bars and no banner appears.
 - Open incidents with check name, "since <time>" and reason, and below them the incidents resolved in the last 7 days (from `/api/incidents?status=resolved`) with resolve time, duration and reason. Only the newest ten are listed, followed by `and N more` when there are others. If that request fails the list is empty and no banner appears.
 - Upcoming maintenance windows (start in the future), with check, start, end and note, from `/api/maintenance`.
 - Durations of resolved incidents read `<1m`, `12m`, `2h 5m`, `3d 2h` (pulse-kit `formatDuration`). Before the pulse-kit move they read `<1 min`, `2 h 5 min`, `3 d 2 h`.
-- Times are relative ("3 min ago", "in 2 h") in a `<time datetime>` element. The exact local time shows on hover and keyboard focus.
+- Times are relative ("3 min ago", "in 2 h") in a `<time datetime>` element. The exact time, with its zone, shows on hover and as the accessible name.
 - A TLS check (`type: "tls"`) shows `host:port` instead of a URL and a `.cert-days` span with the days left on the certificate (`certificate expires in 5 days` while down, otherwise `N days left`).
 
 ## Components
@@ -122,3 +122,16 @@ The response shapes come from [pulse-contract](https://github.com/lorenzh/pulse-
 - Component state: an open incident (`investigating`, `identified`, `monitoring`) raises the state of each component it names to the worst of the check state and `minor` = `degraded`, `major` and `critical` = `down`; `none` and resolved incidents change nothing. Uptime numbers are unchanged. Component badges still show the state from pulse-api.
 - `/feed.atom` has one entry per update with the id `tag:<host>,2026:manual:<id>:<n>`; update `0` is the creation message. The feed answers `503` when the read fails with anything but `404`.
 - A `404` from `/manual-incidents` (an older pulse-api) is treated as "no manual incidents" without an error. A list from an earlier success is kept. Any other failure fails the refresh like the components read.
+
+## Keyboard and screen reader use
+
+- The 90 bars of a check or component are one tab stop (a group named like "Checkout API, 90-day uptime 99.9 %"). Inside it, Left and Right Arrow move by one day without wrapping, Home and End jump to the first and last day. Each day is read as "2026-10-30 UTC: 99.9 %".
+- The page updates in place while it polls, so focus, the chosen day and the scroll position stay where they are.
+- While keyboard focus is inside a check or component, the exact times in that entry (last ping, since, windows) show their full text with the zone. Times outside such entries (the "Last updated" line and the incident, maintenance and resolved rows) have no focusable element, so a keyboard-only sighted visitor cannot reveal their exact text. Pointer hover and screen readers have it.
+- Two hidden live regions announce changes. The polite one (`#live`) speaks the summary line only when its full text changes. The alert one (`#alert`) speaks when the API error appears or changes kind and is cleared on recovery. A poll without such a change writes nothing.
+
+## Without JavaScript
+
+The server renders the current state into the page: summary, checks or components, incidents and maintenance. A note says that the page does not refresh without JavaScript and when it was rendered. Without JavaScript all times are UTC and say so. With JavaScript, the first poll replaces the UTC text with the visitor's zone. The server reads the same cached answers as the `/api/*` proxy, so a warm cache sends nothing upstream. When the API cannot be read the page is still answered with `200` and shows the unavailable view.
+
+Measured on this implementation with 50 checks and 20 components listed (`PULSE_STATUS_SHOW_CHECKS=true`, warm cache, local API): p95 of a request to `/` about 17 ms, response about 1.2 MB (6,300 day bars). Without listed checks (components only) the page is a small fraction of that.

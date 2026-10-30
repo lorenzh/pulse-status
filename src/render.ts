@@ -52,7 +52,7 @@ export function formatRelative(then: number, now: number): string {
 export function renderTime(epochMs: number, env: TimeEnv): string {
   const exact = escapeHtml(env.formatExact(epochMs));
   return (
-    `<time class="time" datetime="${formatTime(epochMs)}" tabindex="0" data-exact="${exact}" title="${exact}">` +
+    `<time class="time" datetime="${formatTime(epochMs)}" data-exact="${exact}" title="${exact}" aria-label="${exact}">` +
     `${formatRelative(epochMs, env.now)}</time>`
   );
 }
@@ -62,7 +62,7 @@ function countWord(count: number, noun: string): string {
 }
 
 function summaryLine(status: string, text: string): string {
-  return `<p class="summary status-${status}" role="status">${escapeHtml(text)}</p>`;
+  return `<p class="summary status-${status}">${escapeHtml(text)}</p>`;
 }
 
 /** Healthy text only when something is up, or all checks are in maintenance. */
@@ -105,7 +105,7 @@ export function renderSummary(
   const items: readonly { state: string }[] = components.length > 0 ? components : checks;
   const noun = components.length > 0 ? "component" : "check";
   if (items.length === 0) {
-    return '<p class="summary status-none" role="status">No checks configured</p>';
+    return '<p class="summary status-none">No checks configured</p>';
   }
   const down = items.filter((item) => item.state === "down").length;
   const degraded = items.filter((item) => item.state === "degraded").length;
@@ -176,17 +176,31 @@ function formatPercent(uptime: number): string {
   return `${uptime.toFixed(1)} %`;
 }
 
-export function renderUptime(entry: Pick<ComponentUptime, "days" | "uptime">): string {
+/** Shown once above a list of entries with uptime bars. */
+export function renderUptimeLegend(): string {
+  return '<p class="legend">Days are UTC days. Bars: green 99.9 % or more, amber 95 % or more, red below, grey no data.</p>';
+}
+
+/**
+ * The bars are one tab stop: only the last day carries `tabindex="0"`. The browser module
+ * `bars.ts` moves the stop with the arrow keys.
+ */
+export function renderUptime(
+  entry: Pick<ComponentUptime, "days" | "uptime">,
+  name: string,
+): string {
   const groupLabel = entry.uptime === null ? "no data" : formatPercent(entry.uptime);
   const total = entry.uptime === null ? "no data" : `${groupLabel} uptime, 90 days`;
-  const bars = entry.days.map((day) => {
+  const lastIndex = entry.days.length - 1;
+  const bars = entry.days.map((day, index) => {
     const dayText = day.uptime === null ? "no data" : formatPercent(day.uptime);
-    const label = escapeHtml(`${day.date}: ${dayText}`);
-    return `<span class="bar ${uptimeClass(day.uptime)}" tabindex="0" title="${label}" aria-label="${label}" data-exact="${label}"></span>`;
+    const label = escapeHtml(`${day.date} UTC: ${dayText}`);
+    return `<span class="bar ${uptimeClass(day.uptime)}" role="img" data-key="day:${escapeHtml(day.date)}" tabindex="${index === lastIndex ? 0 : -1}" title="${label}" aria-label="${label}" data-exact="${label}"></span>`;
   });
+  const groupName = escapeHtml(`${name}, 90-day uptime ${groupLabel}`);
   return (
     `<div class="uptime">` +
-    `<div class="bars" role="group" aria-label="90-day uptime ${escapeHtml(groupLabel)}">${bars.join("")}</div>` +
+    `<div class="bars" role="group" aria-label="${groupName}" data-key="bars">${bars.join("")}</div>` +
     `<span class="uptime-total">${escapeHtml(total)}</span>` +
     `</div>`
   );
@@ -247,12 +261,12 @@ function renderCheck(
 ): string {
   const targetText = targetOf(check);
   return (
-    `<li class="check state-${check.state}">` +
+    `<li class="check state-${check.state}" data-key="check:${escapeHtml(check.id)}">` +
     `<div class="check-head"><span class="state">${check.state}</span>` +
     `<span class="name">${escapeHtml(check.name)}</span></div>` +
     (targetText === "" ? "" : `<div class="url">${escapeHtml(targetText)}</div>`) +
     renderMeta(check, env) +
-    (entry ? renderUptime(entry) : "") +
+    (entry ? renderUptime(entry, check.name) : "") +
     `</li>`
   );
 }
@@ -261,13 +275,14 @@ export function renderChecks(
   checks: ChecksResponse,
   uptime: UptimeResponse = [],
   env?: TimeEnv,
+  hasLegend = true,
 ): string {
   if (checks.length === 0) {
     return '<p class="empty">No checks configured.</p>';
   }
   const uptimeById = new Map(uptime.map((entry) => [entry.checkId, entry]));
   const items = checks.map((check) => renderCheck(check, uptimeById.get(check.id), env));
-  return `<ul class="checks">${items.join("")}</ul>`;
+  return `${hasLegend ? renderUptimeLegend() : ""}<ul class="checks">${items.join("")}</ul>`;
 }
 
 /** Check id to the text an incident or maintenance entry shows for it. */
@@ -294,7 +309,7 @@ export function renderIncidents(
   const names = checkNames(checks);
   const items = open.map(
     (incident) =>
-      `<li class="incident">` +
+      `<li class="incident" data-key="incident:${incident.id}">` +
       span("name", names.get(incident.checkId) ?? incident.checkId) +
       `<span class="when">since ${renderTime(incident.openedAt, env)}</span>` +
       reasonSpan(incident.reason) +
@@ -324,7 +339,7 @@ export function renderResolvedIncidents(
   const items = recent.slice(0, RESOLVED_LIMIT).map((incident) => {
     const resolvedAt = incident.resolvedAt ?? incident.openedAt;
     return (
-      `<li class="incident">` +
+      `<li class="incident" data-key="incident:${incident.id}">` +
       span("name", names.get(incident.checkId) ?? incident.checkId) +
       `<span class="when">resolved ${renderTime(resolvedAt, env)}</span>` +
       span("duration", formatDuration(resolvedAt - incident.openedAt)) +
@@ -337,7 +352,7 @@ export function renderResolvedIncidents(
   return `<ul class="incidents resolved">${items.join("")}</ul>${more}`;
 }
 
-function bannerText(error: PollerErrorKind, hasData: boolean): string {
+export function bannerText(error: PollerErrorKind, hasData: boolean): string {
   switch (error) {
     case "unreachable":
       return hasData
@@ -354,7 +369,7 @@ function bannerText(error: PollerErrorKind, hasData: boolean): string {
 
 export function renderBanner(error: PollerErrorKind | null, hasData = false): string {
   if (error === null) return "";
-  return `<div class="banner error" role="alert">${escapeHtml(bannerText(error, hasData))}</div>`;
+  return `<div class="banner error">${escapeHtml(bannerText(error, hasData))}</div>`;
 }
 
 function renderExactSpan(window: MaintenanceResponse[number], env: TimeEnv): string {
@@ -379,15 +394,19 @@ export function renderUpcomingMaintenance(
     return '<p class="empty">No upcoming maintenance.</p>';
   }
   const names = checkNames(checks);
-  const items = upcoming.map(
-    (window) =>
-      `<li class="maintenance-window">` +
-      span("name", names.get(window.checkId) ?? window.checkId) +
+  const items = upcoming.map((window) => {
+    const label = names.get(window.checkId) ?? window.checkId;
+    // Keyed by the shown label: a hidden check id never reaches the page.
+    const key = escapeHtml(`maintenance:${label}:${window.start}:${window.end}`);
+    return (
+      `<li class="maintenance-window" data-key="${key}">` +
+      span("name", label) +
       `<span class="when">${renderTime(window.start, env)}</span>` +
       renderExactSpan(window, env) +
       span("note", window.note) +
-      `</li>`,
-  );
+      `</li>`
+    );
+  });
   return `<ul class="maintenance">${items.join("")}</ul>`;
 }
 
@@ -411,15 +430,15 @@ function manualHead(incident: ManualIncident, names: ComponentNames): string {
     `<div class="manual-head">` +
     `<span class="manual-impact">${impact}</span>` +
     `<span class="manual-status">${status}</span>` +
-    `<span class="name">${escapeHtml(incident.title)}</span>` +
+    `<span class="name" id="manual-name-${incident.id}">${escapeHtml(incident.title)}</span>` +
     manualComponents(incident, names) +
     `</div>`
   );
 }
 
-function manualUpdate(update: ManualIncident["updates"][number], env: TimeEnv): string {
+function manualUpdate(id: number, update: ManualIncident["updates"][number], env: TimeEnv): string {
   return (
-    `<li class="manual-update">` +
+    `<li class="manual-update" data-key="manual-update:${id}:${update.at}">` +
     `<span class="manual-update-status">${escapeHtml(update.status)}</span> ` +
     `${renderTime(update.at, env)}` +
     `<p class="manual-message">${escapeHtml(update.message)}</p>` +
@@ -444,9 +463,11 @@ export function renderManualIncidents(
   const items = open.map((incident) => {
     const latest = sortedUpdates(incident).at(-1);
     return (
-      `<li class="manual-incident impact-${incident.impact}">` +
+      `<li class="manual-incident impact-${incident.impact}" data-key="manual:${incident.id}" aria-labelledby="manual-name-${incident.id}">` +
       manualHead(incident, names) +
-      (latest === undefined ? "" : `<ul class="manual-updates">${manualUpdate(latest, env)}</ul>`) +
+      (latest === undefined
+        ? ""
+        : `<ul class="manual-updates">${manualUpdate(incident.id, latest, env)}</ul>`) +
       `</li>`
     );
   });
@@ -469,10 +490,10 @@ export function renderResolvedManualIncidents(
   if (recent.length === 0) return "";
   const items = recent.map(
     (incident) =>
-      `<li class="manual-incident resolved impact-${incident.impact}">` +
+      `<li class="manual-incident resolved impact-${incident.impact}" data-key="manual:${incident.id}" aria-labelledby="manual-name-${incident.id}">` +
       manualHead(incident, names) +
       `<ul class="manual-updates">${sortedUpdates(incident)
-        .map((update) => manualUpdate(update, env))
+        .map((update) => manualUpdate(incident.id, update, env))
         .join("")}</ul></li>`,
   );
   return `<h3>Manual incidents resolved in the last 14 days</h3><ul class="manual-incidents">${items.join("")}</ul>`;

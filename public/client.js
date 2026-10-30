@@ -1,5 +1,8 @@
+import { announceError, announceSummary } from "/announce.js";
+import { bindBars } from "/bars.js";
+import { browserPatchEnv, patchHtml } from "/patch.js";
 import { createPoller } from "/poller.js";
-import { renderUpdated } from "/render.js";
+import { bannerText, renderUpdated } from "/render.js";
 import { buildSections, showSections } from "/sections.js";
 
 import { applyTheme, loadTheme, parseTheme, saveTheme } from "/theme.js";
@@ -30,8 +33,13 @@ const timeoutMs = Number(document.body.dataset.timeoutMs) || undefined;
 const showChecks = document.body.dataset.showChecks === "true";
 
 const exactFormat = new Intl.DateTimeFormat(undefined, {
-  dateStyle: "medium",
-  timeStyle: "medium",
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+  second: "2-digit",
+  timeZoneName: "short",
 });
 const dayFormat = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
 const clockFormat = new Intl.DateTimeFormat(undefined, {
@@ -39,24 +47,57 @@ const clockFormat = new Intl.DateTimeFormat(undefined, {
   minute: "2-digit",
   hourCycle: "h23",
 });
+const clockZoneFormat = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+  timeZoneName: "short",
+});
 const dayKey = (date) => `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-function dayAndClock(date) {
-  return `${dayFormat.format(date)}, ${clockFormat.format(date)}`;
+function dayAndClock(date, clock) {
+  return `${dayFormat.format(date)}, ${clock.format(date)}`;
 }
 const formatExactSpan = (startMs, endMs) => {
   const start = new Date(startMs);
   const end = new Date(endMs);
   const isSameDay = dayKey(start) === dayKey(end);
   return {
-    start: dayAndClock(start),
-    end: isSameDay ? clockFormat.format(end) : dayAndClock(end),
+    start: dayAndClock(start, clockFormat),
+    // The zone is named once, at the end of the span.
+    end: isSameDay ? clockZoneFormat.format(end) : dayAndClock(end, clockZoneFormat),
     isSameDay,
   };
 };
 const formatExact = (epochMs) => exactFormat.format(new Date(epochMs));
 
+const patchEnv = browserPatchEnv();
+
 function show(id, html) {
-  document.getElementById(id).innerHTML = html;
+  patchHtml(document.getElementById(id), html, patchEnv);
+}
+
+bindBars(document);
+
+const liveRegion = document.getElementById("live");
+const alertRegion = document.getElementById("alert");
+// The server rendered the first state: only a change from it is announced.
+let lastSummary = document.getElementById("summary").textContent.trim();
+let lastError = null;
+
+function announce(state) {
+  const summary = announceSummary(
+    lastSummary,
+    document.getElementById("summary").textContent.trim(),
+  );
+  if (summary !== undefined) {
+    liveRegion.textContent = summary;
+    lastSummary = summary;
+  }
+  const alert = announceError(lastError, state.error, (kind) =>
+    bannerText(kind, state.updatedAt !== null),
+  );
+  if (alert !== undefined) alertRegion.textContent = alert;
+  lastError = state.error;
 }
 
 const TICK_MS = 30_000;
@@ -76,6 +117,7 @@ function draw(state) {
   // Build every section first: a throwing renderer leaves the page as it was.
   const sections = buildSections(state, makeEnv(), undefined, { showChecks });
   showSections(sections, show);
+  announce(state);
   lastState = state;
 }
 
