@@ -655,3 +655,20 @@ test("summary: a version error replaces every other summary", () => {
     assert.doesNotMatch(html, /incident|down|degraded|No checks/);
   }
 });
+
+test("non-default method and expected status render escaped; defaults render nothing", () => {
+  const html = renderChecks([{ ...base, method: "POST", expectedStatus: [200, "300-304"] }]);
+  assert.match(html, /<span class="method">POST<\/span>/);
+  assert.match(html, /<span class="expected-status">expects 200, 300-304<\/span>/);
+  const plain = renderChecks([base]);
+  assert.doesNotMatch(plain, /class="method"|expected-status/);
+  const get = renderChecks([{ ...base, method: "GET" }]);
+  assert.doesNotMatch(get, /class="method"/);
+});
+
+test("request secrets in an upstream payload are not rendered", () => {
+  const html = renderChecks([
+    { ...base, headers: { "X-Key": "sentinel-secret" }, body: "sentinel-secret" },
+  ] as CheckWithState[]);
+  assert.doesNotMatch(html, /sentinel-secret/);
+});

@@ -95,3 +95,44 @@ test("incidents, maintenance and uptime pass their validators", () => {
   );
   assert.equal(validateUptimeResponse(uptime).ok, true);
 });
+
+const SENTINEL = "sentinel-secret-7f3a";
+const requestCheck = {
+  ...base,
+  id: "r",
+  type: "http",
+  url: "https://x.test",
+  method: "POST",
+  expectedStatus: [200, "300-304"],
+  headers: { Authorization: { env: "SVC_TOKEN_NAME" }, "X-Key": SENTINEL },
+  body: `{"token":"${SENTINEL}"}`,
+  jsonAssert: [{ pointer: "/status", equals: SENTINEL }],
+};
+
+test("method and expectedStatus pass only when details are shown", () => {
+  const shown = filterApiBody("/api/checks", [requestCheck], false);
+  assert.ok(Array.isArray(shown));
+  assert.equal(shown[0].method, "POST");
+  assert.deepEqual(shown[0].expectedStatus, [200, "300-304"]);
+  const hidden = filterApiBody("/api/checks", [requestCheck], true);
+  assert.ok(Array.isArray(hidden));
+  assert.equal("method" in hidden[0], false);
+  assert.equal("expectedStatus" in hidden[0], false);
+});
+
+test("headers, body, jsonAssert and env names never pass", () => {
+  for (const isHidden of [true, false]) {
+    const out = JSON.stringify(filterApiBody("/api/checks", [requestCheck], isHidden));
+    for (const word of [SENTINEL, "SVC_TOKEN_NAME", "headers", "body", "jsonAssert"]) {
+      assert.ok(!out.includes(word), `${word} hidden=${isHidden}`);
+    }
+  }
+});
+
+test("default method and expectedStatus are not served", () => {
+  const check = { ...requestCheck, method: "GET", expectedStatus: ["200-299"] };
+  const out = filterApiBody("/api/checks", [check], false);
+  assert.ok(Array.isArray(out));
+  assert.equal("method" in out[0], false);
+  assert.equal("expectedStatus" in out[0], false);
+});
