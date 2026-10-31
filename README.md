@@ -38,6 +38,12 @@ docker build --tag pulse-status:local .
 docker run --rm -p 8080:8080 -e PULSE_API_URL=http://host.docker.internal:3000 pulse-status:local
 ```
 
+Released images are on `ghcr.io/lorenzh/pulse-status` for linux/amd64 and linux/arm64, with the tags `X.Y.Z`, `X.Y` and `X` (no `latest`). Pin a version by digest in a setup. See [Releasing](docs/development.md#releasing).
+
+```sh
+docker pull ghcr.io/lorenzh/pulse-status:0.1.0
+```
+
 pulse-api's repository has a Compose file that starts the whole stack with `docker compose up`.
 
 ## Documentation
