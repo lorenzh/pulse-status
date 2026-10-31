@@ -10,7 +10,7 @@ pulse-status keeps no state on disk. It has no database and no files to back up.
 - It does not log requests. A failed request answers `500` `{"error":"internal error"}`; the error and stack go to the log.
 - Start pulse-api first. The page still starts without it and shows an error banner until the API answers.
 - To upgrade, stop the server, update the code or image, and start it again. Settings are read only at start, so restart after any change.
-- On `SIGINT` or `SIGTERM` the server stops accepting connections, closes idle ones, stops polling and exits 0. Open requests get 5 seconds; after that the connections are closed, a `warn` line is logged and it still exits 0. Handlers are registered before any setting is read.
+- On `SIGINT` or `SIGTERM` the server stops accepting connections, closes idle ones, stops polling and exits 0. Open requests get 5 seconds; after that the connections are closed, a `warn` line is logged and it exits 1. Handlers are registered before any setting is read.
 - In Docker, `HEALTHCHECK` fetches `GET /healthz` (liveness) every 30 seconds.
 
 ## Health and metrics

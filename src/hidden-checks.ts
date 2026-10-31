@@ -1,3 +1,4 @@
+import { isRecord } from "@lorenzh/pulse-kit";
 import { HIDDEN_CHECK_KEY } from "./components-view.ts";
 
 /** What hidden mode needs from one upstream component: its id and member checks, in order. */
@@ -11,10 +12,6 @@ export type HiddenKeys = ReadonlyMap<string, string>;
 
 type Fields = Record<string, unknown>;
 
-function isObject(value: unknown): value is Fields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item: unknown) => typeof item === "string");
 }
@@ -24,7 +21,7 @@ export function parseComponentsSnapshot(body: unknown): SnapshotComponent[] | un
   if (!Array.isArray(body)) return undefined;
   const out: SnapshotComponent[] = [];
   for (const item of body) {
-    if (!isObject(item) || typeof item.id !== "string" || !isStringArray(item.checkIds)) {
+    if (!isRecord(item) || typeof item.id !== "string" || !isStringArray(item.checkIds)) {
       return undefined;
     }
     out.push({ id: item.id, checkIds: item.checkIds });
@@ -37,7 +34,7 @@ export function parseActiveCheckIds(body: unknown): Set<string> | undefined {
   if (!Array.isArray(body)) return undefined;
   const ids = new Set<string>();
   for (const item of body) {
-    if (!isObject(item) || typeof item.id !== "string") return undefined;
+    if (!isRecord(item) || typeof item.id !== "string") return undefined;
     ids.add(item.id);
   }
   return ids;
@@ -85,7 +82,7 @@ export function needsActiveChecks(pathname: string): boolean {
 function rekeyEntries(body: unknown[], keys: HiddenKeys): Fields[] {
   const out: Fields[] = [];
   for (const item of body) {
-    if (!isObject(item) || typeof item.checkId !== "string") continue;
+    if (!isRecord(item) || typeof item.checkId !== "string") continue;
     const key = keys.get(item.checkId);
     if (key !== undefined) out.push({ ...item, checkId: key });
   }
@@ -95,7 +92,7 @@ function rekeyEntries(body: unknown[], keys: HiddenKeys): Fields[] {
 /** Replaces `checkIds` with the distinct keys of the members, in order of first appearance. */
 function rekeyComponents(body: unknown[], keys: HiddenKeys): unknown[] {
   return body.map((item) => {
-    if (!isObject(item) || !isStringArray(item.checkIds)) return item;
+    if (!isRecord(item) || !isStringArray(item.checkIds)) return item;
     const checkIds: string[] = [];
     for (const id of item.checkIds) {
       const key = keys.get(id);

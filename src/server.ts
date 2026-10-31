@@ -10,6 +10,7 @@ import {
   escapeHtml,
   handleOps,
   type Logger,
+  MAX_TIMER_DELAY_MS,
   type Readiness,
   sendJson,
 } from "@lorenzh/pulse-kit";
@@ -71,6 +72,8 @@ export const DEFAULT_CACHE_MS = 2000;
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
 /** The browser waits this much longer than the proxy, so the proxy's 502 arrives first. */
 export const BROWSER_TIMEOUT_MARGIN_MS = 2000;
+// The page waits this plus the margin, and that sum must fit a browser timer.
+export const MAX_UPSTREAM_TIMEOUT_MS = MAX_TIMER_DELAY_MS - BROWSER_TIMEOUT_MARGIN_MS;
 
 interface ProxyAnswer {
   status: number;
@@ -109,9 +112,10 @@ interface RawDep {
   entry: CacheEntry;
 }
 
-function checkMs(name: string, value: number, min: number): number {
-  if (!Number.isFinite(value) || value < min) {
-    throw new Error(`${name}: must be a number >= ${min}`);
+function checkMs(name: string, value: number, min: number, max?: number): number {
+  if (!Number.isFinite(value) || value < min || (max !== undefined && value > max)) {
+    const rule = max === undefined ? `>= ${min}` : `from ${min} to ${max}`;
+    throw new Error(`${name}: must be a number ${rule}`);
   }
   return value;
 }
@@ -243,7 +247,7 @@ async function readContractModule(pathname: string): Promise<string | undefined>
 
 // The browser-safe modules of pulse-kit (they import nothing), served under /pulse-kit/.
 const kitDir = fileURLToPath(new URL("./", import.meta.resolve("@lorenzh/pulse-kit/escape")));
-const kitModules = new Set(["escape.js", "format-duration.js"]);
+const kitModules = new Set(["escape.js", "format-duration.js", "is-record.js"]);
 
 /** The source of a browser-safe kit module under `/pulse-kit/`, else undefined. */
 async function readKitModule(pathname: string): Promise<string | undefined> {
@@ -556,6 +560,7 @@ export function createStatusServer(options: ServerOptions): Server {
       "PULSE_STATUS_UPSTREAM_TIMEOUT_MS",
       options.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS,
       1,
+      MAX_UPSTREAM_TIMEOUT_MS,
     ),
     now: options.now ?? Date.now,
     cache: new Map(),

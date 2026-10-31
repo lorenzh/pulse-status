@@ -74,7 +74,7 @@ test("invalid PULSE_STATUS_CACHE_MS and PULSE_STATUS_UPSTREAM_TIMEOUT_MS throw",
 test("POLL_MS below 1000 fails startup, 1000 is accepted", () => {
   assert.throws(
     () => startFromEnv({ POLL_MS: "999" }),
-    /^StartupError: POLL_MS: must be an integer >= 1000$/,
+    /^StartupError: POLL_MS: must be an integer from 1000 to 2147483647$/,
   );
   assert.throws(() => startFromEnv({ POLL_MS: "1" }), /POLL_MS/);
   assert.equal(startFromEnv({ POLL_MS: "1000" }).pollMs, 1000);
