@@ -13,6 +13,7 @@ import {
   type Readiness,
   sendJson,
 } from "@lorenzh/pulse-kit";
+import { type AnswerEntry, answerKey, cachedAnswerFor } from "./answer-cache.ts";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
 import {
   hiddenCheckKeys,
@@ -45,7 +46,10 @@ export interface ServerOptions {
   hideDetails?: boolean | undefined;
   /** List member checks under each component (PULSE_STATUS_SHOW_CHECKS), default false. */
   showChecks?: boolean | undefined;
-  /** How long an upstream read, errors included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
+  /**
+   * How long an upstream read, errors included, is reused (PULSE_STATUS_CACHE_MS); 0 = off.
+   * It covers both caches: the raw reads and the filtered answers built from them.
+   */
   cacheMs?: number;
   /** Time limit for one upstream request, headers and body (PULSE_STATUS_UPSTREAM_TIMEOUT_MS). */
   upstreamTimeoutMs?: number;
@@ -84,6 +88,14 @@ interface ProxyContext {
   timeoutMs: number;
   now: () => number;
   cache: Map<string, CacheEntry>;
+  /** Finished answers per settings, path and query; never module-level. */
+  answers: Map<string, AnswerEntry<ProxyAnswer, RawDep>>;
+}
+
+/** One raw cache entry an answer was built from, by key and object identity. */
+interface RawDep {
+  key: string;
+  entry: CacheEntry;
 }
 
 function checkMs(name: string, value: number, min: number): number {
@@ -314,13 +326,19 @@ async function fetchRaw(path: string, ctx: ProxyContext): Promise<RawRead> {
 
 const INVALID_RESPONSE = { error: "invalid API response" };
 
-/** Single flight per upstream path: one call per path per cache period, errors included. */
-function cachedRaw(path: string, ctx: ProxyContext): Promise<RawRead> {
-  if (ctx.cacheMs === 0) return fetchRaw(path, ctx);
-  const key = `raw:${path}`;
+const rawKey = (path: string): string => `raw:${path}`;
+
+/**
+ * Single flight per upstream path: one call per path per cache period, errors included.
+ * Returns the entry, so an answer can record what it was built from. With the cache off the
+ * entry is never stored.
+ */
+function cachedRaw(path: string, ctx: ProxyContext): CacheEntry {
+  if (ctx.cacheMs === 0) return { read: fetchRaw(path, ctx), expiresAt: null };
+  const key = rawKey(path);
   const entry = ctx.cache.get(key);
   if (entry !== undefined && (entry.expiresAt === null || ctx.now() < entry.expiresAt)) {
-    return entry.read;
+    return entry;
   }
   const fresh: CacheEntry = {
     read: fetchRaw(path, ctx).finally(() => {
@@ -329,21 +347,36 @@ function cachedRaw(path: string, ctx: ProxyContext): Promise<RawRead> {
     expiresAt: null,
   };
   ctx.cache.set(key, fresh);
-  return fresh.read;
+  return fresh;
 }
 
 type RawReader = (path: string) => Promise<RawRead>;
 
-/** Reads each upstream path at most once per served answer, also with the cache off. */
-function rawReader(ctx: ProxyContext): RawReader {
-  const reads = new Map<string, Promise<RawRead>>();
-  return (path) => {
-    const known = reads.get(path);
-    if (known !== undefined) return known;
-    const read = cachedRaw(path, ctx);
-    reads.set(path, read);
-    return read;
+/**
+ * Reads each upstream path at most once per served answer, also with the cache off.
+ * `deps` lists the raw entries of the paths actually read.
+ */
+function rawReader(ctx: ProxyContext): { read: RawReader; deps: () => RawDep[] } {
+  const entries = new Map<string, CacheEntry>();
+  const read: RawReader = (path) => {
+    const known = entries.get(path);
+    if (known !== undefined) return known.read;
+    const entry = cachedRaw(path, ctx);
+    entries.set(path, entry);
+    return entry.read;
   };
+  const deps = (): RawDep[] =>
+    Array.from(entries, ([path, entry]) => ({ key: rawKey(path), entry }));
+  return { read, deps };
+}
+
+/** Whether a raw entry is still the current, finished and unexpired one for its key. */
+function isRawCurrent(dep: RawDep, now: number, ctx: ProxyContext): boolean {
+  return (
+    ctx.cache.get(dep.key) === dep.entry &&
+    dep.entry.expiresAt !== null &&
+    now < dep.entry.expiresAt
+  );
 }
 
 /** A snapshot read failed: 502 with the generic body of its failure kind, never the data. */
@@ -382,9 +415,8 @@ async function hiddenAnswer(
     : answer(200, hidden, wireHeader);
 }
 
-/** The served answer of one allow-listed path, derived from the raw reads on each request. */
-async function proxyAnswer(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
-  const read = rawReader(ctx);
+/** Builds the served answer of one allow-listed path from the raw reads. */
+async function buildAnswer(url: URL, ctx: ProxyContext, read: RawReader): Promise<ProxyAnswer> {
   const ownPath = url.pathname.slice("/api".length) + url.search;
   // Both reads start together; a failed own read wins over a failed snapshot read.
   const ownRead = read(ownPath);
@@ -394,14 +426,42 @@ async function proxyAnswer(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
   if (!own.ok) return own.answer;
   let body = filterApiBody(url.pathname, own.value, ctx.isHidden, ctx.hasChecks);
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
+    // The cutoff uses the build time; the answer keeps it for at most the life of its raw entry.
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
   }
   if (componentsRead === undefined) return answer(200, body, own.wireHeader);
   return hiddenAnswer(url.pathname, body, own.wireHeader, await componentsRead, read);
 }
 
-function cachedAnswer(path: string, ctx: ProxyContext): Promise<ProxyAnswer> {
-  return proxyAnswer(new URL(path, "http://localhost"), ctx);
+async function buildAnswerWithDeps(
+  url: URL,
+  ctx: ProxyContext,
+): Promise<{ answer: ProxyAnswer; deps: RawDep[] }> {
+  const reader = rawReader(ctx);
+  const result = await buildAnswer(url, ctx, reader.read);
+  return { answer: result, deps: reader.deps() };
+}
+
+/**
+ * The served answer of one allow-listed path. It is reused while every raw entry it was built
+ * from is still current; with the cache off it is built on each call.
+ */
+async function proxyAnswer(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
+  if (ctx.cacheMs === 0) return (await buildAnswerWithDeps(url, ctx)).answer;
+  return cachedAnswerFor(ctx.answers, answerKey(ctx, url.pathname, url.search), {
+    build: () => buildAnswerWithDeps(url, ctx),
+    isValid: (dep, now) => isRawCurrent(dep, now, ctx),
+    now: ctx.now,
+  });
+}
+
+async function cachedAnswer(path: string, ctx: ProxyContext): Promise<ProxyAnswer> {
+  const url = new URL(path, "http://localhost");
+  // Only allow-listed paths get an entry, so the map stays bounded for every caller.
+  if (!isAllowedApiPath(url.pathname, url.search)) {
+    return (await buildAnswerWithDeps(url, ctx)).answer;
+  }
+  return proxyAnswer(url, ctx);
 }
 
 async function proxyApi(
@@ -464,6 +524,7 @@ export function createStatusServer(options: ServerOptions): Server {
     ),
     now: options.now ?? Date.now,
     cache: new Map(),
+    answers: new Map(),
   };
   let apiBase = options.apiUrl;
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);

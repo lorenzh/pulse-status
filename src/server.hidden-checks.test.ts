@@ -140,15 +140,19 @@ interface Harness {
   bodies: Record<string, unknown>;
   /** Upstream paths that answer this raw status and body instead. */
   broken: Map<string, { status: number; body: string }>;
+  /** Upstream paths whose answer waits for this promise. */
+  holds: Map<string, Promise<void>>;
 }
 
 async function start(options: Partial<ServerOptions> = {}, hasComponents = true): Promise<Harness> {
   const calls: string[] = [];
   const bodies = fixture(hasComponents);
   const broken = new Map<string, { status: number; body: string }>();
+  const holds = new Map<string, Promise<void>>();
   const doFetch = (async (input: string) => {
     const path = String(input).replace("http://api.test", "");
     calls.push(path);
+    await holds.get(path);
     const odd = broken.get(path);
     if (odd !== undefined)
       return new Response(odd.body, { status: odd.status, headers: JSON_HEADERS });
@@ -170,6 +174,7 @@ async function start(options: Partial<ServerOptions> = {}, hasComponents = true)
     calls,
     bodies,
     broken,
+    holds,
   };
 }
 
@@ -407,3 +412,104 @@ test("cache off: one components answer reads components once", async () => {
   assert.equal(status, 200);
   assert.deepEqual(calls, ["/components"]);
 });
+
+interface OpenIncident {
+  id: number;
+  checkId: string;
+}
+
+async function openIncidents(h: Harness): Promise<OpenIncident[]> {
+  return JSON.parse((await get(h.base, "/api/incidents?status=open")).body) as OpenIncident[];
+}
+
+const countOf = (h: Harness, path: string): number => h.calls.filter((c) => c === path).length;
+
+test("answer cache: a changed components read rebuilds an answer whose own read is cached", async () => {
+  let clock = 0;
+  const h = await start({ cacheMs: 2000, now: () => clock });
+  h.bodies["/components"] = [];
+  await get(h.base, "/api/components");
+  clock = 1500;
+  const shown = await openIncidents(h);
+  assert.ok(
+    shown.some((i) => i.checkId === "sentinel-id"),
+    "ids are shown by design",
+  );
+  // The own read is valid until 3500; the components read expired at 2000.
+  clock = 2500;
+  h.bodies["/components"] = components;
+  const body = (await get(h.base, "/api/incidents?status=open")).body;
+  assertAbsent(body, ["sentinel-id", "SENTINEL-NAME"], "open incidents");
+  assert.equal(countOf(h, "/incidents?status=open"), 1);
+});
+
+test("answer cache: a changed checks read rebuilds the answer", async () => {
+  let clock = 0;
+  const h = await start({ cacheMs: 2000, now: () => clock });
+  const looseId = 2;
+  await get(h.base, "/api/components");
+  clock = 1000;
+  await get(h.base, "/api/checks");
+  clock = 2000;
+  await get(h.base, "/api/components");
+  clock = 2500;
+  const before = await openIncidents(h);
+  assert.equal(before.find((i) => i.id === looseId)?.checkId, "service");
+  h.bodies["/checks"] = (h.bodies["/checks"] as Array<{ id: string }>).filter(
+    (c) => c.id !== "sentinel-loose",
+  );
+  clock = 3000;
+  await get(h.base, "/api/checks");
+  const after = await openIncidents(h);
+  assert.equal(
+    after.some((i) => i.id === looseId),
+    false,
+  );
+  assert.equal(countOf(h, "/incidents?status=open"), 1);
+});
+
+test("answer cache: an answer built from a replaced components read is not reused", async () => {
+  let clock = 0;
+  const h = await start({ cacheMs: 2000, now: () => clock });
+  // db (incident 3) is in shop and api in C1, only in api in C2.
+  const dbId = 3;
+  const c2 = [
+    { ...components[0], checkIds: ["sentinel-id"] },
+    { ...components[1], checkIds: ["db", "dns"] },
+  ];
+  await get(h.base, "/api/components");
+  let release: () => void = () => {};
+  h.holds.set(
+    "/checks",
+    new Promise<void>((r) => {
+      release = r;
+    }),
+  );
+  clock = 1500;
+  const x = openIncidents(h);
+  while (!h.calls.includes("/checks")) await new Promise((r) => setTimeout(r, 0));
+  clock = 2500;
+  h.bodies["/components"] = c2;
+  await get(h.base, "/api/components");
+  release();
+  assert.equal((await x).find((i) => i.id === dbId)?.checkId, "components:shop+api");
+  const next = await openIncidents(h);
+  assert.equal(next.find((i) => i.id === dbId)?.checkId, "components:api");
+  assert.equal(countOf(h, "/incidents?status=open"), 1);
+});
+
+for (const isShownFirst of [true, false]) {
+  test(`answer cache (regression guard): settings never mix (shown first: ${isShownFirst})`, async () => {
+    const hidden = await start({ cacheMs: 2000 });
+    const shown = await start({ cacheMs: 2000, showChecks: true });
+    const order = isShownFirst ? [shown, hidden] : [hidden, shown];
+    for (const h of order) {
+      for (const path of ALLOWED_API_PATHS) {
+        const { body } = await get(h.base, path);
+        if (h === hidden) assertAbsent(body, ["sentinel-id", "SENTINEL-NAME"], path);
+      }
+    }
+    const shownChecks = (await get(shown.base, "/api/checks")).body;
+    assert.ok(shownChecks.includes("SENTINEL-NAME"), "shown instance shows names");
+  });
+}
