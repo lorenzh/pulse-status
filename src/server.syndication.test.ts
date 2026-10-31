@@ -649,7 +649,28 @@ const malformedManual: readonly [string, unknown][] = [
   ],
   ["no updates", { ...manual("major", "investigating", null), updates: [] }],
   ["resolved without resolvedAt", manual("major", "resolved", null)],
+  ["a null update", { ...manual("major", "investigating", null), updates: [null] }],
 ];
+
+const malformedManualLists: readonly [string, unknown[]][] = [
+  ["a null item", [null]],
+  ["an array item", [[]]],
+  ["a number item", [42]],
+];
+
+for (const [name, list] of malformedManualLists) {
+  test(`component badge and feed: a manual incident list with ${name} is unavailable`, async () => {
+    const h = await startWithComponents({ cacheMs: 0 });
+    h.bodies["/components"] = [{ ...components[0], state: "up" }];
+    h.bodies["/manual-incidents"] = list;
+    for (const path of ["/badge/component/shop.svg", "/feed.atom"]) {
+      const res = await fetch(`${h.base}${path}`);
+      assert.equal(res.status, 503, path);
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      assert.equal(await res.text(), "unavailable");
+    }
+  });
+}
 
 for (const [name, incident] of malformedManual) {
   test(`component badge: a manual incident with ${name} is unavailable`, async () => {

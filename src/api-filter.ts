@@ -230,9 +230,10 @@ function cleanManualIncident(incident: Fields): Fields {
     "resolvedAt",
   ]);
   if (Array.isArray(incident.updates)) {
-    out.updates = incident.updates
-      .filter(isObject)
-      .map((update) => pick(update, MANUAL_UPDATE_FIELDS));
+    // A malformed update stays as null, so the list stays malformed for its readers.
+    out.updates = incident.updates.map((update: unknown) =>
+      isObject(update) ? pick(update, MANUAL_UPDATE_FIELDS) : null,
+    );
   }
   return out;
 }
@@ -256,6 +257,10 @@ export function filterApiBody(pathname: string, body: unknown, isHidden: boolean
   if (!Array.isArray(body)) return body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;
+  if (pathname === "/api/manual-incidents") {
+    // A malformed incident stays as null, so the badge and feed see a malformed list (spec §8).
+    return body.map((item: unknown) => (isObject(item) ? clean(item, isHidden) : null));
+  }
   return body.filter(isObject).map((item) => clean(item, isHidden));
 }
 
