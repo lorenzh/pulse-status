@@ -21,7 +21,7 @@ The process prints `pulse-status: <message>` and exits with code 2.
 | `cannot listen on <host>:<port> (PORT): <reason>`                           | The port is in use (`EADDRINUSE`) or not allowed (`EACCES`)                                                                              | Set another `PORT`                                          |
 | `PULSE_STATUS_LOGO: invalid URL <url>`                                      | The `https://` value is not a valid URL                                                                                                  | Fix the URL                                                 |
 | `PULSE_STATUS_LOGO: URL must use https`                                     | The logo URL starts with `http://`                                                                                                       | Use an `https://` URL or a local file                       |
-| `POLL_MS: must be an integer >= 1000`                                       | `POLL_MS` is below 1000 or not an integer                                                                                                | Use 1000 or more                                            |
+| `POLL_MS: must be an integer from 1000 to 2147483647`                       | `POLL_MS` is below 1000, above 2147483647 or not an integer                                                                              | Use an integer from 1000 to 2147483647                      |
 
 
 ## The page shows "Cannot reach the API"
