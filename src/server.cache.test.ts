@@ -51,7 +51,8 @@ test("20 parallel requests share one upstream call; a new one after the TTL", as
   clock += 2000;
   const res = await fetch(`${base}/api/checks`);
   assert.equal(calls.length, 2);
-  assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.equal(res.headers.get("cache-control"), "no-cache");
+  assert.match(res.headers.get("etag") ?? "", /^"[A-Za-z0-9_-]{27}"$/);
 });
 
 test("each path and query is one cache entry; a new call per path after the TTL", async () => {
@@ -373,4 +374,123 @@ test("answer cache (regression guard): a path that is not allowed makes no upstr
   const res = await fetch(`${base}/api/incidents?status=resolved&x=1`);
   assert.equal(res.status, 404);
   assert.equal(calls, 0);
+});
+
+const TAG_FORM = /^"[A-Za-z0-9_-]{27}"$/;
+const withTag = (tag: string): RequestInit => ({ headers: { "if-none-match": tag } });
+const WIRE = { ...JSON_HEADERS, "x-pulse-contract": "1" };
+
+test("/api/checks: no-cache and a tag; the matching If-None-Match gives 304 with the wire header", async () => {
+  const base = await start(
+    { showChecks: true },
+    async () => new Response('[{"id":"a"}]', { headers: WIRE }),
+  );
+  const first = await fetch(`${base}/api/checks`);
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get("cache-control"), "no-cache");
+  const tag = first.headers.get("etag") ?? "";
+  assert.match(tag, TAG_FORM);
+  for (const header of [tag, `W/${tag}`, `"nope", ${tag}`, "*"]) {
+    for (const method of ["GET", "HEAD"]) {
+      const again = await fetch(`${base}/api/checks`, { method, ...withTag(header) });
+      assert.equal(again.status, 304, `${method} ${header}`);
+      assert.equal(await again.text(), "");
+      assert.equal(again.headers.get("etag"), tag);
+      assert.equal(again.headers.get("cache-control"), "no-cache");
+      assert.equal(again.headers.get("x-pulse-contract"), "1");
+      assert.equal(again.headers.get("content-type"), null);
+    }
+  }
+  const miss = await fetch(`${base}/api/checks`, withTag('"nope"'));
+  assert.equal(miss.status, 200);
+  assert.equal(miss.headers.get("etag"), tag);
+  assert.deepEqual(await miss.json(), [{ id: "a" }]);
+});
+
+test("/api/*: one build is one tag; two requests in the period share one upstream call", async () => {
+  let calls = 0;
+  const base = await start({ cacheMs: 2000, now: () => 1000, showChecks: true }, async () => {
+    calls++;
+    return ok([{ id: "a" }]);
+  });
+  const a = (await fetch(`${base}/api/checks`)).headers.get("etag");
+  const b = (await fetch(`${base}/api/checks`)).headers.get("etag");
+  assert.match(a ?? "", TAG_FORM);
+  assert.equal(a, b);
+  assert.equal(calls, 1);
+});
+
+const UNTAGGED: { name: string; upstream: () => Promise<Response>; status: number }[] = [
+  {
+    name: "an upstream 500",
+    upstream: async () => new Response('{"secret":1}', { status: 500, headers: JSON_HEADERS }),
+    status: 500,
+  },
+  {
+    name: "an unreachable api (502)",
+    upstream: async () => {
+      throw new Error("down");
+    },
+    status: 502,
+  },
+  {
+    name: "a version mismatch (200)",
+    upstream: async () =>
+      new Response("[]", { headers: { ...JSON_HEADERS, "x-pulse-contract": "99" } }),
+    status: 200,
+  },
+];
+
+for (const c of UNTAGGED) {
+  test(`/api/*: ${c.name} answer is no-store, has no tag and never gives 304`, async () => {
+    const base = await start({ showChecks: true }, c.upstream);
+    for (const header of [undefined, "*"]) {
+      const res = await fetch(`${base}/api/checks`, header === undefined ? {} : withTag(header));
+      assert.equal(res.status, c.status, String(header));
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      assert.equal(res.headers.get("etag"), null);
+      assert.equal(res.headers.get("content-type"), "application/json");
+    }
+  });
+}
+
+test("/api/checks: a failed components snapshot with hidden checks is no-store without a tag", async () => {
+  const base = await start({}, async (url) =>
+    url.endsWith("/components")
+      ? new Response("{}", { status: 500, headers: JSON_HEADERS })
+      : ok([{ id: "a", name: "A", state: "up" }]),
+  );
+  const res = await fetch(`${base}/api/checks`, withTag("*"));
+  assert.equal(res.status, 502);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.equal(res.headers.get("etag"), null);
+});
+
+test("/api/*: a rejected path gives 404 no-store without a tag", async () => {
+  const base = await start({ showChecks: true }, async () => ok([]));
+  for (const path of ["/api/other", "/api/checks?x=1", "/api/incidents?"]) {
+    const res = await fetch(base + path, withTag("*"));
+    assert.equal(res.status, 404, path);
+    assert.equal(res.headers.get("cache-control"), "no-store", path);
+    assert.equal(res.headers.get("etag"), null, path);
+  }
+  const hiddenLatency = await start({}, async () => ok([]));
+  const latency = await fetch(`${hiddenLatency}/api/latency`);
+  assert.equal(latency.status, 404);
+  assert.equal(latency.headers.get("cache-control"), "no-store");
+});
+
+test("/api/checks: same bytes under other settings get another tag, and a replay gives 200", async () => {
+  // No components: hiding checks changes nothing, so both bodies are byte-equal.
+  const upstream = async (url: string) => ok(url.endsWith("/components") ? [] : [{ id: "a" }]);
+  const shown = await start({ showChecks: true }, upstream);
+  const hidden = await start({ showChecks: false }, upstream);
+  const a = await fetch(`${shown}/api/checks`);
+  const b = await fetch(`${hidden}/api/checks`);
+  const tagA = a.headers.get("etag") ?? "";
+  assert.match(tagA, TAG_FORM);
+  assert.match(b.headers.get("etag") ?? "", TAG_FORM);
+  assert.equal(await a.text(), await b.text());
+  assert.notEqual(tagA, b.headers.get("etag"));
+  assert.equal((await fetch(`${hidden}/api/checks`, withTag(tagA))).status, 200);
 });

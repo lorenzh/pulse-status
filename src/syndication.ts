@@ -1,4 +1,5 @@
 import type { ServerResponse } from "node:http";
+import type { AnswerSettings } from "./answer-cache.ts";
 import { parseBadgeLabel, renderBadge } from "./badge.ts";
 import {
   buildAtom,
@@ -7,6 +8,11 @@ import {
   type FeedIncident,
   type FeedManualIncident,
 } from "./feed.ts";
+import { etagFor, ifNoneMatchHits } from "./http-cache.ts";
+
+/** Seconds a shared cache may reuse a feed or badge 200; fixed, not derived from the poll time. */
+export const SYNDICATION_MAX_AGE_SECONDS = 60;
+const PUBLIC_CACHE_CONTROL = `public, max-age=${SYNDICATION_MAX_AGE_SECONDS}`;
 
 /** A cached, already filtered answer of the API proxy. */
 export interface CachedAnswer {
@@ -22,13 +28,20 @@ export interface SyndicationOptions {
   name: string;
   /** PULSE_STATUS_SHOW_CHECKS: feed entries may name the check under its components. */
   showChecks?: boolean | undefined;
-  /** Seconds a successful answer may be reused. */
-  maxAgeSeconds: number;
+  /** The visibility settings, part of every tag. */
+  settings: AnswerSettings;
+}
+
+/** One request as syndication sees it: the response and the `If-None-Match` value. */
+interface Exchange {
+  res: ServerResponse;
+  ifNoneMatch: string | undefined;
 }
 
 const BADGE_PREFIX = "/badge/";
 const COMPONENT_BADGE_PREFIX = "/badge/component/";
 const BADGE_SUFFIX = ".svg";
+const BADGE_TYPE = "image/svg+xml; charset=utf-8";
 const BADGE_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 const MAX_TIME_MS = 8.64e15;
 
@@ -196,6 +209,26 @@ function sendText(res: ServerResponse, status: number, body: string): void {
   res.end(body);
 }
 
+/**
+ * A tagged, publicly cacheable 200, or a 304 without body when `If-None-Match` hits the tag.
+ * `extra` headers are sent on both.
+ */
+function sendTagged(
+  ex: Exchange,
+  settings: AnswerSettings,
+  contentType: string,
+  body: string,
+  extra: Record<string, string> = {},
+): void {
+  const etag = etagFor(settings, body);
+  const headers = { ...extra, "cache-control": PUBLIC_CACHE_CONTROL, etag };
+  if (ifNoneMatchHits(ex.ifNoneMatch, etag)) {
+    ex.res.writeHead(304, headers).end();
+    return;
+  }
+  ex.res.writeHead(200, { "content-type": contentType, ...headers }).end(body);
+}
+
 const unavailable = (res: ServerResponse): void => sendText(res, 503, "unavailable");
 const notFound = (res: ServerResponse): void => sendText(res, 404, "not found");
 
@@ -212,7 +245,7 @@ function badgeId(pathname: string, prefix = BADGE_PREFIX): string | undefined {
 }
 
 async function serveFeed(
-  res: ServerResponse,
+  ex: Exchange,
   opts: SyndicationOptions,
   publicUrl: string,
   lastManual: { list: FeedManualIncident[] },
@@ -237,7 +270,7 @@ async function serveFeed(
     components === undefined ||
     manual === undefined
   ) {
-    unavailable(res);
+    unavailable(ex.res);
     return;
   }
   lastManual.list = manual;
@@ -251,15 +284,11 @@ async function serveFeed(
     resolved,
     manual,
   });
-  res.writeHead(200, {
-    "content-type": "application/atom+xml; charset=utf-8",
-    "cache-control": `public, max-age=${opts.maxAgeSeconds}`,
-  });
-  res.end(xml);
+  sendTagged(ex, opts.settings, "application/atom+xml; charset=utf-8", xml);
 }
 
 async function serveBadge(
-  res: ServerResponse,
+  ex: Exchange,
   opts: SyndicationOptions,
   id: string,
   search: string,
@@ -267,7 +296,7 @@ async function serveBadge(
   // The label is checked before any lookup, so a 400 never depends on the id.
   const label = parseBadgeLabel(new URLSearchParams(search).get("label"));
   if (!label.isValid) {
-    sendText(res, 400, "invalid label");
+    sendText(ex.res, 400, "invalid label");
     return;
   }
   // All reads always happen, so the work does not differ between known, hidden and unknown ids.
@@ -280,13 +309,13 @@ async function serveBadge(
   const checks = parseChecks(checksAnswer);
   const components = componentsAnswer === undefined ? [] : parseComponents(componentsAnswer);
   if (checks === undefined || components === undefined) {
-    unavailable(res);
+    unavailable(ex.res);
     return;
   }
   // With components and hidden checks every check badge answers like an unknown id.
   const check = components.length > 0 ? undefined : checks.find((item) => item.id === id);
   if (check === undefined) {
-    notFound(res);
+    notFound(ex.res);
     return;
   }
   const svg = renderBadge({
@@ -294,23 +323,18 @@ async function serveBadge(
     state: check.state,
     uptime: uptimeOf(uptimeAnswer, "checkId", id),
   });
-  res.writeHead(200, {
-    "content-type": "image/svg+xml; charset=utf-8",
-    "content-security-policy": BADGE_CSP,
-    "cache-control": `public, max-age=${opts.maxAgeSeconds}`,
-  });
-  res.end(svg);
+  sendTagged(ex, opts.settings, BADGE_TYPE, svg, { "content-security-policy": BADGE_CSP });
 }
 
 async function serveComponentBadge(
-  res: ServerResponse,
+  ex: Exchange,
   opts: SyndicationOptions,
   id: string,
   search: string,
 ): Promise<void> {
   const label = parseBadgeLabel(new URLSearchParams(search).get("label"));
   if (!label.isValid) {
-    sendText(res, 400, "invalid label");
+    sendText(ex.res, 400, "invalid label");
     return;
   }
   const [componentsAnswer, uptimeAnswer] = await Promise.all([
@@ -319,12 +343,12 @@ async function serveComponentBadge(
   ]);
   const components = parseComponents(componentsAnswer);
   if (components === undefined) {
-    unavailable(res);
+    unavailable(ex.res);
     return;
   }
   const component = components.find((item) => item.id === id);
   if (component === undefined) {
-    notFound(res);
+    notFound(ex.res);
     return;
   }
   const svg = renderBadge({
@@ -332,38 +356,35 @@ async function serveComponentBadge(
     state: component.state,
     uptime: uptimeOf(uptimeAnswer, "componentId", id),
   });
-  res.writeHead(200, {
-    "content-type": "image/svg+xml; charset=utf-8",
-    "content-security-policy": BADGE_CSP,
-    "cache-control": `public, max-age=${opts.maxAgeSeconds}`,
-  });
-  res.end(svg);
+  sendTagged(ex, opts.settings, BADGE_TYPE, svg, { "content-security-policy": BADGE_CSP });
 }
 
 /**
  * Serves /feed.atom and /badge/<id>.svg from the proxy cache. Returns false when the path is
  * not one of them (or the feed is off), so the caller falls through to its other routes.
+ * `ifNoneMatch` is the request's `If-None-Match` value; it only turns a tagged 200 into a 304.
  */
 export function createSyndication(
   opts: SyndicationOptions,
-): (url: URL, res: ServerResponse) => Promise<boolean> {
+): (url: URL, ifNoneMatch: string | undefined, res: ServerResponse) => Promise<boolean> {
   // Kept across requests: a 404 from an older api must not clear what an earlier read returned.
   const lastManual: { list: FeedManualIncident[] } = { list: [] };
-  return async (url, res) => {
+  return async (url, ifNoneMatch, res) => {
+    const ex: Exchange = { res, ifNoneMatch };
     if (url.pathname === "/feed.atom" && opts.publicUrl !== undefined) {
-      await serveFeed(res, opts, opts.publicUrl, lastManual);
+      await serveFeed(ex, opts, opts.publicUrl, lastManual);
       return true;
     }
     if (url.pathname.startsWith(COMPONENT_BADGE_PREFIX)) {
       const id = badgeId(url.pathname, COMPONENT_BADGE_PREFIX);
       if (id === undefined) notFound(res);
-      else await serveComponentBadge(res, opts, id, url.search);
+      else await serveComponentBadge(ex, opts, id, url.search);
       return true;
     }
     if (url.pathname.startsWith(BADGE_PREFIX)) {
       const id = badgeId(url.pathname);
       if (id === undefined) notFound(res);
-      else await serveBadge(res, opts, id, url.search);
+      else await serveBadge(ex, opts, id, url.search);
       return true;
     }
     return false;
