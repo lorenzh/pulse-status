@@ -68,6 +68,7 @@ export function needsComponents(pathname: string): boolean {
   return (
     pathname === "/api/checks" ||
     pathname === "/api/uptime" ||
+    pathname === "/api/latency" ||
     pathname === "/api/components" ||
     needsActiveChecks(pathname)
   );
@@ -78,13 +79,19 @@ export function needsActiveChecks(pathname: string): boolean {
   return pathname === "/api/incidents" || pathname === "/api/maintenance";
 }
 
-/** Replaces `checkId` with its key; entries without a key are dropped. */
-function rekeyEntries(body: unknown[], keys: HiddenKeys): Fields[] {
+/**
+ * Replaces `checkId` with its key; entries without a key are dropped. An incident reason is
+ * check output (hosts, addresses), so it is always null here, whatever hide-details says.
+ */
+function rekeyEntries(body: unknown[], keys: HiddenKeys, isIncident: boolean): Fields[] {
   const out: Fields[] = [];
   for (const item of body) {
     if (!isRecord(item) || typeof item.checkId !== "string") continue;
     const key = keys.get(item.checkId);
-    if (key !== undefined) out.push({ ...item, checkId: key });
+    if (key === undefined) continue;
+    const entry: Fields = { ...item, checkId: key };
+    if (isIncident && "reason" in item) entry.reason = null;
+    out.push(entry);
   }
   return out;
 }
@@ -112,12 +119,15 @@ export function hideCheckIds(
   body: unknown,
   keys: HiddenKeys,
 ): unknown[] | undefined {
-  if (pathname === "/api/checks" || pathname === "/api/uptime") return [];
+  if (pathname === "/api/checks" || pathname === "/api/uptime" || pathname === "/api/latency") {
+    return [];
+  }
   if (!Array.isArray(body)) return undefined;
   switch (pathname) {
     case "/api/incidents":
+      return rekeyEntries(body, keys, true);
     case "/api/maintenance":
-      return rekeyEntries(body, keys);
+      return rekeyEntries(body, keys, false);
     case "/api/components":
       return rekeyComponents(body, keys);
     default:

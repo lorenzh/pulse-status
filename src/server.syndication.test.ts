@@ -219,7 +219,7 @@ test("syndication shares the proxy cache and adds no upstream paths", async () =
       "/uptime",
     ],
   );
-  assert.equal(ALLOWED_API_PATHS.length, 9);
+  assert.equal(ALLOWED_API_PATHS.length, 10);
   for (const path of ["/api/feed.atom", "/api/badge/web.svg"]) {
     assert.equal((await fetch(h.base + path)).status, 404, path);
   }
@@ -587,4 +587,113 @@ test("feed and badges: 400, 404 and 503 are no-store without a tag, also with If
       assert.equal(res.headers.get("etag"), null);
     }
   }
+});
+
+// Component badges apply open manual incidents like the page does.
+
+function manual(impact: string, status: string, resolvedAt: number | null) {
+  return {
+    id: 9,
+    title: "Checkout slow",
+    componentIds: ["shop"],
+    impact,
+    status,
+    createdAt: NOW - 1000,
+    resolvedAt,
+    updates: [{ at: resolvedAt ?? NOW - 1000, status, message: "Looking" }],
+  };
+}
+
+const badgeCases: readonly [string, string, unknown[], RegExp][] = [
+  ["open major", "up", [manual("major", "investigating", null)], /down 98\.5%/],
+  ["open minor", "up", [manual("minor", "identified", null)], /degraded 98\.5%/],
+  ["monitoring critical", "up", [manual("critical", "monitoring", null)], /down 98\.5%/],
+  ["resolved major", "up", [manual("major", "resolved", NOW - 10)], /up 98\.5%/],
+  ["open none", "up", [manual("none", "investigating", null)], /up 98\.5%/],
+  ["api down with open minor", "down", [manual("minor", "investigating", null)], /down 98\.5%/],
+];
+
+for (const [name, state, incidents, expected] of badgeCases) {
+  test(`component badge with manual incidents: ${name}`, async () => {
+    const h = await startWithComponents();
+    h.bodies["/components"] = [{ ...components[0], state }];
+    h.bodies["/manual-incidents"] = incidents;
+    const svg = await (await fetch(`${h.base}/badge/component/shop.svg`)).text();
+    assert.match(svg, expected);
+    if (expected.source.startsWith("down")) assert.match(svg, /#c62828/);
+  });
+}
+
+test("component badge: a manual incidents 404 keeps up, a 500 is unavailable", async () => {
+  const h = await startWithComponents({ cacheMs: 0 });
+  h.bodies["/components"] = [{ ...components[0], state: "up" }];
+  h.missing.add("/manual-incidents");
+  assert.match(await (await fetch(`${h.base}/badge/component/shop.svg`)).text(), /up 98\.5%/);
+  h.missing.delete("/manual-incidents");
+  h.failing.add("/manual-incidents");
+  const res = await fetch(`${h.base}/badge/component/shop.svg`);
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.equal(await res.text(), "unavailable");
+});
+
+const malformedManual: readonly [string, unknown][] = [
+  ["an unknown impact", { ...manual("major", "investigating", null), impact: "bogus" }],
+  ["an unknown status", { ...manual("major", "investigating", null), status: "bogus" }],
+  [
+    "an unknown update status",
+    {
+      ...manual("major", "investigating", null),
+      updates: [{ at: NOW - 1000, status: "bogus", message: "Looking" }],
+    },
+  ],
+  ["no updates", { ...manual("major", "investigating", null), updates: [] }],
+  ["resolved without resolvedAt", manual("major", "resolved", null)],
+  ["a null update", { ...manual("major", "investigating", null), updates: [null] }],
+];
+
+const malformedManualLists: readonly [string, unknown[]][] = [
+  ["a null item", [null]],
+  ["an array item", [[]]],
+  ["a number item", [42]],
+];
+
+for (const [name, list] of malformedManualLists) {
+  test(`component badge and feed: a manual incident list with ${name} is unavailable`, async () => {
+    const h = await startWithComponents({ cacheMs: 0 });
+    h.bodies["/components"] = [{ ...components[0], state: "up" }];
+    h.bodies["/manual-incidents"] = list;
+    for (const path of ["/badge/component/shop.svg", "/feed.atom"]) {
+      const res = await fetch(`${h.base}${path}`);
+      assert.equal(res.status, 503, path);
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      assert.equal(await res.text(), "unavailable");
+    }
+  });
+}
+
+for (const [name, incident] of malformedManual) {
+  test(`component badge: a manual incident with ${name} is unavailable`, async () => {
+    const h = await startWithComponents({ cacheMs: 0 });
+    h.bodies["/components"] = [{ ...components[0], state: "up" }];
+    h.bodies["/manual-incidents"] = [incident];
+    const res = await fetch(`${h.base}/badge/component/shop.svg`);
+    assert.equal(res.status, 503);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    assert.equal(await res.text(), "unavailable");
+  });
+}
+
+test("component badge: a new incident changes the tag, not the uptime text", async () => {
+  const h = await startWithComponents({ cacheMs: 0 });
+  h.bodies["/components"] = [{ ...components[0], state: "up" }];
+  const before = await fetch(`${h.base}/badge/component/shop.svg`);
+  const beforeSvg = await before.text();
+  h.bodies["/manual-incidents"] = [manual("major", "investigating", null)];
+  const after = await fetch(`${h.base}/badge/component/shop.svg`);
+  const afterSvg = await after.text();
+  assert.notEqual(after.headers.get("etag"), before.headers.get("etag"));
+  assert.match(beforeSvg, /98\.5%/);
+  assert.match(afterSvg, /98\.5%/);
+  assert.match(afterSvg, /down/);
 });

@@ -53,39 +53,6 @@ test("the focused element is kept while its key exists", () => {
   assert.deepEqual(keysOf(root), ["b", "a", "z"]);
 });
 
-const bars = (stop: number, count: number, start = 0): string =>
-  `<div data-key="bars">${Array.from({ length: count }, (_, i) => {
-    const day = start + i;
-    return `<span class="bar" data-key="day:${day}" tabindex="${i === stop ? 0 : -1}">d</span>`;
-  }).join("")}</div>`;
-
-test("a bar keeps its roving tabindex when the server html says otherwise", () => {
-  const { dom, root } = setup(bars(2, 3));
-  const group = root.childNodes[0];
-  group?.childNodes[0]?.setAttribute("tabindex", "0");
-  group?.childNodes[2]?.setAttribute("tabindex", "-1");
-  patchHtml(root, bars(2, 3).replace("d<", "e<"), dom);
-  assert.equal(group?.childNodes[0]?.getAttribute("tabindex"), "0");
-  assert.equal(group?.childNodes[2]?.getAttribute("tabindex"), "-1");
-});
-
-test("a sliding window leaves one tab stop and new bars start at -1", () => {
-  const { dom, root } = setup(bars(2, 3, 0));
-  patchHtml(root, bars(2, 3, 1), dom);
-  const stops = (root.childNodes[0]?.childNodes ?? []).filter(
-    (n) => n.getAttribute("tabindex") === "0",
-  );
-  assert.equal(stops.length, 1);
-  assert.equal(stops[0]?.getAttribute("data-key"), "day:2");
-});
-
-test("focus moves to the last bar when the focused day leaves the window", () => {
-  const { dom, root } = setup(bars(2, 3, 0));
-  root.childNodes[0]?.childNodes[0]?.focus();
-  patchHtml(root, bars(2, 3, 1), dom);
-  assert.equal(dom.active?.getAttribute("data-key"), "day:3");
-});
-
 test("planChildren matches by key, else by position and tag", () => {
   const plan = planChildren(
     [
@@ -161,19 +128,25 @@ function findKey(node: FakeNode, key: string): FakeNode | undefined {
   return node.childNodes.map((child) => findKey(child, key)).find(Boolean);
 }
 
-/** Focuses the last day in `entryKey`, patches to `after` and asserts the same node keeps focus. */
+/**
+ * Focuses the daily-values summary of `entryKey`, opens its details, patches to `after` and
+ * asserts the same summary keeps focus and the details stay open.
+ */
 function assertFocusSurvives(before: string, after: string, entryKey: string): void {
   const { dom, root } = setup(before);
   const entry = root.childNodes.map((node) => findKey(node, entryKey)).find(Boolean);
-  const bar = entry === undefined ? undefined : findKey(entry, "day:2026-01-02");
-  assert.ok(bar !== undefined, "bar rendered");
-  bar.focus();
+  const details = entry === undefined ? undefined : findKey(entry, "daily");
+  const summary = details?.childNodes[0];
+  assert.ok(details !== undefined && summary !== undefined, "daily values rendered");
+  details.setAttribute("open", "");
+  summary.focus();
   patchHtml(root, after, dom);
-  assert.equal(dom.active, bar, "focus stays on the same bar");
-  assert.ok(isConnected(bar, root), "the focused bar stays in the page");
+  assert.equal(dom.active, summary, "focus stays on the same summary");
+  assert.ok(isConnected(summary, root), "the focused summary stays in the page");
+  assert.equal(details.getAttribute("open"), "", "the details stay open");
 }
 
-test("a focused component bar survives the component's first incident line", () => {
+test("a focused component table summary survives the component's first incident line", () => {
   assertFocusSurvives(
     renderComponents(shopView([], true), timeEnv),
     renderComponents(shopView([1], true), timeEnv),
@@ -181,7 +154,7 @@ test("a focused component bar survives the component's first incident line", () 
   );
 });
 
-test("a focused bar of a member check survives its component's first incident line", () => {
+test("a focused table summary of a member check survives its component's first incident line", () => {
   assertFocusSurvives(
     renderComponents(shopView([], false), timeEnv),
     renderComponents(shopView([1], false), timeEnv),
@@ -189,7 +162,7 @@ test("a focused bar of a member check survives its component's first incident li
   );
 });
 
-test("a focused check bar survives the check's first meta line", () => {
+test("a focused check table summary survives the check's first meta line", () => {
   const uptime = [{ checkId: "web", uptime: 100, days }];
   assertFocusSurvives(
     renderChecks([webCheck("up", null)], uptime, timeEnv),

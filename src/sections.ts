@@ -105,6 +105,7 @@ function componentSections(
     uptime: state.uptime,
     showChecks: options.showChecks,
     latency: state.latency,
+    componentLatency: state.componentLatency,
   };
   const labels = checkLabels(view);
   sections.checksTitle = "Components";

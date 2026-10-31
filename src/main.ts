@@ -1,5 +1,5 @@
 import { createLogger, readLogLevel, runService, StartupError } from "@lorenzh/pulse-kit";
-import { startFromEnv } from "./start.ts";
+import { readSettings } from "./settings.ts";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 const EXIT_STARTUP = 2;
@@ -19,8 +19,11 @@ let stopRunning: (() => Promise<void>) | undefined;
 
 // Listening and polling start inside `start`, so the signal handlers exist before config loading.
 async function start(): Promise<void> {
-  const { server, port, apiUrl, pollMs, metrics, startPolling } = startFromEnv(
-    process.env,
+  const settings = readSettings(process.env);
+  // The server modules load only after the settings are valid: a bad setting exits without them.
+  const { startFromSettings } = await import("./start.ts");
+  const { server, port, apiUrl, pollMs, metrics, startPolling } = startFromSettings(
+    settings,
     undefined,
     log,
   );

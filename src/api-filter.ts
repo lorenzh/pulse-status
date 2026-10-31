@@ -10,6 +10,7 @@ export const ALLOWED_API_PATHS = [
   "/api/components/uptime",
   "/api/manual-incidents",
   "/api/latency",
+  "/api/components/latency",
 ] as const;
 
 export function isAllowedApiPath(pathname: string, search: string): boolean {
@@ -226,9 +227,10 @@ function cleanManualIncident(incident: Fields): Fields {
     "resolvedAt",
   ]);
   if (Array.isArray(incident.updates)) {
-    out.updates = incident.updates
-      .filter(isRecord)
-      .map((update) => pick(update, MANUAL_UPDATE_FIELDS));
+    // A malformed update stays as null, so the list stays malformed for its readers.
+    out.updates = incident.updates.map((update: unknown) =>
+      isRecord(update) ? pick(update, MANUAL_UPDATE_FIELDS) : null,
+    );
   }
   return out;
 }
@@ -246,19 +248,16 @@ const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
 
 /**
  * Builds the served JSON from an allow-list per endpoint: unlisted fields, new upstream ones
- * included, never leave the server. `hasChecks` is false when PULSE_STATUS_SHOW_CHECKS is off. URLs are sanitized and, when hidden, details removed.
+ * included, never leave the server. URLs are sanitized and, when hidden, details removed.
  */
-export function filterApiBody(
-  pathname: string,
-  body: unknown,
-  isHidden: boolean,
-  hasChecks = true,
-): unknown {
-  // Latency is per check: it is never served while the checks are hidden.
-  if (pathname === "/api/latency" && !hasChecks) return [];
+export function filterApiBody(pathname: string, body: unknown, isHidden: boolean): unknown {
   if (!Array.isArray(body)) return body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;
+  if (pathname === "/api/manual-incidents") {
+    // A malformed incident stays as null, so the badge and feed see a malformed list (spec §8).
+    return body.map((item: unknown) => (isRecord(item) ? clean(item, isHidden) : null));
+  }
   return body.filter(isRecord).map((item) => clean(item, isHidden));
 }
 

@@ -12,13 +12,16 @@ import {
   type CheckState,
   combineStates,
   incidentImpactState,
-  type ManualIncidentsResponse,
+  type ManualIncident,
 } from "@lorenzh/pulse-contract";
 // Browser module: the server rewrites this import to /pulse-kit/ (see tsModules in server.ts).
 import { escapeHtml } from "@lorenzh/pulse-kit/escape";
+import type { ComponentLatencyResponse } from "./component-latency.ts";
 import {
   type CheckLabels,
   renderChecks,
+  renderDailyValues,
+  renderLatencyChart,
   renderSlo,
   renderUptime,
   renderUptimeLegend,
@@ -34,6 +37,8 @@ export interface ComponentView {
   showChecks: boolean;
   /** Latency per check; null when the page does not read it. */
   latency?: LatencyResponse | null;
+  /** Latency per component (highest member check); null before the first read. */
+  componentLatency?: ComponentLatencyResponse | null;
 }
 
 interface Block {
@@ -61,6 +66,10 @@ function countOpen(count: number): string {
 
 function renderComponent(component: ComponentWithState, view: ComponentView, env: TimeEnv): string {
   const entry = view.componentUptime.find((item) => item.componentId === component.id);
+  // Only in hidden mode: with checks shown, each member check has its own chart.
+  const latency = view.showChecks
+    ? undefined
+    : view.componentLatency?.find((item) => item.componentId === component.id);
   const members = new Set(component.checkIds);
   const memberChecks = view.checks.filter((check) => members.has(check.id));
   const incidents =
@@ -82,7 +91,14 @@ function renderComponent(component: ComponentWithState, view: ComponentView, env
     description +
     incidents +
     renderSlo(component.slo) +
-    (entry ? renderUptime(entry, component.name) : "") +
+    (entry ? renderUptime(entry) : "") +
+    (latency === undefined ? "" : renderLatencyChart(latency, undefined, true)) +
+    renderDailyValues({
+      name: component.name,
+      uptime: entry,
+      latency: latency?.days,
+      isComponent: true,
+    }) +
     checks +
     `</li>`
   );
@@ -162,17 +178,24 @@ export function labeledMaintenance(
   return maintenance.filter((window) => labels.has(window.checkId));
 }
 
+/** What the incident rule reads from a manual incident. */
+export interface ImpactIncident {
+  componentIds: readonly string[];
+  impact: ManualIncident["impact"];
+  resolvedAt: number | null;
+}
+
 /**
  * Components with the state that open manual incidents imply: the worst of the check-derived
  * state and the state of each open incident that names the component (`monitoring` is open,
- * `resolved` is not). Uptime numbers are unchanged.
+ * `resolved` is not). Uptime numbers are unchanged. The page and the component badge use it.
  */
-export function componentsWithIncidents(
-  components: ComponentsResponse,
-  manualIncidents: ManualIncidentsResponse,
-): ComponentsResponse {
+export function componentsWithIncidents<C extends { id: string; state: CheckState }>(
+  components: readonly C[],
+  manualIncidents: readonly ImpactIncident[],
+): C[] {
   const open = manualIncidents.filter((incident) => incident.resolvedAt === null);
-  if (open.length === 0) return components;
+  if (open.length === 0) return [...components];
   return components.map((component) => {
     const implied = open
       .filter((incident) => incident.componentIds.includes(component.id))

@@ -307,8 +307,6 @@ li {
   cursor: default;
 }
 .time:hover::after,
-.bar:hover::after,
-.bar:focus::after,
 .check:focus-within .time[data-exact]::after,
 .component:focus-within .time[data-exact]::after {
   content: attr(data-exact);
@@ -341,33 +339,24 @@ li {
   gap: 2px;
   height: 44px;
 }
-.bar {
-  position: relative;
+.bars > i {
   flex: 1 1 0;
   min-width: 0;
   border-radius: 1px;
   background: var(--muted);
   opacity: 0.4;
 }
-.bar.up {
+.bars > .up {
   background: var(--success);
   opacity: 1;
 }
-.bar.degraded {
+.bars > .degraded {
   background: var(--warning);
   opacity: 1;
 }
-.bar.down {
+.bars > .down {
   background: var(--error);
   opacity: 1;
-}
-.bar:hover,
-.bar:focus {
-  opacity: 0.8;
-}
-.bar:focus-visible {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
 }
 .visually-hidden {
   position: absolute;
@@ -385,13 +374,6 @@ li {
   margin: 0.5rem 0;
   color: var(--lead);
   font-size: 0.875rem;
-}
-.bar:nth-child(-n + 20)::after {
-  left: 0;
-}
-.bar:nth-last-child(-n + 20)::after {
-  left: auto;
-  right: 0;
 }
 .uptime-total {
   display: block;
@@ -543,19 +525,19 @@ ul.resolved li {
 .lat-p50-dot {
   fill: var(--info);
 }
-.latency-details summary {
+.daily-values summary {
   margin-top: 0.25rem;
   color: var(--accent-text);
   cursor: pointer;
 }
-.latency-details table {
+.daily-values table {
   margin-top: 0.5rem;
   border-collapse: collapse;
   font-family: var(--font-mono);
   font-size: 13px;
 }
-.latency-details th,
-.latency-details td {
+.daily-values th,
+.daily-values td {
   padding: 0.125rem 0.75rem 0.125rem 0;
   text-align: left;
 }

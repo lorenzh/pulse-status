@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { AnswerSettings } from "./answer-cache.ts";
-import { etagFor, ifNoneMatchHits } from "./http-cache.ts";
+import { assetEtag, etagFor, ifNoneMatchHits } from "./http-cache.ts";
 
 const ALL_SETTINGS: AnswerSettings[] = [
   { isHidden: false, hasChecks: false },
@@ -85,4 +85,12 @@ test("ifNoneMatchHits: never throws on odd input", () => {
     expect(() => ifNoneMatchHits(value as string, TAG)).not.toThrow();
     expect(ifNoneMatchHits(value as string, TAG)).toBe(false);
   }
+});
+
+test("assetEtag: the hash of the exact bytes only, without a settings fingerprint", () => {
+  const body = "export const a = 1;\n";
+  const digest = createHash("sha256").update(body, "utf8").digest("base64url");
+  expect(assetEtag(body)).toBe(`"${digest.slice(0, 27)}"`);
+  expect(assetEtag(body)).toMatch(/^"[A-Za-z0-9_-]{27}"$/);
+  expect(assetEtag(`${body} `)).not.toBe(assetEtag(body));
 });
