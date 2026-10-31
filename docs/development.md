@@ -49,11 +49,39 @@ Work test first. Tests sit next to the code as `src/<module>.test.ts`, use hand-
 
 ## CI
 
-`.github/workflows/ci.yml` has three jobs:
+`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` and on `v*` tags. It has four jobs:
 
 - `check` uses the shared `check.yml` workflow of `lorenzh/pulse-config`, pinned to a commit SHA.
-- `docker` builds the image and fails if it holds `*.test.ts` or `*.spec.ts` files outside `node_modules`, or `/app/e2e` or Playwright.
+- `docker` builds the image and fails if it holds `*.test.ts` or `*.spec.ts` files outside `node_modules`, or `/app/e2e` or Playwright. It runs twice, on `ubuntu-24.04` (amd64) and natively on `ubuntu-24.04-arm` (arm64); one failing leg does not cancel the other.
 - `a11y` installs Chromium and runs `bun run check:a11y`.
+- `release` runs only on a tag and uses the shared `release.yml` workflow of `lorenzh/pulse-config` (see [Releasing](#releasing)). On a pull request or a push to `main` it is skipped.
+
+The `check.yml` ref, the `release.yml` ref and the `@lorenzh/pulse-config` pin in `package.json` (with `bun.lock`) carry the same commit SHA. A tag run is never cancelled by a newer run.
+
+## Releasing
+
+A release is a git tag. The owner pushes it; a tag pushed by a workflow token starts no run.
+
+```sh
+git tag vX.Y.Z <sha on main> && git push origin vX.Y.Z
+```
+
+- The tag must match `vX.Y.Z` or `vX.Y.Z-<pre-release>` (SemVer, no leading zeros, no `+build`). Any other tag fails the release before anything is built.
+- A stable tag `vX.Y.Z` must point to a commit on `main`. A pre-release tag may point anywhere, for example to a test branch.
+- The version comes from the tag. `package.json` `version` stays `0.0.0`.
+- Gate: the release runs only when `check`, both `docker` legs (amd64 and arm64) and `a11y` passed. A failed, cancelled or skipped gate skips it.
+- The image is `ghcr.io/lorenzh/pulse-status`, for linux/amd64 and linux/arm64, with the tags `X.Y.Z`, `X.Y` and `X`. `X.Y` and `X` move only forward: they are set only when the tag is the highest stable tag of that minor or major. A pre-release gets only its own tag. There is no `latest` and no `edge` tag; a push to `main` publishes nothing.
+- Never move or re-push a release tag. The workflow refuses to publish a version that already exists, so the old image stays. Per-platform digests of a refused or failed run stay as untagged package versions; delete them if wanted.
+- The release builds the image again from the tagged commit. The content matches the image that the `docker` job checked, but the digest can differ by timestamps.
+- Verify the provenance:
+
+  ```sh
+  gh attestation verify oci://ghcr.io/lorenzh/pulse-status:<version> --owner lorenzh
+  ```
+
+- In a setup, pin `X.Y.Z` by digest (`ghcr.io/lorenzh/pulse-status:X.Y.Z@sha256:…`). `0` moves across breaking 0.x minors.
+
+The tag rules, the jobs and the owner steps (package visibility, cleanup) are in the [`pulse-config` README](https://github.com/lorenzh/pulse-config#releasing-images).
 
 ## Shared configuration
 
