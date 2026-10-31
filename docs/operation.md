@@ -101,7 +101,7 @@ Both are public, need no login and are built from the same cached answers as the
 
 ## Caching
 
-The proxy keeps each upstream read per path and query for `PULSE_STATUS_CACHE_MS` (default 2000 ms) and builds every answer from it (allow-list, redaction, hidden keys and the 7-day window), so every viewer gets the same bytes and pulse-api sees at most one request per path per period. Concurrent requests share one upstream call. The unfiltered read is never sent to a client. Error answers (`502`, upstream error status) are cached for the same period only. Stale data is never served after a failure: the page gets the error and shows its banner. The cache is per server instance. Answers carry `cache-control: no-store`.
+The proxy keeps each unfiltered upstream read per path and query for `PULSE_STATUS_CACHE_MS` (default 2000 ms) and builds every answer from it (allow-list, redaction, hidden keys and the 7-day window), so every viewer gets the same bytes and pulse-api sees at most one request per path per period. Concurrent requests share one upstream call. It also keeps the finished, filtered answer per path and query, shared by `/api/*`, the page, the feed and the badges. That answer is dropped as soon as any upstream read it was built from is fetched again or expires. `PULSE_STATUS_CACHE_MS=0` turns both caches off. The unfiltered read is never sent to a client. Error answers (`502`, upstream error status) are cached for the same period only. Stale data is never served after a failure: the page gets the error and shows its banner. The cache is per server instance. Answers carry `cache-control: no-store`.
 
 For `/api/incidents?status=resolved` the proxy keeps only incidents resolved in the last 7 days, newest first. The page filters again.
 

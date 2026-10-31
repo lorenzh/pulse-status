@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { IncidentsResponse } from "@lorenzh/pulse-contract";
+import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
 
 const servers: Server[] = [];
@@ -255,4 +256,121 @@ test("the proxy sends no wire header when the api is unreachable", async () => {
   assert.equal(res.status, 502);
   assert.deepEqual(await res.json(), { error: "API unreachable" });
   assert.equal(res.headers.get("x-pulse-contract"), null);
+});
+
+// Resolved-window signal: an answer built at T0 keeps `edge`, one built at T0 + 1000 drops it,
+// while the raw read stays the same. So the body shows whether an answer was rebuilt.
+const T0 = 10 * RESOLVED_WINDOW_MS;
+const resolvedIncident = (id: string, resolvedAt: number) => ({
+  id,
+  checkId: "a",
+  openedAt: resolvedAt - 1000,
+  resolvedAt,
+  reason: null,
+});
+const RESOLVED = [
+  resolvedIncident("edge", T0 - RESOLVED_WINDOW_MS + 500),
+  resolvedIncident("recent", T0 - 1000),
+];
+
+async function resolvedIds(base: string): Promise<{ text: string; ids: unknown[] }> {
+  const text = await (await fetch(`${base}/api/incidents?status=resolved`)).text();
+  const body = JSON.parse(text) as Array<{ id: unknown }>;
+  return { text, ids: body.map((i) => i.id) };
+}
+
+test("answer cache: reused within the period, rebuilt when the raw read expires", async () => {
+  let clock = T0;
+  let calls = 0;
+  const base = await start({ cacheMs: 2000, now: () => clock, showChecks: true }, async () => {
+    calls++;
+    return ok(RESOLVED);
+  });
+  const first = await resolvedIds(base);
+  assert.ok(first.ids.includes("edge"));
+  for (let i = 0; i < 10; i++) assert.equal((await resolvedIds(base)).text, first.text);
+  const parallel = await Promise.all(Array.from({ length: 10 }, () => resolvedIds(base)));
+  for (const p of parallel) assert.equal(p.text, first.text);
+  clock = T0 + 1000;
+  assert.equal((await resolvedIds(base)).text, first.text);
+  assert.equal(calls, 1);
+  clock = T0 + 2000;
+  assert.deepEqual((await resolvedIds(base)).ids, ["recent"]);
+  assert.equal(calls, 2);
+});
+
+test("answer cache: cacheMs 0 builds every answer at request time", async () => {
+  let clock = T0;
+  let calls = 0;
+  const base = await start({ cacheMs: 0, now: () => clock, showChecks: true }, async () => {
+    calls++;
+    return ok(RESOLVED);
+  });
+  assert.ok((await resolvedIds(base)).ids.includes("edge"));
+  clock = T0 + 1000;
+  assert.deepEqual((await resolvedIds(base)).ids, ["recent"]);
+  assert.equal(calls, 2);
+});
+
+test("answer cache: a new own read is served, even when the answer was stored later", async () => {
+  let clock = 1000;
+  let uptime = [{ checkId: "a", uptime: 1, days: [] }];
+  const counts = new Map<string, number>();
+  // Hidden mode: /api/uptime reads /uptime and /components in parallel.
+  const base = await start({ cacheMs: 2000, now: () => clock }, async (url) => {
+    const path = url.replace("http://api.test", "");
+    counts.set(path, (counts.get(path) ?? 0) + 1);
+    if (path === "/components") {
+      await new Promise((r) => setTimeout(r, 0));
+      // The own read ended at 1000 (expires 3000); the answer is stored at 1500.
+      clock = 1500;
+      return ok([]);
+    }
+    return ok(uptime);
+  });
+  const a = await (await fetch(`${base}/api/uptime`)).text();
+  assert.equal(clock, 1500);
+  assert.equal(a, JSON.stringify(uptime));
+  uptime = [{ checkId: "a", uptime: 2, days: [] }];
+  clock = 3000;
+  const b = await (await fetch(`${base}/api/uptime`)).text();
+  assert.equal(b, JSON.stringify(uptime));
+  assert.equal(counts.get("/uptime"), 2);
+});
+
+test("answer cache (regression guard): requests during a build get identical bytes", async () => {
+  let release: () => void = () => {};
+  const held = new Promise<void>((r) => {
+    release = r;
+  });
+  const counts = new Map<string, number>();
+  const base = await start({ cacheMs: 2000, now: () => 1000 }, async (url) => {
+    const path = url.replace("http://api.test", "");
+    counts.set(path, (counts.get(path) ?? 0) + 1);
+    if (path === "/components") {
+      await held;
+      return ok([]);
+    }
+    return ok([{ checkId: "a", uptime: 1, days: [] }]);
+  });
+  const x = fetch(`${base}/api/uptime`).then((r) => r.text());
+  const y = fetch(`${base}/api/uptime`).then((r) => r.text());
+  while ((counts.get("/components") ?? 0) === 0) await new Promise((r) => setTimeout(r, 0));
+  // A few more macrotasks, so the second request reaches the server before the release.
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+  release();
+  const [bx, by] = await Promise.all([x, y]);
+  assert.equal(bx, by);
+  assert.deepEqual(Object.fromEntries(counts), { "/uptime": 1, "/components": 1 });
+});
+
+test("answer cache (regression guard): a path that is not allowed makes no upstream call", async () => {
+  let calls = 0;
+  const base = await start({ cacheMs: 2000, showChecks: true }, async () => {
+    calls++;
+    return ok([]);
+  });
+  const res = await fetch(`${base}/api/incidents?status=resolved&x=1`);
+  assert.equal(res.status, 404);
+  assert.equal(calls, 0);
 });
