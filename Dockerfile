@@ -14,5 +14,5 @@ COPY public ./public
 USER bun
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD ["bun", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-CMD ["bun", "src/main.ts"]
+  CMD ["bun", "--no-env-file", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 8080) + '/healthz').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+CMD ["bun", "--no-env-file", "src/main.ts"]

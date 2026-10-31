@@ -38,6 +38,8 @@ docker build --tag pulse-status:local .
 docker run --rm -p 8080:8080 -e PULSE_API_URL=http://host.docker.internal:3000 pulse-status:local
 ```
 
+The image starts `bun --no-env-file src/main.ts`, so a `.env` mounted into `/app` is not read; settings come from `-e`, `docker run --env-file` (read on the host) or Compose.
+
 Released images are on `ghcr.io/lorenzh/pulse-status` for linux/amd64 and linux/arm64, with the tags `X.Y.Z`, `X.Y` and `X` (no `latest`). Pin a version by digest in a setup. See [Releasing](docs/development.md#releasing).
 
 ```sh
