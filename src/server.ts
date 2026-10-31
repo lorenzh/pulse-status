@@ -13,7 +13,12 @@ import {
   type Readiness,
   sendJson,
 } from "@lorenzh/pulse-kit";
-import { type AnswerEntry, answerKey, cachedAnswerFor } from "./answer-cache.ts";
+import {
+  type AnswerEntry,
+  type AnswerSettings,
+  answerKey,
+  cachedAnswerFor,
+} from "./answer-cache.ts";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
 import {
   hiddenCheckKeys,
@@ -23,6 +28,7 @@ import {
   parseActiveCheckIds,
   parseComponentsSnapshot,
 } from "./hidden-checks.ts";
+import { etagFor, ifNoneMatchHits } from "./http-cache.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { renderState } from "./ssr.ts";
@@ -71,6 +77,11 @@ interface ProxyAnswer {
   body: string;
   /** Wire version the api reported, forwarded so the browser can check it. */
   wireVersion?: string;
+  /**
+   * Tag of `body`; set only on a filtered 200 built from successful reads. Its presence alone
+   * marks the answer as cacheable: the version-mismatch 200 has none.
+   */
+  etag?: string;
 }
 
 interface CacheEntry {
@@ -268,6 +279,17 @@ function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswe
     : { status, body: JSON.stringify(body), wireVersion };
 }
 
+/** A filtered 200: the body is serialized once and its exact bytes are tagged. */
+function okAnswer(
+  body: unknown,
+  wireVersion: string | undefined,
+  settings: AnswerSettings,
+): ProxyAnswer {
+  const result = answer(200, body, wireVersion);
+  result.etag = etagFor(settings, result.body);
+  return result;
+}
+
 /** One unfiltered upstream read. Never sent to a client: answers are derived from it. */
 type RawRead =
   | { ok: true; value: unknown; wireHeader: string | undefined }
@@ -396,11 +418,12 @@ async function hiddenAnswer(
   wireHeader: string | undefined,
   componentsRead: RawRead,
   read: RawReader,
+  settings: AnswerSettings,
 ): Promise<ProxyAnswer> {
   if (!componentsRead.ok) return snapshotFailure(componentsRead.answer, wireHeader);
   const components = parseComponentsSnapshot(componentsRead.value);
   if (components === undefined) return answer(502, INVALID_RESPONSE, wireHeader);
-  if (components.length === 0) return answer(200, body, wireHeader);
+  if (components.length === 0) return okAnswer(body, wireHeader, settings);
   let activeIds = new Set<string>();
   if (needsActiveChecks(pathname)) {
     const checksRead = await read("/checks");
@@ -412,7 +435,7 @@ async function hiddenAnswer(
   const hidden = hideCheckIds(pathname, body, hiddenCheckKeys(components, activeIds));
   return hidden === undefined
     ? answer(502, INVALID_RESPONSE, wireHeader)
-    : answer(200, hidden, wireHeader);
+    : okAnswer(hidden, wireHeader, settings);
 }
 
 /** Builds the served answer of one allow-listed path from the raw reads. */
@@ -429,8 +452,8 @@ async function buildAnswer(url: URL, ctx: ProxyContext, read: RawReader): Promis
     // The cutoff uses the build time; the answer keeps it for at most the life of its raw entry.
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
   }
-  if (componentsRead === undefined) return answer(200, body, own.wireHeader);
-  return hiddenAnswer(url.pathname, body, own.wireHeader, await componentsRead, read);
+  if (componentsRead === undefined) return okAnswer(body, own.wireHeader, ctx);
+  return hiddenAnswer(url.pathname, body, own.wireHeader, await componentsRead, read, ctx);
 }
 
 async function buildAnswerWithDeps(
@@ -465,11 +488,12 @@ async function cachedAnswer(path: string, ctx: ProxyContext): Promise<ProxyAnswe
 }
 
 async function proxyApi(
+  req: IncomingMessage,
   res: ServerResponse,
-  rawUrl: string,
   url: URL,
   ctx: ProxyContext,
 ): Promise<void> {
+  const rawUrl = req.url ?? "";
   // The raw target must equal the parsed one: a bare "?" is not the allow-listed form.
   const isLatencyHidden = url.pathname === "/api/latency" && !ctx.hasChecks;
   if (
@@ -477,16 +501,27 @@ async function proxyApi(
     rawUrl !== url.pathname + url.search ||
     !isAllowedApiPath(url.pathname, url.search)
   ) {
-    sendJson(res, 404, { error: "not found" });
+    sendJson(res, 404, { error: "not found" }, { "cache-control": "no-store" });
     return;
   }
   const result = await proxyAnswer(url, ctx);
-  const headers: Record<string, string> = {
-    "content-type": "application/json",
-    "cache-control": "no-store",
-  };
+  const headers: Record<string, string> = {};
   if (result.wireVersion !== undefined) headers[WIRE_VERSION_HEADER] = result.wireVersion;
-  res.writeHead(result.status, headers).end(result.body);
+  if (result.etag === undefined) {
+    headers["cache-control"] = "no-store";
+    res.writeHead(result.status, { "content-type": "application/json", ...headers });
+    res.end(result.body);
+    return;
+  }
+  // Revalidated on every use; never public, because the browser poller is the only reader.
+  headers["cache-control"] = "no-cache";
+  headers.etag = result.etag;
+  if (ifNoneMatchHits(req.headers["if-none-match"], result.etag)) {
+    res.writeHead(304, headers).end();
+    return;
+  }
+  res.writeHead(result.status, { "content-type": "application/json", ...headers });
+  res.end(result.body);
 }
 
 /** The detail stays in the log; the client only gets a generic 500. */
@@ -535,7 +570,7 @@ export function createStatusServer(options: ServerOptions): Server {
     publicUrl: options.publicUrl,
     name,
     showChecks: options.showChecks,
-    maxAgeSeconds: Math.max(1, Math.ceil(Math.max(ctx.cacheMs, options.pollMs) / 1000)),
+    settings: { isHidden: ctx.isHidden, hasChecks: ctx.hasChecks },
   });
   const feedLink =
     options.publicUrl === undefined
@@ -593,7 +628,8 @@ export function createStatusServer(options: ServerOptions): Server {
     req: IncomingMessage,
     url: URL,
     res: ServerResponse,
-  ): Promise<boolean> => handleOps(req, res, ops) || (await syndicate(url, res));
+  ): Promise<boolean> =>
+    handleOps(req, res, ops) || (await syndicate(url, req.headers["if-none-match"], res));
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
@@ -609,7 +645,13 @@ export function createStatusServer(options: ServerOptions): Server {
       if (await serveGenerated(req, url, res)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
         const html = await renderIndex();
-        res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(html);
+        // It embeds the render time, so it gets no tag; the browser revalidates it on each load.
+        res
+          .writeHead(200, {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-cache",
+          })
+          .end(html);
         return;
       }
       const staticFile = staticFiles[url.pathname];
@@ -666,7 +708,7 @@ export function createStatusServer(options: ServerOptions): Server {
         return;
       }
       if (url.pathname.startsWith("/api/")) {
-        await proxyApi(res, req.url ?? "", url, ctx);
+        await proxyApi(req, res, url, ctx);
         return;
       }
       res

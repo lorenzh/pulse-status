@@ -8,7 +8,9 @@ import {
   type IncidentsResponse,
   MANUAL_INCIDENT_IMPACTS,
 } from "@lorenzh/pulse-contract";
+import type { AnswerSettings } from "./answer-cache.ts";
 import { ALLOWED_API_PATHS, filterApiBody, limitResolvedWindow } from "./api-filter.ts";
+import { etagFor } from "./http-cache.ts";
 import { createPoller, type PollerState } from "./poller.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
@@ -513,3 +515,133 @@ for (const isShownFirst of [true, false]) {
     assert.ok(shownChecks.includes("SENTINEL-NAME"), "shown instance shows names");
   });
 }
+
+// Values the filters remove: hidden check ids and names, plus the details of every check.
+const DETAIL_SENTINELS = [
+  "sentinel-url",
+  "sentinel-host",
+  "sentinel-keyword",
+  "sentinel-last-reason",
+  "sentinel-incident-reason",
+];
+const ALL_SETTINGS: AnswerSettings[] = [false, true].flatMap((isHidden) =>
+  [false, true].map((hasChecks) => ({ isHidden, hasChecks })),
+);
+const HIDDEN_SETTINGS: AnswerSettings = { isHidden: true, hasChecks: false };
+
+/** The hidden-check fixture with a detail sentinel in every field that hide mode removes. */
+function addDetailSentinels(bodies: Record<string, unknown>): void {
+  bodies["/checks"] = [
+    {
+      ...httpCheck("sentinel-id", "SENTINEL-NAME"),
+      url: "https://sentinel-url.example/health",
+      keyword: "sentinel-keyword",
+      lastReason: "sentinel-last-reason",
+    },
+    httpCheck("sentinel-loose", "SENTINEL-LOOSE"),
+    { ...httpCheck("db", "Database"), type: "tls", host: "sentinel-host", port: 5432 },
+    dnsCheck,
+  ];
+  for (const key of ["/incidents?status=open", "/incidents?status=resolved"]) {
+    const list = bodies[key];
+    assert.ok(Array.isArray(list));
+    bodies[key] = list.map((item: unknown) =>
+      typeof item === "object" && item !== null
+        ? { ...item, reason: "sentinel-incident-reason" }
+        : item,
+    );
+  }
+}
+
+const SENTINEL_ROUTES = [
+  ...ALLOWED_API_PATHS,
+  "/feed.atom",
+  "/badge/sentinel-id.svg",
+  "/badge/component/shop.svg",
+];
+
+/** The raw upstream body behind a proxied path, as the fake api sends it. */
+function rawBodyOf(bodies: Record<string, unknown>, path: string): string | undefined {
+  return path.startsWith("/api/") ? JSON.stringify(bodies[path.slice(4)] ?? []) : undefined;
+}
+
+async function tagsOf(base: string): Promise<Map<string, string>> {
+  const tags = new Map<string, string>();
+  for (const path of SENTINEL_ROUTES) {
+    const tag = (await fetch(base + path)).headers.get("etag");
+    if (tag !== null) tags.set(path, tag);
+  }
+  return tags;
+}
+
+test("sentinel: tags come from the filtered body and the settings, never from raw data", async () => {
+  const h = await start({ hideDetails: true, showChecks: false });
+  addDetailSentinels(h.bodies);
+  const strings = [...SENTINELS, ...DETAIL_SENTINELS];
+  // The fixture really carries the sentinels upstream.
+  assert.ok(JSON.stringify(h.bodies).includes("sentinel-keyword"));
+  const page = await fetch(`${h.base}/`, { headers: { "if-none-match": "*" } });
+  assert.equal(page.status, 200);
+  assertAbsent(await page.text(), strings, "/");
+  let tagged = 0;
+  let rawChecked = 0;
+  for (const path of SENTINEL_ROUTES) {
+    const res = await fetch(h.base + path);
+    const body = await res.text();
+    if (res.status === 200 || res.status === 304) assertAbsent(body, strings, path);
+    const tag = res.headers.get("etag");
+    if (tag === null) continue;
+    tagged++;
+    assert.equal(res.status, 200, path);
+    assert.equal(tag, etagFor(HIDDEN_SETTINGS, body), path);
+    const again = await fetch(h.base + path, { headers: { "if-none-match": tag } });
+    assert.equal(again.status, 304, path);
+    assertAbsent(await again.text(), strings, `${path} 304`);
+    const raw = rawBodyOf(h.bodies, path);
+    // A raw body without a sentinel (the component routes) is served as is: equal bytes, equal tag.
+    if (raw === undefined || !strings.some((text) => raw.includes(text))) continue;
+    rawChecked++;
+    for (const settings of ALL_SETTINGS) {
+      const rawTag = etagFor(settings, raw);
+      assert.notEqual(rawTag, tag, `${path} ${JSON.stringify(settings)}`);
+      const replay = await fetch(h.base + path, { headers: { "if-none-match": rawTag } });
+      assert.equal(replay.status, 200, `${path} raw replay`);
+    }
+  }
+  // Every allow-listed path but the hidden /api/latency, the feed and the component badge.
+  assert.equal(tagged, ALLOWED_API_PATHS.length - 1 + 2);
+  // checks, maintenance, both incident lists, uptime and components carry hidden data upstream.
+  assert.equal(rawChecked, 6);
+});
+
+test("sentinel: a shown-checks tag never validates at the hidden server", async () => {
+  const hidden = await start({ hideDetails: true, showChecks: false });
+  const shown = await start({ hideDetails: true, showChecks: true });
+  addDetailSentinels(hidden.bodies);
+  addDetailSentinels(shown.bodies);
+  const shownTag = (await fetch(`${shown.base}/api/checks`)).headers.get("etag") ?? "";
+  const hiddenTag = (await fetch(`${hidden.base}/api/checks`)).headers.get("etag") ?? "";
+  assert.notEqual(shownTag, "");
+  assert.notEqual(shownTag, hiddenTag);
+  const replay = await fetch(`${hidden.base}/api/checks`, {
+    headers: { "if-none-match": shownTag },
+  });
+  assert.equal(replay.status, 200);
+});
+
+test("sentinel: a restart with other privacy settings changes every tag", async () => {
+  const before = await start({ hideDetails: true, showChecks: false });
+  const after = await start({ hideDetails: false, showChecks: false });
+  addDetailSentinels(before.bodies);
+  addDetailSentinels(after.bodies);
+  const old = await tagsOf(before.base);
+  const fresh = await tagsOf(after.base);
+  assert.ok(old.size > 0);
+  for (const [path, tag] of old) {
+    const now = fresh.get(path);
+    assert.ok(now !== undefined, path);
+    assert.notEqual(now, tag, path);
+    const replay = await fetch(after.base + path, { headers: { "if-none-match": tag } });
+    assert.equal(replay.status, 200, path);
+  }
+});

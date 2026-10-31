@@ -4,6 +4,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { ALLOWED_API_PATHS } from "./api-filter.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
+import { SYNDICATION_MAX_AGE_SECONDS } from "./syndication.ts";
 import { child, parseXml } from "./xml-parser.ts";
 
 const servers: Server[] = [];
@@ -81,7 +82,7 @@ test("feed: Atom with open and in-window resolved incidents of listed checks", a
   const res = await fetch(`${base}/feed.atom`);
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "application/atom+xml; charset=utf-8");
-  assert.equal(res.headers.get("cache-control"), "public, max-age=5");
+  assert.equal(res.headers.get("cache-control"), "public, max-age=60");
   const text = await res.text();
   const feed = parseXml(text);
   const entries = feed.children.filter((c) => c.name === "entry");
@@ -137,7 +138,7 @@ test("badge: up with uptime, down with no data, label override", async () => {
     up.headers.get("content-security-policy"),
     "sandbox; default-src 'none'; style-src 'unsafe-inline'",
   );
-  assert.equal(up.headers.get("cache-control"), "public, max-age=5");
+  assert.equal(up.headers.get("cache-control"), "public, max-age=60");
   assert.equal(up.headers.get("x-content-type-options"), "nosniff");
   assert.equal(parseXml(await up.text()).attrs["aria-label"], "Web: up 99.95%");
   const down = await fetch(`${base}/badge/api.svg?label=${encodeURIComponent("A&B <x>")}`);
@@ -224,11 +225,12 @@ test("syndication shares the proxy cache and adds no upstream paths", async () =
   }
 });
 
-test("badge: max-age follows the larger of cache and poll time", async () => {
+test("badge: max-age is 60 s regardless of cache and poll time", async () => {
+  assert.equal(SYNDICATION_MAX_AGE_SECONDS, 60);
   const { base } = await start({ cacheMs: 30000, pollMs: 5000 });
   assert.equal(
     (await fetch(`${base}/badge/web.svg`)).headers.get("cache-control"),
-    "public, max-age=30",
+    "public, max-age=60",
   );
 });
 
@@ -455,4 +457,134 @@ test("feed: a 404 of the manual incidents keeps the last successful list; an emp
   assert.ok(!(await (await fetch(`${h.base}/feed.atom`)).text()).includes(":manual:9:0"));
   h.missing.add("/manual-incidents");
   assert.ok(!(await (await fetch(`${h.base}/feed.atom`)).text()).includes(":manual:9:0"));
+});
+
+const TAG_FORM = /^"[A-Za-z0-9_-]{27}"$/;
+const TAGGED_PATHS = ["/feed.atom", "/badge/web.svg", "/badge/component/shop.svg"];
+
+const withTag = (tag: string): RequestInit => ({ headers: { "if-none-match": tag } });
+
+test("feed and badges: public max-age=60 and a strong tag; a repeat with the tag gives 304", async () => {
+  const h = await startWithComponents({ showChecks: true });
+  for (const path of TAGGED_PATHS) {
+    const first = await fetch(h.base + path);
+    const body = await first.text();
+    assert.equal(first.status, 200, path);
+    assert.equal(first.headers.get("cache-control"), "public, max-age=60", path);
+    const tag = first.headers.get("etag") ?? "";
+    assert.match(tag, TAG_FORM, path);
+    assert.ok(body.length > 0);
+    for (const header of [tag, `W/${tag}`, `"nope", W/"x", ${tag}`, `garbage, ${tag}`, "*"]) {
+      for (const method of ["GET", "HEAD"]) {
+        const again = await fetch(h.base + path, { method, ...withTag(header) });
+        assert.equal(again.status, 304, `${path} ${method} ${header}`);
+        assert.equal(await again.text(), "");
+        assert.equal(again.headers.get("etag"), tag);
+        assert.equal(again.headers.get("cache-control"), "public, max-age=60");
+        assert.equal(again.headers.get("content-type"), null);
+      }
+    }
+    const head = await fetch(h.base + path, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("etag"), tag);
+  }
+});
+
+test("badges keep their CSP on a 304", async () => {
+  const h = await startWithComponents({ showChecks: true });
+  for (const path of ["/badge/web.svg", "/badge/component/shop.svg"]) {
+    const tag = (await fetch(h.base + path)).headers.get("etag") ?? "";
+    const again = await fetch(h.base + path, withTag(tag));
+    assert.equal(again.status, 304);
+    assert.equal(
+      again.headers.get("content-security-policy"),
+      "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+    );
+  }
+});
+
+test("feed and badges: an unknown or malformed If-None-Match gives 200 with the tag", async () => {
+  const h = await startWithComponents({ showChecks: true });
+  for (const path of TAGGED_PATHS) {
+    const first = await fetch(h.base + path);
+    const tag = first.headers.get("etag") ?? "";
+    const body = await first.text();
+    const opaque = tag.slice(1, -1);
+    // Commas, not spaces: fetch trims trailing whitespace from header values.
+    const oversized = `${tag}${",".repeat(8193 - tag.length)}`;
+    for (const header of ['"nope"', opaque, '""', "W/", '"a"b"', ",,,", `w/${tag}`, oversized]) {
+      const res = await fetch(h.base + path, withTag(header));
+      assert.equal(res.status, 200, `${path} ${header.slice(0, 40)}`);
+      assert.equal(res.headers.get("etag"), tag);
+      assert.equal(await res.text(), body);
+    }
+  }
+});
+
+test("feed and badges: after an upstream change and the cache period the old tag gives 200", async () => {
+  let clock = NOW;
+  const h = await startWithComponents({ showChecks: true, cacheMs: 2000, now: () => clock });
+  const tags = new Map<string, string>();
+  for (const path of TAGGED_PATHS)
+    tags.set(path, (await fetch(h.base + path)).headers.get("etag") ?? "");
+  h.bodies["/checks"] = [{ ...checks[0], state: "down" }, checks[1]];
+  h.bodies["/components"] = [{ ...components[0], state: "up" }, components[1]];
+  h.bodies["/incidents?status=open"] = [];
+  // Within the cache period the old state is still served.
+  for (const path of TAGGED_PATHS) {
+    assert.equal((await fetch(h.base + path, withTag(tags.get(path) ?? ""))).status, 304, path);
+  }
+  clock += 2000;
+  for (const path of TAGGED_PATHS) {
+    const old = tags.get(path) ?? "";
+    const res = await fetch(h.base + path, withTag(old));
+    assert.equal(res.status, 200, path);
+    const fresh = res.headers.get("etag") ?? "";
+    assert.match(fresh, TAG_FORM);
+    assert.notEqual(fresh, old, path);
+    assert.equal((await fetch(h.base + path, withTag(fresh))).status, 304, path);
+  }
+});
+
+test("badge: the tag of one label does not match another label", async () => {
+  const h = await start();
+  const a = await fetch(`${h.base}/badge/web.svg?label=A`);
+  const b = await fetch(`${h.base}/badge/web.svg?label=B`);
+  const tagA = a.headers.get("etag") ?? "";
+  assert.match(tagA, TAG_FORM);
+  assert.match(b.headers.get("etag") ?? "", TAG_FORM);
+  assert.notEqual(await a.text(), await b.text());
+  assert.notEqual(tagA, b.headers.get("etag"));
+  assert.equal((await fetch(`${h.base}/badge/web.svg?label=B`, withTag(tagA))).status, 200);
+});
+
+test("feed and badges: 400, 404 and 503 are no-store without a tag, also with If-None-Match *", async () => {
+  const h = await startWithComponents();
+  const cases: [string, number][] = [
+    ["/badge/web.svg?label=a%00b", 400],
+    ["/badge/ghost.svg", 404],
+    ["/badge/web.svg", 404],
+    ["/badge/component/nope.svg", 404],
+  ];
+  for (const [path, status] of cases) {
+    const res = await fetch(h.base + path, withTag("*"));
+    assert.equal(res.status, status, path);
+    assert.equal(res.headers.get("cache-control"), "no-store", path);
+    assert.equal(res.headers.get("etag"), null, path);
+  }
+  const ok = await fetch(`${h.base}/feed.atom`);
+  const stale = ok.headers.get("etag") ?? "";
+  assert.equal(ok.status, 200);
+  const failing = await start({ cacheMs: 0 });
+  failing.bodies["/components"] = components;
+  failing.failing.add("/incidents?status=open");
+  for (const header of ["*", stale]) {
+    for (const path of ["/feed.atom", "/badge/component/shop.svg"]) {
+      if (path === "/badge/component/shop.svg") failing.failing.add("/components");
+      const res = await fetch(failing.base + path, withTag(header));
+      assert.equal(res.status, 503, `${path} ${header}`);
+      assert.equal(res.headers.get("cache-control"), "no-store");
+      assert.equal(res.headers.get("etag"), null);
+    }
+  }
 });

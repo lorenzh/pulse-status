@@ -348,3 +348,32 @@ test("serves the public files byte for byte", async () => {
     assert.ok(served.equals(onDisk), path);
   }
 });
+
+test("the page is no-cache without a tag, and If-None-Match still gives 200", async () => {
+  const apiUrl = await listen(api);
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  for (const path of ["/", "/index.html"]) {
+    for (const ifNoneMatch of [undefined, "*", '"x"']) {
+      const headers: Record<string, string> =
+        ifNoneMatch === undefined ? {} : { "if-none-match": ifNoneMatch };
+      const r = await fetch(base + path, { headers });
+      assert.equal(r.status, 200, `${path} ${ifNoneMatch}`);
+      assert.equal(r.headers.get("cache-control"), "no-cache");
+      assert.equal(r.headers.get("etag"), null);
+      assert.match(await r.text(), /<body /);
+    }
+  }
+});
+
+test("static routes other than the fonts keep no cache header", async () => {
+  const apiUrl = await listen(api);
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  for (const path of ["/page.css", "/client.js", "/theme.css", "/theme-init.js", "/render.js"]) {
+    const r = await fetch(base + path);
+    assert.equal(r.status, 200, path);
+    assert.equal(r.headers.get("cache-control"), null, path);
+    assert.equal(r.headers.get("etag"), null, path);
+  }
+  const font = await fetch(`${base}/fonts/space-grotesk.woff2`);
+  assert.equal(font.headers.get("cache-control"), "public, max-age=31536000, immutable");
+});
