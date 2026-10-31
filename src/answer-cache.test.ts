@@ -111,7 +111,9 @@ test("join: two lookups during a build share one build and one answer", async ()
   assert.equal(builds, 1);
 });
 
-test("identity guard: a finished build does not overwrite a newer entry", async () => {
+// The guard: a build whose entry was replaced in the map does not store its inputs on that
+// orphaned entry, and the newer entry stays untouched.
+test("identity guard: a replaced build stores no deps and keeps the newer entry", async () => {
   const answers = new Map<string, AnswerEntry<string, Dep>>();
   const held = deferred<BuiltAnswer<string, Dep>>();
   const pending = cachedAnswerFor(answers, "k", {
@@ -119,14 +121,20 @@ test("identity guard: a finished build does not overwrite a newer entry", async 
     isValid,
     now: () => 0,
   });
+  const original = answers.get("k");
+  assert.ok(original !== undefined);
+  assert.equal(original.deps, null);
+  const newerDeps: readonly Dep[] = [{ until: 10 }];
   const newer: AnswerEntry<string, Dep> = {
     answer: Promise.resolve("newer"),
-    deps: [{ until: 10 }],
+    deps: newerDeps,
   };
   answers.set("k", newer);
   held.resolve({ answer: "older", deps: [{ until: 10 }] });
   assert.equal(await pending, "older");
+  assert.equal(original.deps, null);
   assert.equal(answers.get("k"), newer);
+  assert.equal(newer.deps, newerDeps);
   const next = await cachedAnswerFor(answers, "k", {
     build: async () => ({ answer: "rebuilt", deps: [] }),
     isValid,
