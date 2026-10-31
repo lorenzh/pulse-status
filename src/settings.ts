@@ -1,12 +1,14 @@
 import {
   type Env,
   readBool,
+  readInt,
   readMs,
   readPort,
   readString,
   readUrl,
   StartupError,
 } from "@lorenzh/pulse-kit";
+import { MAX_UPSTREAM_TIMEOUT_MS } from "./server.ts";
 
 /** A shorter interval would load the API without a visible benefit. */
 export const MIN_POLL_MS = 1000;
@@ -66,10 +68,11 @@ export function readSettings(env: Env): Settings {
     publicUrl: readPublicUrl(env),
     hideDetails: readBool(env, "PULSE_STATUS_HIDE_DETAILS", true),
     showChecks: readBool(env, "PULSE_STATUS_SHOW_CHECKS", false),
-    cacheMs: readMs(env, "PULSE_STATUS_CACHE_MS", { fallback: 2000, min: 0 }),
+    cacheMs: readInt(env, "PULSE_STATUS_CACHE_MS", { fallback: 2000, min: 0 }),
     upstreamTimeoutMs: readMs(env, "PULSE_STATUS_UPSTREAM_TIMEOUT_MS", {
       fallback: 4000,
       min: 1,
+      max: MAX_UPSTREAM_TIMEOUT_MS,
     }),
   };
 }

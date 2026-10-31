@@ -112,3 +112,18 @@ test("serves the browser-safe kit modules and rewrites render.js to them", async
   }
   assert.equal((await fetch(`${base}/pulse-kit/settings.js`)).status, 404);
 });
+
+test("serves the kit is-record module to the poller and nothing else of the kit", async () => {
+  const base = await start();
+  const r = await fetch(`${base}/pulse-kit/is-record.js`);
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "text/javascript; charset=utf-8");
+  const body = await r.text();
+  assert.match(body, /isRecord/);
+  assert.doesNotMatch(body, /\bimport\b/);
+  for (const file of ["index.js", "atomic-write.js", "secret-file.js", "settings.js"]) {
+    assert.equal((await fetch(`${base}/pulse-kit/${file}`)).status, 404, file);
+  }
+  const poller = await (await fetch(`${base}/poller.js`)).text();
+  assert.match(poller, /from "\/pulse-kit\/is-record\.js"/);
+});

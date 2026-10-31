@@ -4,6 +4,7 @@ import {
   type ManualIncidentImpact,
   validateManualIncident,
 } from "@lorenzh/pulse-contract";
+import { isRecord } from "@lorenzh/pulse-kit";
 import type { AnswerSettings } from "./answer-cache.ts";
 import { parseBadgeLabel, renderBadge } from "./badge.ts";
 import { componentsWithIncidents } from "./components-view.ts";
@@ -51,12 +52,6 @@ const BADGE_TYPE = "image/svg+xml; charset=utf-8";
 const BADGE_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 const MAX_TIME_MS = 8.64e15;
 
-type Fields = Record<string, unknown>;
-
-function isObject(value: unknown): value is Fields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isTime(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && Math.abs(value) <= MAX_TIME_MS;
 }
@@ -82,7 +77,7 @@ function parseChecks(answer: CachedAnswer): ListedCheck[] | undefined {
   const out: ListedCheck[] = [];
   for (const item of list) {
     if (
-      !isObject(item) ||
+      !isRecord(item) ||
       typeof item.id !== "string" ||
       typeof item.name !== "string" ||
       typeof item.state !== "string" ||
@@ -106,7 +101,7 @@ function parseComponents(answer: CachedAnswer): ListedComponent[] | undefined {
   const out: ListedComponent[] = [];
   for (const item of list) {
     if (
-      !isObject(item) ||
+      !isRecord(item) ||
       typeof item.id !== "string" ||
       typeof item.name !== "string" ||
       typeof item.state !== "string" ||
@@ -127,7 +122,7 @@ function parseIncidents(answer: CachedAnswer): FeedIncident[] | undefined {
   const out: FeedIncident[] = [];
   for (const item of list) {
     if (
-      !isObject(item) ||
+      !isRecord(item) ||
       typeof item.id !== "number" ||
       typeof item.checkId !== "string" ||
       !isTime(item.openedAt) ||
@@ -193,8 +188,8 @@ function uptimeOf(
   id: string,
 ): number | undefined {
   const list = jsonList(answer);
-  const entry = list?.find((item) => isObject(item) && item[key] === id);
-  if (!isObject(entry)) return undefined;
+  const entry = list?.find((item) => isRecord(item) && item[key] === id);
+  if (!isRecord(entry)) return undefined;
   const value = entry.uptime;
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100
     ? value

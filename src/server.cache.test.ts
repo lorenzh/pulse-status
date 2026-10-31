@@ -158,6 +158,10 @@ test("invalid cache or timeout settings throw", () => {
     createStatusServer({ apiUrl: "https://x.test", pollMs: 1, ...o });
   assert.throws(make({ cacheMs: -1 }), /PULSE_STATUS_CACHE_MS/);
   assert.throws(make({ upstreamTimeoutMs: 0 }), /PULSE_STATUS_UPSTREAM_TIMEOUT_MS/);
+  assert.throws(
+    make({ upstreamTimeoutMs: 2147481648 }),
+    /PULSE_STATUS_UPSTREAM_TIMEOUT_MS: must be a number from 1 to 2147481647/,
+  );
 });
 
 test("the proxy forwards the wire version header of the api", async () => {
