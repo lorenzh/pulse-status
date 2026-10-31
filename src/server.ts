@@ -225,7 +225,14 @@ function zodFile(pathname: string): string | undefined {
     return undefined; // malformed percent-encoding is not a file
   }
   const file = resolve(zodDir, relative);
-  return file.startsWith(zodDir + sep) ? file : undefined;
+  if (!file.startsWith(zodDir + sep)) return undefined;
+  // Only the canonical spelling is served. Assets are kept in memory by path, so encoded or
+  // dotted aliases of one file would each keep their own copy.
+  const canonical = file
+    .slice(zodDir.length + 1)
+    .split(sep)
+    .join("/");
+  return canonical === pathname.slice(zodPrefix.length) ? file : undefined;
 }
 
 /** The source of a contract runtime file (or a zod file) under `/pulse-contract/`, else undefined. */
