@@ -81,3 +81,31 @@ test("buildAtom: ties sort by id descending; hostile text and name stay well-for
   assert.ok(!xml.includes("<script>"));
   assert.ok(xml.includes("x]]&gt;😀"));
 });
+
+test("buildAtom: hidden keys are labelled by components or as Service, orphans are dropped", () => {
+  const xml = buildAtom({
+    ...base,
+    checks: [],
+    components: [
+      { id: "shop", name: "Online shop", checkIds: ["components:shop", "components:shop+api"] },
+      { id: "api", name: "API", checkIds: ["components:shop+api"] },
+    ],
+    open: [
+      { id: 7, checkId: "components:shop", openedAt: 3000, resolvedAt: null },
+      { id: 8, checkId: "components:shop+api", openedAt: 2000, resolvedAt: null },
+      { id: 9, checkId: "service", openedAt: 1000, resolvedAt: null },
+      { id: 10, checkId: "unknown", openedAt: 500, resolvedAt: null },
+    ],
+    resolved: [{ id: 6, checkId: "service", openedAt: 10, resolvedAt: 20 }],
+  });
+  const titles = parseXml(xml)
+    .children.filter((c) => c.name === "entry")
+    .map((entry) => child(entry, "title").text);
+  assert.deepEqual(titles, [
+    "Online shop: Open",
+    "Online shop, API: Open",
+    "Service: Open",
+    "Service: Resolved",
+  ]);
+  assert.ok(!xml.includes("incident-10"));
+});

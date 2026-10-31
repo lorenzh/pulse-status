@@ -66,19 +66,18 @@ const REST: Record<string, object> = {
   domain: { domain: "hidden.invalid", warnDays: 0, intervalMs: 3_600_000, consecutiveDown: 0 },
 };
 
-const TARGET_STRINGS = [
-  "tcp.internal",
-  "dns.internal",
-  "ns-answer.internal",
-  RESOLVER,
-  "domain.internal",
-];
+const TARGET_STRINGS = ["tcp.internal", "dns.internal", "domain.internal"];
+// DNS `expected` and `resolver` are never served, with details shown or hidden.
+const NEVER_SERVED = ["ns-answer.internal", RESOLVER];
 
 test("tcp, dns and domain targets are served only when not hidden", () => {
   const shown = JSON.stringify(filterApiBody("/api/checks", upstream, false));
   for (const text of TARGET_STRINGS) assert.ok(shown.includes(text), text);
+  for (const text of NEVER_SERVED) assert.equal(shown.includes(text), false, text);
   const hidden = JSON.stringify(filterApiBody("/api/checks", upstream, true));
-  for (const text of TARGET_STRINGS) assert.equal(hidden.includes(text), false, text);
+  for (const text of [...TARGET_STRINGS, ...NEVER_SERVED]) {
+    assert.equal(hidden.includes(text), false, text);
+  }
   assert.ok(hidden.includes("12"));
 });
 

@@ -31,8 +31,10 @@ async function listen(s: Server): Promise<string> {
 }
 
 async function fetchChecks(hideValue: string | undefined): Promise<string> {
-  const upstream = createServer((_req, res) => {
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify([check]));
+  const upstream = createServer((req, res) => {
+    // No components: checks are shown by design, as before.
+    const body = req.url === "/components" ? [] : [check];
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
   });
   const apiUrl = await listen(upstream);
   const env: NodeJS.ProcessEnv = { PULSE_API_URL: apiUrl, POLL_MS: "1000" };

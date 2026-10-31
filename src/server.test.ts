@@ -26,6 +26,7 @@ const PLAIN_LOGO = ["http:", "//x.test/logo.png"].join("");
 const api = createServer((req, res) => {
   res.setHeader("content-type", "application/json");
   if (req.url === "/checks") res.end('[{"id":"a"}]');
+  else if (req.url === "/components") res.end("[]");
   else if (req.url === "/incidents?status=open") res.end("[]");
   else res.writeHead(404).end('{"error":"nope"}');
 });

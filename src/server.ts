@@ -14,6 +14,14 @@ import {
   sendJson,
 } from "@lorenzh/pulse-kit";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
+import {
+  hiddenCheckKeys,
+  hideCheckIds,
+  needsActiveChecks,
+  needsComponents,
+  parseActiveCheckIds,
+  parseComponentsSnapshot,
+} from "./hidden-checks.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { renderState } from "./ssr.ts";
@@ -37,7 +45,7 @@ export interface ServerOptions {
   hideDetails?: boolean | undefined;
   /** List member checks under each component (PULSE_STATUS_SHOW_CHECKS), default false. */
   showChecks?: boolean | undefined;
-  /** How long a proxied answer, error answers included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
+  /** How long an upstream read, errors included, is reused (PULSE_STATUS_CACHE_MS); 0 = off. */
   cacheMs?: number;
   /** Time limit for one upstream request, headers and body (PULSE_STATUS_UPSTREAM_TIMEOUT_MS). */
   upstreamTimeoutMs?: number;
@@ -62,7 +70,7 @@ interface ProxyAnswer {
 }
 
 interface CacheEntry {
-  answer: Promise<ProxyAnswer>;
+  read: Promise<RawRead>;
   /** Null while the upstream call is in flight. */
   expiresAt: number | null;
 }
@@ -248,7 +256,12 @@ function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswe
     : { status, body: JSON.stringify(body), wireVersion };
 }
 
-async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
+/** One unfiltered upstream read. Never sent to a client: answers are derived from it. */
+type RawRead =
+  | { ok: true; value: unknown; wireHeader: string | undefined }
+  | { ok: false; answer: ProxyAnswer };
+
+async function fetchRaw(path: string, ctx: ProxyContext): Promise<RawRead> {
   // The shared client does not expose headers; this wrapper records those the proxy forwards.
   let contentType = "";
   let wireHeader: string | undefined;
@@ -262,8 +275,7 @@ async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> 
     },
     { preconnect: ctx.doFetch.preconnect },
   );
-  const target = ctx.apiBase + url.pathname.slice("/api".length) + url.search;
-  const result = await fetchJson<unknown>(target, {
+  const result = await fetchJson<unknown>(ctx.apiBase + path, {
     fetch: recordingFetch,
     validate: (raw) => ({ ok: true, value: raw }),
     timeoutMs: ctx.timeoutMs,
@@ -272,49 +284,124 @@ async function fetchUpstream(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> 
     switch (result.error.kind) {
       case "http":
         // Only the body is withheld; the wire header is forwarded as received.
-        return answer(result.error.status, { error: "API error" }, wireHeader);
+        return {
+          ok: false,
+          answer: answer(result.error.status, { error: "API error" }, wireHeader),
+        };
       case "wire-mismatch":
         // The page poller reads the header and shows the version error; the body is not read.
-        return answer(200, { error: "API version mismatch" }, wireHeader);
+        return { ok: false, answer: answer(200, { error: "API version mismatch" }, wireHeader) };
       case "too-large":
       case "invalid-json":
       case "validation":
-        return answer(502, { error: "invalid API response" }, wireHeader);
+        return { ok: false, answer: answer(502, INVALID_RESPONSE, wireHeader) };
       case "timeout":
       case "aborted":
       case "network":
-        return answer(502, { error: "API unreachable" }, wireHeader);
+        return { ok: false, answer: answer(502, { error: "API unreachable" }, wireHeader) };
       default: {
         const unreachable: never = result.error;
-        return answer(502, { error: String(unreachable) }, wireHeader);
+        return { ok: false, answer: answer(502, { error: String(unreachable) }, wireHeader) };
       }
     }
   }
   const mediaType = contentType.split(";")[0]?.trim().toLowerCase();
   if (mediaType !== "application/json") {
-    return answer(502, { error: "invalid API response" }, wireHeader);
+    return { ok: false, answer: answer(502, INVALID_RESPONSE, wireHeader) };
   }
-  let body = filterApiBody(url.pathname, result.value, ctx.isHidden, ctx.hasChecks);
-  if (url.pathname + url.search === "/api/incidents?status=resolved") {
-    body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
-  }
-  return answer(200, body, wireHeader);
+  return { ok: true, value: result.value, wireHeader };
 }
 
-function cachedAnswer(key: string, url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
-  if (ctx.cacheMs === 0) return fetchUpstream(url, ctx);
+const INVALID_RESPONSE = { error: "invalid API response" };
+
+/** Single flight per upstream path: one call per path per cache period, errors included. */
+function cachedRaw(path: string, ctx: ProxyContext): Promise<RawRead> {
+  if (ctx.cacheMs === 0) return fetchRaw(path, ctx);
+  const key = `raw:${path}`;
   const entry = ctx.cache.get(key);
   if (entry !== undefined && (entry.expiresAt === null || ctx.now() < entry.expiresAt)) {
-    return entry.answer;
+    return entry.read;
   }
   const fresh: CacheEntry = {
-    answer: fetchUpstream(url, ctx).finally(() => {
+    read: fetchRaw(path, ctx).finally(() => {
       fresh.expiresAt = ctx.now() + ctx.cacheMs;
     }),
     expiresAt: null,
   };
   ctx.cache.set(key, fresh);
-  return fresh.answer;
+  return fresh.read;
+}
+
+type RawReader = (path: string) => Promise<RawRead>;
+
+/** Reads each upstream path at most once per served answer, also with the cache off. */
+function rawReader(ctx: ProxyContext): RawReader {
+  const reads = new Map<string, Promise<RawRead>>();
+  return (path) => {
+    const known = reads.get(path);
+    if (known !== undefined) return known;
+    const read = cachedRaw(path, ctx);
+    reads.set(path, read);
+    return read;
+  };
+}
+
+/** A snapshot read failed: 502 with the generic body of its failure kind, never the data. */
+function snapshotFailure(failed: ProxyAnswer, wireHeader: string | undefined): ProxyAnswer {
+  return wireHeader === undefined
+    ? { status: 502, body: failed.body }
+    : { status: 502, body: failed.body, wireVersion: wireHeader };
+}
+
+/**
+ * The answer with checks hidden. Without components it is `body` (checks are shown by design);
+ * with components no check id or name is left. Fails closed when a snapshot cannot be read.
+ */
+async function hiddenAnswer(
+  pathname: string,
+  body: unknown,
+  wireHeader: string | undefined,
+  componentsRead: RawRead,
+  read: RawReader,
+): Promise<ProxyAnswer> {
+  if (!componentsRead.ok) return snapshotFailure(componentsRead.answer, wireHeader);
+  const components = parseComponentsSnapshot(componentsRead.value);
+  if (components === undefined) return answer(502, INVALID_RESPONSE, wireHeader);
+  if (components.length === 0) return answer(200, body, wireHeader);
+  let activeIds = new Set<string>();
+  if (needsActiveChecks(pathname)) {
+    const checksRead = await read("/checks");
+    if (!checksRead.ok) return snapshotFailure(checksRead.answer, wireHeader);
+    const ids = parseActiveCheckIds(checksRead.value);
+    if (ids === undefined) return answer(502, INVALID_RESPONSE, wireHeader);
+    activeIds = ids;
+  }
+  const hidden = hideCheckIds(pathname, body, hiddenCheckKeys(components, activeIds));
+  return hidden === undefined
+    ? answer(502, INVALID_RESPONSE, wireHeader)
+    : answer(200, hidden, wireHeader);
+}
+
+/** The served answer of one allow-listed path, derived from the raw reads on each request. */
+async function proxyAnswer(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
+  const read = rawReader(ctx);
+  const ownPath = url.pathname.slice("/api".length) + url.search;
+  // Both reads start together; a failed own read wins over a failed snapshot read.
+  const ownRead = read(ownPath);
+  const componentsRead =
+    !ctx.hasChecks && needsComponents(url.pathname) ? read("/components") : undefined;
+  const own = await ownRead;
+  if (!own.ok) return own.answer;
+  let body = filterApiBody(url.pathname, own.value, ctx.isHidden, ctx.hasChecks);
+  if (url.pathname + url.search === "/api/incidents?status=resolved") {
+    body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
+  }
+  if (componentsRead === undefined) return answer(200, body, own.wireHeader);
+  return hiddenAnswer(url.pathname, body, own.wireHeader, await componentsRead, read);
+}
+
+function cachedAnswer(path: string, ctx: ProxyContext): Promise<ProxyAnswer> {
+  return proxyAnswer(new URL(path, "http://localhost"), ctx);
 }
 
 async function proxyApi(
@@ -333,7 +420,7 @@ async function proxyApi(
     sendJson(res, 404, { error: "not found" });
     return;
   }
-  const result = await cachedAnswer(url.pathname + url.search, url, ctx);
+  const result = await proxyAnswer(url, ctx);
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "cache-control": "no-store",
@@ -383,7 +470,7 @@ export function createStatusServer(options: ServerOptions): Server {
   ctx.apiBase = apiBase;
 
   const syndicate = createSyndication({
-    read: (path) => cachedAnswer(path, new URL(path, "http://localhost"), ctx),
+    read: (path) => cachedAnswer(path, ctx),
     publicUrl: options.publicUrl,
     name,
     showChecks: options.showChecks,
@@ -401,7 +488,7 @@ export function createStatusServer(options: ServerOptions): Server {
   const renderSections = async (): Promise<Record<string, string>> => {
     try {
       return await renderState({
-        read: (path) => cachedAnswer(path, new URL(path, "http://localhost"), ctx),
+        read: (path) => cachedAnswer(path, ctx),
         now: ctx.now,
         showChecks: options.showChecks === true,
       });

@@ -105,10 +105,12 @@ test("end to end: the page shows components over HTTP and no hidden check data",
   const apiUrl = await fakeApi(withComponents);
   const base = await listen(createStatusServer({ apiUrl, pollMs: 5000, cacheMs: 0 }));
   const served = await (await fetch(`${base}/api/components`)).json();
-  assert.deepEqual(served, [components[0]], "unlisted keys are dropped");
+  // Unlisted keys are dropped, and the member check id is replaced by its hidden key.
+  const keyed = [{ ...components[0], checkIds: ["components:shop"] }];
+  assert.deepEqual(served, keyed);
   const state = await pollPage(base);
   assert.equal(state.error, null);
-  assert.deepEqual(state.components, components);
+  assert.deepEqual(state.components, keyed);
   const html = Object.values(buildSections(state, env)).join("\n");
   assert.match(html, /Shop/);
   assert.match(html, /Buy things/);
@@ -116,7 +118,15 @@ test("end to end: the page shows components over HTTP and no hidden check data",
   for (const hidden of ["hidden-db", "Hidden DB", "internal.invalid", "refused"]) {
     assert.ok(!html.includes(hidden), hidden);
   }
-  const shown = Object.values(buildSections(state, env, undefined, { showChecks: true })).join(
+  for (const path of ["/", "/api/checks", "/api/incidents?status=open", "/api/uptime"]) {
+    assert.ok(!(await (await fetch(base + path)).text()).includes("hidden-db"), path);
+  }
+  // With checks shown the server serves them, and the page lists them under the component.
+  const shownBase = await listen(
+    createStatusServer({ apiUrl, pollMs: 5000, cacheMs: 0, showChecks: true }),
+  );
+  const shownState = await pollPage(shownBase);
+  const shown = Object.values(buildSections(shownState, env, undefined, { showChecks: true })).join(
     "\n",
   );
   assert.match(shown, /Hidden DB/);

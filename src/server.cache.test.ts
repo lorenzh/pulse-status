@@ -36,7 +36,7 @@ const ok = (body: unknown): Response =>
 test("20 parallel requests share one upstream call; a new one after the TTL", async () => {
   let clock = 1000;
   const calls: string[] = [];
-  const base = await start({ cacheMs: 2000, now: () => clock }, async (url) => {
+  const base = await start({ cacheMs: 2000, now: () => clock, showChecks: true }, async (url) => {
     calls.push(url);
     return ok([{ id: "a" }]);
   });
@@ -56,7 +56,7 @@ test("20 parallel requests share one upstream call; a new one after the TTL", as
 test("each path and query is one cache entry; a new call per path after the TTL", async () => {
   let clock = 1000;
   const calls: string[] = [];
-  const base = await start({ cacheMs: 2000, now: () => clock }, async (url) => {
+  const base = await start({ cacheMs: 2000, now: () => clock, showChecks: true }, async (url) => {
     calls.push(url);
     return ok([]);
   });
@@ -76,7 +76,7 @@ test("each path and query is one cache entry; a new call per path after the TTL"
 
 test("cacheMs 0 turns the cache off", async () => {
   let calls = 0;
-  const base = await start({ cacheMs: 0 }, async () => {
+  const base = await start({ cacheMs: 0, showChecks: true }, async () => {
     calls++;
     return ok([]);
   });
@@ -89,7 +89,7 @@ test("an upstream error is cached for the period only, then retried", async () =
   let clock = 0;
   let calls = 0;
   let isUp = false;
-  const base = await start({ cacheMs: 2000, now: () => clock }, async () => {
+  const base = await start({ cacheMs: 2000, now: () => clock, showChecks: true }, async () => {
     calls++;
     if (!isUp) throw new Error("down");
     return ok([]);
@@ -112,13 +112,18 @@ test("resolved incidents: only the last 7 days, newest first", async () => {
     resolvedAt,
     reason: null,
   });
-  const base = await start({ now: () => now }, async () =>
-    ok([
-      incident(1, now - 8 * DAY),
-      incident(2, now - 2 * DAY),
-      incident(3, now - 1 * DAY),
-      incident(4, now - 7 * DAY),
-    ]),
+  // No components: the resolved window is the subject, not hidden mode.
+  const base = await start({ now: () => now }, async (url) =>
+    ok(
+      url.endsWith("/components")
+        ? []
+        : [
+            incident(1, now - 8 * DAY),
+            incident(2, now - 2 * DAY),
+            incident(3, now - 1 * DAY),
+            incident(4, now - 7 * DAY),
+          ],
+    ),
   );
   const body = (await (
     await fetch(`${base}/api/incidents?status=resolved`)

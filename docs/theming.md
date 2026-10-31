@@ -108,7 +108,7 @@ The page reads pulse-api through this server, so the browser needs no direct acc
 
 - `GET` and `HEAD` are the only methods. Any other method answers `405` with `allow: GET, HEAD`.
 - Only nine reads are proxied: `/api/uptime`, `/api/checks`, `/api/maintenance`, `/api/incidents?status=open`, `/api/incidents?status=resolved`, `/api/components`, `/api/components/uptime`, `/api/manual-incidents` and `/api/latency` (no query on the last four). `/api/latency` is per check: with `PULSE_STATUS_SHOW_CHECKS` off it answers `404`. Each becomes `GET <PULSE_API_URL>/<path>?<query>`, for example `/api/checks` becomes `GET <PULSE_API_URL>/checks`. Any other path or query answers `404` with `{"error":"not found"}` and does not reach the API. No auth header is added.
-- The JSON is filtered before it is sent, see [What is public](operation.md#what-is-public).
+- The JSON is filtered before it is sent, see [What is public](operation.md#what-is-public). With `PULSE_STATUS_SHOW_CHECKS` off the proxy also reads `/components` upstream for `/api/checks`, `/api/uptime`, `/api/incidents?…` and `/api/maintenance`, and, when components are configured, `/checks` for incidents and maintenance, to replace check ids with hidden keys.
 - If the API answers with an error status, the proxy sends the same status with `{"error":"API error"}`. The API body is not passed on.
 - If the API answer is not valid JSON, the proxy answers `502` with `{"error":"invalid API response"}`.
 - If the API cannot be reached, the proxy answers `502` with `{"error":"API unreachable"}`.

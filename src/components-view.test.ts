@@ -181,3 +181,21 @@ test("labels: components of a check in several components are all named", () => 
   assert.equal(labels.get("secret-web"), "Shop, Docs, Blog, Misc");
   assert.equal(labels.get("loose"), "Service");
 });
+
+test("labels: hidden keys get the component names or the neutral label", () => {
+  const keyed: ComponentView = {
+    ...view,
+    checks: [],
+    uptime: [],
+    components: [
+      componentOf("shop", "Online shop", ["components:shop", "components:shop+api"]),
+      componentOf("api", "API", ["components:shop+api"]),
+    ],
+  };
+  const labels = checkLabels(keyed);
+  assert.equal(labels.get("components:shop"), "Online shop");
+  assert.equal(labels.get("components:shop+api"), "Online shop, API");
+  // The key the server sends for a hidden check in no component.
+  assert.equal(labels.get("service"), "Service");
+  assert.equal(checkLabels({ ...keyed, showChecks: true }).has("service"), false);
+});
