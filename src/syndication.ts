@@ -1,8 +1,8 @@
 import type { ServerResponse } from "node:http";
 import {
   type CheckState,
-  MANUAL_INCIDENT_IMPACTS,
   type ManualIncidentImpact,
+  validateManualIncident,
 } from "@lorenzh/pulse-contract";
 import type { AnswerSettings } from "./answer-cache.ts";
 import { parseBadgeLabel, renderBadge } from "./badge.ts";
@@ -146,15 +146,6 @@ function parseIncidents(answer: CachedAnswer): FeedIncident[] | undefined {
   return out;
 }
 
-function isManualUpdate(value: unknown): boolean {
-  return (
-    isObject(value) &&
-    isTime(value.at) &&
-    typeof value.status === "string" &&
-    typeof value.message === "string"
-  );
-}
-
 /** A manual incident as the feed and the component badge read it. */
 interface ParsedManualIncident extends FeedManualIncident {
   impact: ManualIncidentImpact;
@@ -165,12 +156,6 @@ const CHECK_STATES: readonly CheckState[] = ["up", "down", "degraded", "maintena
 
 function isCheckState(value: string): value is CheckState {
   return (CHECK_STATES as readonly string[]).includes(value);
-}
-
-function isImpact(value: unknown): value is ManualIncidentImpact {
-  return (
-    typeof value === "string" && (MANUAL_INCIDENT_IMPACTS as readonly string[]).includes(value)
-  );
 }
 
 /**
@@ -186,27 +171,16 @@ function parseManualIncidents(
   if (list === undefined) return undefined;
   const out: ParsedManualIncident[] = [];
   for (const item of list) {
-    if (
-      !isObject(item) ||
-      !(item.resolvedAt === null || isTime(item.resolvedAt)) ||
-      typeof item.id !== "number" ||
-      typeof item.title !== "string" ||
-      !isImpact(item.impact) ||
-      !Array.isArray(item.componentIds) ||
-      !item.componentIds.every((id: unknown) => typeof id === "string") ||
-      !Array.isArray(item.updates) ||
-      !item.updates.every(isManualUpdate)
-    ) {
-      return undefined;
-    }
+    const checked = validateManualIncident(item);
+    if (!checked.ok) return undefined;
+    const incident = checked.value;
     out.push({
-      id: item.id,
-      title: item.title,
-      componentIds: item.componentIds,
-      impact: item.impact,
-      resolvedAt: item.resolvedAt,
-      // Checked above.
-      updates: item.updates as FeedManualIncident["updates"],
+      id: incident.id,
+      title: incident.title,
+      componentIds: incident.componentIds,
+      impact: incident.impact,
+      resolvedAt: incident.resolvedAt,
+      updates: incident.updates,
     });
   }
   return out;
