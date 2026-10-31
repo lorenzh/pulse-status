@@ -11,7 +11,13 @@ import { filterApiBody } from "./api-filter.ts";
 import { renderComponents } from "./components-view.ts";
 import { FakeDom } from "./patch.fake-dom.ts";
 import { patchHtml } from "./patch.ts";
-import { renderChecks, renderLatencyChart, renderSlo, type TimeEnv } from "./render.ts";
+import {
+  renderChecks,
+  renderDailyValues,
+  renderLatencyChart,
+  renderSlo,
+  type TimeEnv,
+} from "./render.ts";
 
 const env: TimeEnv = {
   now: 0,
@@ -86,15 +92,14 @@ test("slo: check and component entries show it, checks without a target show not
   assert.match(html, /50 % budget left/);
 });
 
-test("chart: summary, objective, aria-hidden svg and one details table", () => {
-  const html = renderLatencyChart(full, 300, "Web");
+test("chart: summary, objective, aria-hidden svg, and no table of its own", () => {
+  const html = renderLatencyChart(full, 300);
   assert.match(html, /highest daily p95, last 7 days 180 ms, objective 300 ms/);
   assert.match(html, /<svg[^>]*aria-hidden="true"/);
   assert.match(html, /class="lat-objective"/);
-  assert.equal(html.match(/<summary>/g)?.length, 1);
-  assert.equal(html.match(/<tr data-key="day:/g)?.length, 90);
+  assert.doesNotMatch(html, /<summary>|<table|<details/);
   assert.doesNotMatch(html, /tabindex/);
-  assert.doesNotMatch(renderLatencyChart(full, undefined, "Web"), /lat-objective/);
+  assert.doesNotMatch(renderLatencyChart(full, undefined), /lat-objective/);
 });
 
 test("chart: summary shows the highest daily p95 of the last 7 days, not a mean", () => {
@@ -105,29 +110,26 @@ test("chart: summary shows the highest daily p95 of the last 7 days, not a mean"
     89: day(89, 100, 100, 1),
   };
   const mixed = latency((i) => sample[i] ?? day(i, null, null, 0));
-  const html = renderLatencyChart(mixed, 300, "Web");
+  const html = renderLatencyChart(mixed, 300);
   assert.match(html, />highest daily p95, last 7 days 100 ms, objective 300 ms</);
 });
 
 test("chart: a null day is a gap and a single day is a dot", () => {
   const gap = latency((i) => (i === 40 ? day(i, null, null, 0) : day(i, 100, 180, 10)));
-  assert.equal(
-    renderLatencyChart(gap, undefined, "Web").match(/<polyline class="lat-p95"/g)?.length,
-    2,
-  );
+  assert.equal(renderLatencyChart(gap, undefined).match(/<polyline class="lat-p95"/g)?.length, 2);
   const lone = latency((i) => (i === 89 ? day(i, 100, 180, 10) : day(i, null, null, 0)));
-  assert.match(renderLatencyChart(lone, undefined, "Web"), /lat-p95-dot/);
+  assert.match(renderLatencyChart(lone, undefined), /lat-p95-dot/);
 });
 
 test("chart: no data reads 'no latency data yet' and draws no svg", () => {
   const empty = latency((i) => day(i, null, null, 0));
   for (const entry of [empty, undefined]) {
-    const html = renderLatencyChart(entry, 300, "Web");
+    const html = renderLatencyChart(entry, 300);
     assert.match(html, /no latency data yet/);
     assert.doesNotMatch(html, /<svg|<details/);
   }
   const old = latency((i) => (i < 10 ? day(i, 5, 6, 1) : day(i, null, null, 0)));
-  assert.match(renderLatencyChart(old, undefined, "Web"), /no latency data in the last 7 days/);
+  assert.match(renderLatencyChart(old, undefined), /no latency data in the last 7 days/);
 });
 
 test("renderChecks: only HTTP checks get a chart, and only when latency is read", () => {
@@ -173,12 +175,11 @@ test("patch: an open details stays open and unchanged chart html writes nothing"
   assert.equal(dom.writes, before);
 });
 
-test("filter: latency keeps only the contract fields and is empty while checks are hidden", () => {
+test("filter: latency keeps only the contract fields", () => {
   const body = [{ ...full, secret: "s", days: full.days.map((d) => ({ ...d, extra: 1 })) }];
-  const out = filterApiBody("/api/latency", body, true, true);
+  const out = filterApiBody("/api/latency", body, true);
   assert.ok(validateLatencyResponse(out, "latency").ok);
   assert.doesNotMatch(JSON.stringify(out), /secret|extra/);
-  assert.deepEqual(filterApiBody("/api/latency", body, true, false), []);
 });
 
 test("filter: slo is kept on checks and components, numbers and null only", () => {
@@ -228,13 +229,12 @@ test("display rounding: live line, summary and daily table", () => {
       },
     ]);
     assert.match(live, new RegExp(`<span class="latency">${text}`));
-    const chart = renderLatencyChart(
-      latency((i) => day(i, value, value, 1)),
-      undefined,
-      "Web",
-    );
+    const days = latency((i) => day(i, value, value, 1));
+    const chart = renderLatencyChart(days, undefined);
     assert.match(chart, new RegExp(`days ${text}`));
-    assert.match(chart, new RegExp(`<td>${text}</td><td>${text}</td>`));
+    const table = renderDailyValues({ name: "Web", uptime: undefined, latency: days.days });
+    const number = text.slice(0, -" ms".length);
+    assert.match(table, new RegExp(`<td>${number}</td><td>${number}</td>`));
     assert.doesNotMatch(chart, /\.\d\d\d* ms/);
     assert.doesNotMatch(live, /\.\d\d\d* ms/);
   }
@@ -244,8 +244,12 @@ test("display rounding: null stays no data and the objective is formatted", () =
   const chart = renderLatencyChart(
     latency((i) => day(i, null, i === 89 ? 2.345 : null, i === 89 ? 1 : 0)),
     300,
-    "Web",
   );
-  assert.match(chart, /no data/);
+  const table = renderDailyValues({
+    name: "Web",
+    uptime: undefined,
+    latency: latency((i) => day(i, null, i === 89 ? 2.345 : null, i === 89 ? 1 : 0)).days,
+  });
+  assert.match(table, /<td>no data<\/td><td>2\.3<\/td>/);
   assert.match(chart, /days 2\.3 ms, objective 300 ms/);
 });

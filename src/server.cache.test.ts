@@ -468,16 +468,18 @@ test("/api/checks: a failed components snapshot with hidden checks is no-store w
 
 test("/api/*: a rejected path gives 404 no-store without a tag", async () => {
   const base = await start({ showChecks: true }, async () => ok([]));
-  for (const path of ["/api/other", "/api/checks?x=1", "/api/incidents?"]) {
+  for (const path of [
+    "/api/other",
+    "/api/checks?x=1",
+    "/api/incidents?",
+    "/api/components/latency?x=1",
+    "/api/components/latency/",
+  ]) {
     const res = await fetch(base + path, withTag("*"));
     assert.equal(res.status, 404, path);
     assert.equal(res.headers.get("cache-control"), "no-store", path);
     assert.equal(res.headers.get("etag"), null, path);
   }
-  const hiddenLatency = await start({}, async () => ok([]));
-  const latency = await fetch(`${hiddenLatency}/api/latency`);
-  assert.equal(latency.status, 404);
-  assert.equal(latency.headers.get("cache-control"), "no-store");
 });
 
 test("/api/checks: same bytes under other settings get another tag, and a replay gives 200", async () => {
@@ -493,4 +495,87 @@ test("/api/checks: same bytes under other settings get another tag, and a replay
   assert.equal(await a.text(), await b.text());
   assert.notEqual(tagA, b.headers.get("etag"));
   assert.equal((await fetch(`${hidden}/api/checks`, withTag(tagA))).status, 200);
+});
+
+// The page snapshot: one stored render per instance while its raw reads are current.
+
+const PAGE_T0 = Date.UTC(2026, 9, 1, 12, 0, 0);
+const pageCheck = {
+  id: "a",
+  name: "A",
+  url: "https://a.test/",
+  intervalMs: 1000,
+  state: "up",
+  consecutiveDown: 0,
+  lastResultAt: null,
+  lastReason: null,
+  locations: [],
+};
+
+async function pageServer(
+  options: Partial<ServerOptions>,
+): Promise<{ base: string; calls: string[]; clock: { now: number } }> {
+  const clock = { now: PAGE_T0 };
+  const calls: string[] = [];
+  const base = await start({ now: () => clock.now, ...options }, async (url) => {
+    calls.push(url);
+    return ok(url.endsWith("/checks") ? [pageCheck] : []);
+  });
+  return { base, calls, clock };
+}
+
+const renderedAt = (html: string): string | undefined =>
+  /Rendered <time datetime="([^"]+)"/.exec(html)?.[1];
+
+test("page: one stored render while its reads are current, with a tag and a 304", async () => {
+  const { base, calls, clock } = await pageServer({ cacheMs: 2000 });
+  const first = await fetch(`${base}/`);
+  const a = await first.text();
+  const etag = first.headers.get("etag") ?? "";
+  assert.match(etag, /^"[A-Za-z0-9_-]{27}"$/);
+  assert.equal(first.headers.get("cache-control"), "no-cache");
+  assert.equal(renderedAt(a), new Date(PAGE_T0).toISOString());
+  const reads = calls.length;
+  clock.now = PAGE_T0 + 1000;
+  assert.equal(await (await fetch(`${base}/`)).text(), a);
+  assert.equal(await (await fetch(`${base}/index.html`)).text(), a);
+  assert.equal(calls.length, reads);
+  const hit = await fetch(`${base}/`, { headers: { "if-none-match": etag } });
+  assert.equal(hit.status, 304);
+  assert.equal((await hit.arrayBuffer()).byteLength, 0);
+  clock.now = PAGE_T0 + 2001;
+  const later = await (await fetch(`${base}/`)).text();
+  assert.ok(calls.length > reads);
+  assert.equal(renderedAt(later), new Date(PAGE_T0 + 2001).toISOString());
+});
+
+test("page: two concurrent cold requests share one read per path and one body", async () => {
+  const { base, calls } = await pageServer({ cacheMs: 2000 });
+  const [a, b] = await Promise.all([
+    fetch(`${base}/`).then((r) => r.text()),
+    fetch(`${base}/`).then((r) => r.text()),
+  ]);
+  assert.equal(a, b);
+  assert.equal(new Set(calls).size, calls.length);
+});
+
+test("page: with the cache off every request renders, without a tag", async () => {
+  const { base, clock } = await pageServer({ cacheMs: 0 });
+  const first = await fetch(`${base}/`);
+  const a = await first.text();
+  clock.now = PAGE_T0 + 1000;
+  const second = await fetch(`${base}/`);
+  assert.notEqual(await second.text(), a);
+  assert.equal(first.headers.get("etag"), null);
+  assert.equal(second.headers.get("etag"), null);
+});
+
+test("page: servers with different showChecks never share a page", async () => {
+  const shown = await pageServer({ cacheMs: 2000, showChecks: true });
+  const hidden = await pageServer({ cacheMs: 2000 });
+  const a = await fetch(`${shown.base}/`);
+  const b = await fetch(`${hidden.base}/`);
+  assert.match(await a.text(), /data-show-checks="true"/);
+  assert.match(await b.text(), /data-show-checks="false"/);
+  assert.notEqual(a.headers.get("etag"), b.headers.get("etag"));
 });

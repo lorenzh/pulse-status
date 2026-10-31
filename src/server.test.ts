@@ -46,7 +46,6 @@ test("serves page, modules, and proxies the API", async () => {
     "/poller.js",
     "/theme.js",
     "/patch.js",
-    "/bars.js",
     "/announce.js",
     "/pulse-contract/index.js",
     "/pulse-contract/validate.js",
@@ -349,9 +348,9 @@ test("serves the public files byte for byte", async () => {
   }
 });
 
-test("the page is no-cache without a tag, and If-None-Match still gives 200", async () => {
+test("with the cache off the page is no-cache without a tag, and If-None-Match still gives 200", async () => {
   const apiUrl = await listen(api);
-  const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  const base = await listen(createStatusServer({ apiUrl, pollMs: 1, cacheMs: 0 }));
   for (const path of ["/", "/index.html"]) {
     for (const ifNoneMatch of [undefined, "*", '"x"']) {
       const headers: Record<string, string> =
@@ -365,15 +364,72 @@ test("the page is no-cache without a tag, and If-None-Match still gives 200", as
   }
 });
 
-test("static routes other than the fonts keep no cache header", async () => {
+const ASSET_TAG = /^"[A-Za-z0-9_-]{27}"$/;
+const ASSET_PATHS = [
+  "/client.js",
+  "/page.css",
+  "/theme-init.js",
+  "/theme.css",
+  "/render.js",
+  "/pulse-kit/escape.js",
+  "/pulse-contract/index.js",
+] as const;
+
+test("assets are no-cache with a strong tag; a hit is a 304 without a body, also for HEAD", async () => {
   const apiUrl = await listen(api);
   const base = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
-  for (const path of ["/page.css", "/client.js", "/theme.css", "/theme-init.js", "/render.js"]) {
+  const zodIndex = await (await fetch(`${base}/pulse-contract/zod/index.js`)).text();
+  const zodImport = /from "\.\/([^"]+\.js)"/.exec(zodIndex)?.[1];
+  assert.ok(zodImport !== undefined, "zod index imports a module");
+  for (const path of [
+    ...ASSET_PATHS,
+    "/pulse-contract/zod/index.js",
+    `/pulse-contract/zod/${zodImport}`,
+  ]) {
     const r = await fetch(base + path);
     assert.equal(r.status, 200, path);
-    assert.equal(r.headers.get("cache-control"), null, path);
-    assert.equal(r.headers.get("etag"), null, path);
+    assert.equal(r.headers.get("cache-control"), "no-cache", path);
+    const etag = r.headers.get("etag") ?? "";
+    assert.match(etag, ASSET_TAG, path);
+    await r.arrayBuffer();
+    for (const method of ["GET", "HEAD"]) {
+      const hit = await fetch(base + path, { method, headers: { "if-none-match": etag } });
+      assert.equal(hit.status, 304, `${method} ${path}`);
+      assert.equal((await hit.arrayBuffer()).byteLength, 0, path);
+      assert.equal(hit.headers.get("etag"), etag, path);
+      assert.equal(hit.headers.get("cache-control"), "no-cache", path);
+      assert.equal(hit.headers.get("x-content-type-options"), "nosniff", path);
+      assert.match(hit.headers.get("content-security-policy") ?? "", /default-src 'none'/, path);
+    }
+    const miss = await fetch(base + path, { headers: { "if-none-match": '"other"' } });
+    assert.equal(miss.status, 200, path);
+    await miss.arrayBuffer();
   }
-  const font = await fetch(`${base}/fonts/space-grotesk.woff2`);
+});
+
+test("two theme files give two /theme.css tags; unknown and unsafe asset paths are 404 without a tag", async () => {
+  const apiUrl = await listen(api);
+  const file = join(tmp, "tag-theme.json");
+  writeFileSync(file, '{"light":{"accent":"#0b6bcb"},"dark":{"accent":"#8ab4f8"}}');
+  const plain = await listen(createStatusServer({ apiUrl, pollMs: 1 }));
+  const themed = await listen(createStatusServer({ apiUrl, pollMs: 1, themeFile: file }));
+  const tagOf = async (base: string): Promise<string | null> => {
+    const r = await fetch(`${base}/theme.css`);
+    await r.arrayBuffer();
+    return r.headers.get("etag");
+  };
+  assert.notEqual(await tagOf(plain), await tagOf(themed));
+  for (const path of [
+    "/pulse-contract/nope.js",
+    "/pulse-contract/zod/..%2f..%2fpackage.json",
+    "/bars.js",
+  ]) {
+    const r = await fetch(plain + path);
+    assert.equal(r.status, 404, path);
+    assert.equal(r.headers.get("etag"), null, path);
+    assert.notEqual(r.headers.get("cache-control"), "no-cache", path);
+    await r.arrayBuffer();
+  }
+  const font = await fetch(`${plain}/fonts/space-grotesk.woff2`);
   assert.equal(font.headers.get("cache-control"), "public, max-age=31536000, immutable");
 });

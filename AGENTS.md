@@ -99,13 +99,15 @@ repository. Bun 1.4.0 (runtime, package manager, test runner), ESM, strict TypeS
 
 ## This repository
 
-- `src/render.ts`, `src/poller.ts` and `src/theme.ts` also run in the browser: the server strips
-  their types at request time. They import only types, no `node:` modules and no relative runtime
-  imports. A new browser module is added to the server's module map (`tsModules` in `src/server.ts`).
-- `src/render.ts` also imports the browser-safe `@lorenzh/pulse-kit/escape` and `@lorenzh/pulse-kit/format-duration`. The server rewrites them to `/pulse-kit/escape.js` and `/pulse-kit/format-duration.js` and serves only those two files from the kit.
-- `src/poller.ts` also imports the contract's runtime validators. The server rewrites that import to
-  `/pulse-contract/index.js` and serves the contract's `dist` files from there. The contract's `zod`
-  import is rewritten to `/pulse-contract/zod/index.js`; only `.js` files of the zod package are served.
+- The browser modules (`tsModules` in `src/server.ts`: `render.ts`, `poller.ts`, `theme.ts`,
+  `sections.ts`, `components-view.ts`, `patch.ts`, `announce.ts`) also run in the browser: the
+  server strips their types at request time. They use no `node:` modules. A relative runtime
+  import of a sibling browser module (`./render.ts`) is rewritten to `/<name>.js`; a type-only
+  import of a server module is erased. A new browser module is added to `tsModules`.
+- They may import the browser-safe `@lorenzh/pulse-kit/escape` and `@lorenzh/pulse-kit/format-duration`. The server rewrites them to `/pulse-kit/escape.js` and `/pulse-kit/format-duration.js` and serves only those two files from the kit.
+- They may import the contract's runtime values (validators, schemas, helpers). The server rewrites
+  that import to `/pulse-contract/index.js` and serves the contract's `dist` files from there. The
+  contract's `zod` import is rewritten to `/pulse-contract/zod/index.js`; only `.js` files of the zod package are served.
 - `public/` is plain HTML and JavaScript; Biome does not check HTML and `tsc` does not check `public/`.
 - Every interactive element is reachable by keyboard and has an accessible name. State is never shown by colour alone.
 

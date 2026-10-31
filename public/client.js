@@ -1,5 +1,4 @@
 import { announceError, announceSummary } from "/announce.js";
-import { bindBars } from "/bars.js";
 import { browserPatchEnv, patchHtml } from "/patch.js";
 import { createPoller } from "/poller.js";
 import { bannerText, renderUpdated } from "/render.js";
@@ -76,8 +75,6 @@ function show(id, html) {
   patchHtml(document.getElementById(id), html, patchEnv);
 }
 
-bindBars(document);
-
 const liveRegion = document.getElementById("live");
 const alertRegion = document.getElementById("alert");
 // The server rendered the first state: only a change from it is announced.
@@ -127,7 +124,6 @@ createPoller({
   now: () => Date.now(),
   pollMs,
   timeoutMs,
-  hasLatency: showChecks,
   visibility: {
     isHidden: () => document.visibilityState === "hidden",
     onChange: (fn) => document.addEventListener("visibilitychange", fn),

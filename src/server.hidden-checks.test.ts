@@ -72,6 +72,12 @@ const dnsCheck = {
   state: "up",
 };
 const CHECK_IDS = ["sentinel-id", "sentinel-loose", "db"];
+const LATENCY_DAYS = Array.from({ length: 90 }, (_, i) => ({
+  date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+  p50Ms: 10 + i,
+  p95Ms: 20 + i,
+  count: 1,
+}));
 const components = [
   {
     id: "shop",
@@ -116,7 +122,7 @@ function fixture(hasComponents: boolean): Record<string, unknown> {
     "/incidents?status=resolved": resolved,
     "/maintenance": maintenance,
     "/uptime": [...CHECK_IDS, "dns"].map((checkId) => ({ checkId, uptime: 99, days: [] })),
-    "/latency": [...CHECK_IDS, "dns"].map((checkId) => ({ checkId, days: [] })),
+    "/latency": [...CHECK_IDS].map((checkId) => ({ checkId, days: LATENCY_DAYS })),
     "/components": hasComponents ? components : [],
     "/components/uptime": hasComponents
       ? components.map((c) => ({ componentId: c.id, uptime: 99, days: [] }))
@@ -328,10 +334,10 @@ test("fail closed: a failed checks read keeps components and their badge", async
 });
 
 /** The body that `filterApiBody` alone gives for a route, with the resolved window. */
-function filteredOnly(h: Harness, path: string, hasChecks: boolean): string {
+function filteredOnly(h: Harness, path: string): string {
   const upstream = path.slice("/api".length);
   const pathname = path.split("?")[0] ?? path;
-  let body = filterApiBody(pathname, h.bodies[upstream], true, hasChecks);
+  let body = filterApiBody(pathname, h.bodies[upstream], true);
   if (path === "/api/incidents?status=resolved") {
     body = limitResolvedWindow(body, NOW - RESOLVED_WINDOW_MS);
   }
@@ -353,7 +359,13 @@ test("unchanged: shown checks with components serve the filter output, no extra 
   for (const path of ALLOWED_API_PATHS) {
     const { status, body, calls } = await callsOf(h, path);
     assert.equal(status, 200, path);
-    assert.equal(body, filteredOnly(h, path, true), path);
+    if (path === "/api/components/latency") {
+      // Built by status; with checks shown it is empty and reads nothing.
+      assert.equal(body, "[]");
+      assert.deepEqual(calls, []);
+      continue;
+    }
+    assert.equal(body, filteredOnly(h, path), path);
     assert.deepEqual(calls, [path.slice("/api".length)], path);
   }
 });
@@ -366,22 +378,24 @@ test("unchanged: hidden checks without components serve the filter output", asyn
     "/api/incidents?status=open": ["/components", "/incidents?status=open"],
     "/api/incidents?status=resolved": ["/components", "/incidents?status=resolved"],
     "/api/maintenance": ["/components", "/maintenance"],
+    "/api/latency": ["/components", "/latency"],
   };
   for (const path of ALLOWED_API_PATHS) {
     const { status, body, calls } = await callsOf(h, path);
-    if (path === "/api/latency") {
-      assert.equal(status, 404);
+    assert.equal(status, 200, path);
+    if (path === "/api/components/latency") {
+      assert.equal(body, "[]");
+      assert.deepEqual(calls, ["/components"]);
       continue;
     }
-    assert.equal(status, 200, path);
-    assert.equal(body, filteredOnly(h, path, false), path);
+    assert.equal(body, filteredOnly(h, path), path);
     assert.deepEqual(calls, extra[path] ?? [path.slice("/api".length)], path);
   }
   h.broken.set("/checks", { status: 500, body: "{}" });
   for (const path of ["/api/incidents?status=open", "/api/maintenance"]) {
     const { status, body } = await get(h.base, path);
     assert.equal(status, 200, path);
-    assert.equal(body, filteredOnly(h, path, false), path);
+    assert.equal(body, filteredOnly(h, path), path);
   }
   const open = JSON.parse(
     (await get(h.base, "/api/incidents?status=open")).body,
@@ -608,10 +622,10 @@ test("sentinel: tags come from the filtered body and the settings, never from ra
       assert.equal(replay.status, 200, `${path} raw replay`);
     }
   }
-  // Every allow-listed path but the hidden /api/latency, the feed and the component badge.
-  assert.equal(tagged, ALLOWED_API_PATHS.length - 1 + 2);
-  // checks, maintenance, both incident lists, uptime and components carry hidden data upstream.
-  assert.equal(rawChecked, 6);
+  // Every allow-listed path, the feed and the component badge.
+  assert.equal(tagged, ALLOWED_API_PATHS.length + 2);
+  // checks, maintenance, both incident lists, uptime, latency and components carry hidden data upstream.
+  assert.equal(rawChecked, 7);
 });
 
 test("sentinel: a shown-checks tag never validates at the hidden server", async () => {

@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { fetchJson, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
+import { fetchJson, validateLatencyResponse, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import {
   createLogger,
   escapeHtml,
@@ -20,6 +20,7 @@ import {
   cachedAnswerFor,
 } from "./answer-cache.ts";
 import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
+import { componentLatency } from "./component-latency.ts";
 import {
   hiddenCheckKeys,
   hideCheckIds,
@@ -28,7 +29,7 @@ import {
   parseActiveCheckIds,
   parseComponentsSnapshot,
 } from "./hidden-checks.ts";
-import { etagFor, ifNoneMatchHits } from "./http-cache.ts";
+import { assetEtag, etagFor, ifNoneMatchHits } from "./http-cache.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { renderState } from "./ssr.ts";
@@ -180,7 +181,6 @@ const tsModules: Record<string, string> = {
   "/sections.js": "sections.ts",
   "/components-view.js": "components-view.ts",
   "/patch.js": "patch.ts",
-  "/bars.js": "bars.ts",
   "/announce.js": "announce.ts",
 };
 
@@ -256,6 +256,77 @@ async function readKitModule(pathname: string): Promise<string | undefined> {
 /** A runtime file of pulse-kit or pulse-contract (with zod) for the browser, else undefined. */
 async function readDependencyModule(pathname: string): Promise<string | undefined> {
   return (await readKitModule(pathname)) ?? (await readContractModule(pathname));
+}
+
+const JS_TYPE = "text/javascript; charset=utf-8";
+
+/** A served asset: its exact bytes, their tag and the content type. */
+interface Asset {
+  body: string;
+  etag: string;
+  type: string;
+}
+
+/** Transpiles a browser module; relative ".ts" imports point at sibling modules served as ".js". */
+async function browserModule(file: string): Promise<string> {
+  return tsTranspiler
+    .transformSync(await readFile(srcDir + file, "utf8"))
+    .replace(/from "\.\/([\w-]+)\.ts"/g, 'from "/$1.js"')
+    .replace(/from "@lorenzh\/pulse-contract"/g, 'from "/pulse-contract/index.js"')
+    .replace(/from "@lorenzh\/pulse-kit\/([\w-]+)"/g, 'from "/pulse-kit/$1.js"');
+}
+
+/** The body and type of an allow-listed asset path, else undefined. `css` is this instance's theme. */
+async function readAsset(
+  pathname: string,
+  css: string,
+): Promise<{ body: string; type: string } | undefined> {
+  const staticFile = staticFiles[pathname];
+  if (staticFile !== undefined) {
+    return { body: await readFile(publicDir + staticFile.file, "utf8"), type: staticFile.type };
+  }
+  if (pathname === "/theme.css") return { body: css, type: "text/css; charset=utf-8" };
+  if (pathname === "/client.js") {
+    return { body: await readFile(publicDir + "client.js", "utf8"), type: JS_TYPE };
+  }
+  const tsFile = Object.hasOwn(tsModules, pathname) ? tsModules[pathname] : undefined;
+  if (tsFile !== undefined) return { body: await browserModule(tsFile), type: JS_TYPE };
+  const dependency = await readDependencyModule(pathname);
+  return dependency === undefined ? undefined : { body: dependency, type: JS_TYPE };
+}
+
+/**
+ * Assets per server instance. Only a successful read is kept, so only allow-listed paths that
+ * exist ever get an entry.
+ */
+function createAssetStore(css: string): (pathname: string) => Promise<Asset | undefined> {
+  const assets = new Map<string, Asset>();
+  return async (pathname) => {
+    const known = assets.get(pathname);
+    if (known !== undefined) return known;
+    const read = await readAsset(pathname, css);
+    if (read === undefined) return undefined;
+    const asset = { ...read, etag: assetEtag(read.body) };
+    assets.set(pathname, asset);
+    return asset;
+  };
+}
+
+/** A tagged answer: `304` without a body when `If-None-Match` hits, else `200`. */
+function sendTaggedBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+  body: string,
+  etag: string,
+  type: string,
+): void {
+  // The URLs are not versioned: the browser revalidates, so a deploy reaches the next load.
+  const headers = { "cache-control": "no-cache", etag };
+  if (ifNoneMatchHits(req.headers["if-none-match"], etag)) {
+    res.writeHead(304, headers).end();
+    return;
+  }
+  res.writeHead(200, { "content-type": type, ...headers }).end(body);
 }
 
 function contentSecurityPolicy(logoOrigin: string | undefined): string {
@@ -438,8 +509,33 @@ async function hiddenAnswer(
     : okAnswer(hidden, wireHeader, settings);
 }
 
+/**
+ * `/api/components/latency`: built by status from the raw `/components` and `/latency` reads;
+ * there is no upstream route of that name. Empty when checks are shown.
+ */
+async function buildComponentLatency(ctx: ProxyContext, read: RawReader): Promise<ProxyAnswer> {
+  if (ctx.hasChecks) return okAnswer([], undefined, ctx);
+  const componentsRead = await read("/components");
+  if (!componentsRead.ok) {
+    return snapshotFailure(componentsRead.answer, componentsRead.answer.wireVersion);
+  }
+  const components = parseComponentsSnapshot(componentsRead.value);
+  if (components === undefined) {
+    return answer(502, INVALID_RESPONSE, componentsRead.wireHeader);
+  }
+  if (components.length === 0) return okAnswer([], componentsRead.wireHeader, ctx);
+  const latencyRead = await read("/latency");
+  if (!latencyRead.ok) return latencyRead.answer;
+  const latency = validateLatencyResponse(latencyRead.value, "latency");
+  const result = latency.ok ? componentLatency(components, latency.value) : undefined;
+  return result === undefined
+    ? answer(502, INVALID_RESPONSE, latencyRead.wireHeader)
+    : okAnswer(result, latencyRead.wireHeader, ctx);
+}
+
 /** Builds the served answer of one allow-listed path from the raw reads. */
 async function buildAnswer(url: URL, ctx: ProxyContext, read: RawReader): Promise<ProxyAnswer> {
+  if (url.pathname === "/api/components/latency") return buildComponentLatency(ctx, read);
   const ownPath = url.pathname.slice("/api".length) + url.search;
   // Both reads start together; a failed own read wins over a failed snapshot read.
   const ownRead = read(ownPath);
@@ -447,7 +543,7 @@ async function buildAnswer(url: URL, ctx: ProxyContext, read: RawReader): Promis
     !ctx.hasChecks && needsComponents(url.pathname) ? read("/components") : undefined;
   const own = await ownRead;
   if (!own.ok) return own.answer;
-  let body = filterApiBody(url.pathname, own.value, ctx.isHidden, ctx.hasChecks);
+  let body = filterApiBody(url.pathname, own.value, ctx.isHidden);
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     // The cutoff uses the build time; the answer keeps it for at most the life of its raw entry.
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
@@ -469,8 +565,9 @@ async function buildAnswerWithDeps(
  * The served answer of one allow-listed path. It is reused while every raw entry it was built
  * from is still current; with the cache off it is built on each call.
  */
-async function proxyAnswer(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
-  if (ctx.cacheMs === 0) return (await buildAnswerWithDeps(url, ctx)).answer;
+function proxyAnswer(url: URL, ctx: ProxyContext): Promise<ProxyAnswer> {
+  // Not async: the page compares the returned promise with the cached entry's.
+  if (ctx.cacheMs === 0) return buildAnswerWithDeps(url, ctx).then((built) => built.answer);
   return cachedAnswerFor(ctx.answers, answerKey(ctx, url.pathname, url.search), {
     build: () => buildAnswerWithDeps(url, ctx),
     isValid: (dep, now) => isRawCurrent(dep, now, ctx),
@@ -487,6 +584,42 @@ async function cachedAnswer(path: string, ctx: ProxyContext): Promise<ProxyAnswe
   return proxyAnswer(url, ctx);
 }
 
+/**
+ * One allow-listed answer for the page and the raw entries it was built from. `deps` is
+ * undefined when they are not known (the answer came from an older entry or the cache is off).
+ */
+async function readWithDeps(
+  path: string,
+  ctx: ProxyContext,
+): Promise<{ answer: ProxyAnswer; deps: readonly RawDep[] | undefined }> {
+  const url = new URL(path, "http://localhost");
+  if (!isAllowedApiPath(url.pathname, url.search)) {
+    return { answer: (await buildAnswerWithDeps(url, ctx)).answer, deps: undefined };
+  }
+  const pending = proxyAnswer(url, ctx);
+  const entry = ctx.answers.get(answerKey(ctx, url.pathname, url.search));
+  const result = await pending;
+  const isSame = entry !== undefined && entry.answer === pending && entry.deps !== null;
+  return { answer: result, deps: isSame ? (entry.deps ?? undefined) : undefined };
+}
+
+/** A dependency that is never current: a page built with it is served once and not stored. */
+const NEVER_CURRENT: RawDep = {
+  key: "never",
+  entry: { read: Promise.resolve({ ok: false, answer: { status: 500, body: "" } }), expiresAt: 0 },
+};
+
+/** The rendered page; `etag` only when it is stored. */
+interface Page {
+  html: string;
+  etag?: string;
+}
+
+interface RenderedPage {
+  html: string;
+  isComplete: boolean;
+}
+
 async function proxyApi(
   req: IncomingMessage,
   res: ServerResponse,
@@ -495,12 +628,7 @@ async function proxyApi(
 ): Promise<void> {
   const rawUrl = req.url ?? "";
   // The raw target must equal the parsed one: a bare "?" is not the allow-listed form.
-  const isLatencyHidden = url.pathname === "/api/latency" && !ctx.hasChecks;
-  if (
-    isLatencyHidden ||
-    rawUrl !== url.pathname + url.search ||
-    !isAllowedApiPath(url.pathname, url.search)
-  ) {
+  if (rawUrl !== url.pathname + url.search || !isAllowedApiPath(url.pathname, url.search)) {
     sendJson(res, 404, { error: "not found" }, { "cache-control": "no-store" });
     return;
   }
@@ -541,7 +669,7 @@ export function createStatusServer(options: ServerOptions): Server {
   const name = validateName(options.name ?? "pulse");
   // A configured name is the whole title; only the default carries "status".
   const title = options.name === undefined ? "pulse status" : name;
-  const css = themeCss(loadTheme(options.themeFile));
+  const assetFor = createAssetStore(themeCss(loadTheme(options.themeFile)));
   const logo = resolveLogo(options.logo);
   const mark = wordmark(name, logo);
   const isHidden = options.hideDetails ?? true;
@@ -580,22 +708,29 @@ export function createStatusServer(options: ServerOptions): Server {
   const log: Logger = options.log ?? createLogger({ write: () => {} });
   const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
 
-  /** Sections of the server-rendered view; empty strings when the render fails. */
-  const renderSections = async (): Promise<Record<string, string>> => {
+  // Read once: the template does not change while the server runs.
+  const template = readFileSync(publicDir + "index.html", "utf8");
+
+  /**
+   * Sections of the server-rendered view, and whether they may be stored. Empty strings when the
+   * render fails; such a page is served but never stored.
+   */
+  const renderSections = async (
+    read: (path: string) => Promise<ProxyAnswer>,
+  ): Promise<{ sections: Record<string, string>; isComplete: boolean }> => {
     try {
-      return await renderState({
-        read: (path) => cachedAnswer(path, ctx),
-        now: ctx.now,
-        showChecks: options.showChecks === true,
-      });
+      const sections = await renderState({ read, now: ctx.now, showChecks: ctx.hasChecks });
+      return { sections, isComplete: true };
     } catch (err) {
       logFailure(log, "/", err);
-      return {};
+      return { sections: {}, isComplete: false };
     }
   };
 
-  const renderIndex = async (): Promise<string> => {
-    const sections = await renderSections();
+  const renderIndex = async (
+    read: (path: string) => Promise<ProxyAnswer>,
+  ): Promise<RenderedPage> => {
+    const { sections, isComplete } = await renderSections(read);
     // One pass, so text inside a rendered section is never read as a placeholder.
     const values: Record<string, string> = {
       ...sections,
@@ -605,13 +740,37 @@ export function createStatusServer(options: ServerOptions): Server {
       renderedLine: sections.rendered ?? "",
       checksTitle: sections.checksTitle ?? "Checks",
     };
-    return (await readFile(publicDir + "index.html", "utf8"))
+    const html = template
       .replace(
         "<body>",
         () =>
-          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}" data-show-checks="${options.showChecks === true}">`,
+          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}" data-show-checks="${ctx.hasChecks}">`,
       )
       .replace(/\{\{(\w+)\}\}/g, (_match, key: string) => values[key] ?? "");
+    return { html, isComplete };
+  };
+
+  const pages = new Map<string, AnswerEntry<Page, RawDep>>();
+  const page = (): Promise<Page> => {
+    if (ctx.cacheMs === 0) {
+      return renderIndex((path) => cachedAnswer(path, ctx)).then((built) => ({ html: built.html }));
+    }
+    return cachedAnswerFor(pages, "page", {
+      build: async () => {
+        const deps: RawDep[] = [];
+        let isStorable = true;
+        const built = await renderIndex(async (path) => {
+          const read = await readWithDeps(path, ctx);
+          if (read.deps === undefined) isStorable = false;
+          else deps.push(...read.deps);
+          return read.answer;
+        });
+        if (!built.isComplete || !isStorable) deps.push(NEVER_CURRENT);
+        return { answer: { html: built.html, etag: etagFor(ctx, built.html) }, deps };
+      },
+      isValid: (dep, now) => isRawCurrent(dep, now, ctx),
+      now: ctx.now,
+    });
   };
 
   // Liveness never looks at the API or at shutdown.
@@ -644,24 +803,18 @@ export function createStatusServer(options: ServerOptions): Server {
       }
       if (await serveGenerated(req, url, res)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
-        const html = await renderIndex();
-        // It embeds the render time, so it gets no tag; the browser revalidates it on each load.
+        const { html, etag } = await page();
+        if (etag !== undefined) {
+          sendTaggedBody(req, res, html, etag, "text/html; charset=utf-8");
+          return;
+        }
+        // Rendered on each request with the cache off: no tag; the browser revalidates on each load.
         res
           .writeHead(200, {
             "content-type": "text/html; charset=utf-8",
             "cache-control": "no-cache",
           })
           .end(html);
-        return;
-      }
-      const staticFile = staticFiles[url.pathname];
-      if (staticFile !== undefined) {
-        const body = await readFile(publicDir + staticFile.file, "utf8");
-        res.writeHead(200, { "content-type": staticFile.type }).end(body);
-        return;
-      }
-      if (url.pathname === "/theme.css") {
-        res.writeHead(200, { "content-type": "text/css; charset=utf-8" }).end(css);
         return;
       }
       const fontFile = Object.hasOwn(fontFiles, url.pathname) ? fontFiles[url.pathname] : undefined;
@@ -686,25 +839,9 @@ export function createStatusServer(options: ServerOptions): Server {
           .end(image);
         return;
       }
-      if (url.pathname === "/client.js") {
-        const js = await readFile(publicDir + "client.js", "utf8");
-        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(js);
-        return;
-      }
-      const tsFile = tsModules[url.pathname];
-      if (tsFile !== undefined) {
-        // Relative ".ts" imports point at sibling modules served as ".js".
-        const js = tsTranspiler
-          .transformSync(await readFile(srcDir + tsFile, "utf8"))
-          .replace(/from "\.\/([\w-]+)\.ts"/g, 'from "/$1.js"')
-          .replace(/from "@lorenzh\/pulse-contract"/g, 'from "/pulse-contract/index.js"')
-          .replace(/from "@lorenzh\/pulse-kit\/([\w-]+)"/g, 'from "/pulse-kit/$1.js"');
-        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(js);
-        return;
-      }
-      const contractJs = await readDependencyModule(url.pathname);
-      if (contractJs !== undefined) {
-        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" }).end(contractJs);
+      const asset = await assetFor(url.pathname);
+      if (asset !== undefined) {
+        sendTaggedBody(req, res, asset.body, asset.etag, asset.type);
         return;
       }
       if (url.pathname.startsWith("/api/")) {

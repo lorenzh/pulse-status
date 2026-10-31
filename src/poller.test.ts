@@ -562,7 +562,7 @@ test("a failed request aborts the other pending requests", async () => {
     onUpdate: () => {},
   });
   await poller.refresh();
-  assert.equal(signals.length, 8);
+  assert.equal(signals.length, 10);
   assert.ok(signals.every((s) => s.aborted));
 });
 
@@ -589,7 +589,7 @@ test("the first error stays published after the abort", async () => {
   await poller.refresh();
   await flush();
   // The failure itself aborts the pending siblings; their rejections must not replace the error.
-  assert.equal(abortedSiblings, 7);
+  assert.equal(abortedSiblings, 9);
   assert.equal(updates.length, 1);
   assert.equal(updates[0]?.error, "unreachable");
 });
@@ -614,7 +614,7 @@ test("a hidden tab aborts all pending requests", async () => {
   poller.start();
   await flush();
   visibility.set(true);
-  assert.equal(signals.length, 8);
+  assert.equal(signals.length, 10);
   assert.ok(signals.every((s) => s.aborted));
 });
 
@@ -996,15 +996,19 @@ const latencyBody = [
   },
 ];
 
+const componentLatencyBody = [{ componentId: "shop", days: latencyBody[0]?.days ?? [] }];
+
 async function latencyRun(
-  hasLatency: boolean | undefined,
-  answers: (() => Response)[],
+  checkAnswers: (() => Response)[],
+  componentAnswers: (() => Response)[] = [],
 ): Promise<{ states: PollerState[]; urls: string[] }> {
   const urls: string[] = [];
-  const queue = [...answers];
+  const checkQueue = [...checkAnswers];
+  const componentQueue = [...componentAnswers];
   const fakeFetch = (async (url: string) => {
     urls.push(url);
-    if (url.endsWith("/latency")) return queue.shift()?.() ?? json([]);
+    if (url.endsWith("/components/latency")) return componentQueue.shift()?.() ?? json([]);
+    if (url.endsWith("/latency")) return checkQueue.shift()?.() ?? json([]);
     return url.endsWith("/checks") ? json([checkOf("a", "A")]) : json([]);
   }) as unknown as typeof fetch;
   const states: PollerState[] = [];
@@ -1013,7 +1017,6 @@ async function latencyRun(
     timer: fakeTimer(),
     now: () => 1,
     pollMs: 1000,
-    ...(hasLatency === undefined ? {} : { hasLatency }),
     onUpdate: (s) => states.push(s),
     log: () => {},
   });
@@ -1022,25 +1025,66 @@ async function latencyRun(
   return { states, urls };
 }
 
-test("latency is read only when asked for", async () => {
-  const off = await latencyRun(undefined, []);
-  assert.equal(
-    off.urls.some((u) => u.endsWith("/latency")),
-    false,
-  );
-  assert.equal(off.states[0]?.latency, null);
-  const on = await latencyRun(true, [() => json(latencyBody)]);
-  assert.equal(on.states[0]?.latency?.[0]?.checkId, "a");
+test("both latency routes are always read", async () => {
+  const run = await latencyRun([() => json(latencyBody)], [() => json(componentLatencyBody)]);
+  assert.ok(run.urls.includes("/api/latency"));
+  assert.ok(run.urls.includes("/api/components/latency"));
+  assert.equal(run.states[0]?.latency?.[0]?.checkId, "a");
+  assert.equal(run.states[0]?.componentLatency?.[0]?.componentId, "shop");
 });
 
 test("a failed or invalid latency read keeps the last good value and does not fail the refresh", async () => {
-  const run = await latencyRun(true, [
-    () => json(latencyBody),
-    () => json([{ checkId: "a", days: [] }]),
-  ]);
+  const run = await latencyRun([() => json(latencyBody), () => json([{ checkId: "a", days: [] }])]);
   assert.equal(run.states[1]?.error, null);
   assert.equal(run.states[1]?.latency?.[0]?.checkId, "a");
-  const failing = await latencyRun(true, [() => new Response("x", { status: 500 })]);
+  const failing = await latencyRun([() => new Response("x", { status: 500 })]);
   assert.equal(failing.states[0]?.error, null);
   assert.equal(failing.states[0]?.latency, null);
+});
+
+const days90 = latencyBody[0]?.days ?? [];
+const invalidComponentAnswers: readonly [string, unknown][] = [
+  ["not a list", { componentId: "shop", days: days90 }],
+  ["empty id", [{ componentId: "", days: days90 }]],
+  ["89 days", [{ componentId: "shop", days: days90.slice(1) }]],
+  [
+    "null p95 with a count",
+    [{ componentId: "shop", days: days90.map((d) => ({ ...d, p95Ms: null })) }],
+  ],
+  ["a check id instead", [{ checkId: "shop", days: days90 }]],
+];
+
+for (const [name, body] of invalidComponentAnswers) {
+  test(`component latency: ${name} keeps the last good value`, async () => {
+    const run = await latencyRun([], [() => json(componentLatencyBody), () => json(body)]);
+    assert.equal(run.states[1]?.error, null);
+    assert.deepEqual(run.states[1]?.componentLatency, componentLatencyBody);
+    const first = await latencyRun([], [() => json(body)]);
+    assert.equal(first.states[0]?.componentLatency, null);
+  });
+}
+
+test("component latency: a failed read keeps null, a wire mismatch fails the refresh", async () => {
+  const failing = await latencyRun([], [() => new Response("x", { status: 502 })]);
+  assert.equal(failing.states[0]?.error, null);
+  assert.equal(failing.states[0]?.componentLatency, null);
+  const mismatch = await latencyRun([], [() => json([], "0")]);
+  assert.equal(mismatch.states[0]?.error, "version");
+});
+
+test("the pinned contract rejects a check url that is not http or https", async () => {
+  const states: PollerState[] = [];
+  const poller = createPoller({
+    fetch: (async (url: string) =>
+      url.endsWith("/checks")
+        ? json([checkOf("a", "A", { url: "ftp://example.test/" })])
+        : json([])) as unknown as typeof fetch,
+    timer: fakeTimer(),
+    now: () => 1,
+    pollMs: 1000,
+    onUpdate: (s) => states.push(s),
+    log: () => {},
+  });
+  await poller.refresh();
+  assert.equal(states[0]?.error, "invalid");
 });

@@ -9,6 +9,7 @@ export const ALLOWED_API_PATHS = [
   "/api/components/uptime",
   "/api/manual-incidents",
   "/api/latency",
+  "/api/components/latency",
 ] as const;
 
 export function isAllowedApiPath(pathname: string, search: string): boolean {
@@ -249,16 +250,9 @@ const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
 
 /**
  * Builds the served JSON from an allow-list per endpoint: unlisted fields, new upstream ones
- * included, never leave the server. `hasChecks` is false when PULSE_STATUS_SHOW_CHECKS is off. URLs are sanitized and, when hidden, details removed.
+ * included, never leave the server. URLs are sanitized and, when hidden, details removed.
  */
-export function filterApiBody(
-  pathname: string,
-  body: unknown,
-  isHidden: boolean,
-  hasChecks = true,
-): unknown {
-  // Latency is per check: it is never served while the checks are hidden.
-  if (pathname === "/api/latency" && !hasChecks) return [];
+export function filterApiBody(pathname: string, body: unknown, isHidden: boolean): unknown {
   if (!Array.isArray(body)) return body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;

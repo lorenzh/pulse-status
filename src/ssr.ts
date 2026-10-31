@@ -89,7 +89,6 @@ export async function renderState(ctx: SsrContext): Promise<Record<string, strin
     onUpdate: (next) => {
       state = next;
     },
-    hasLatency: ctx.showChecks,
     log: () => {},
   });
   await poller.refresh();

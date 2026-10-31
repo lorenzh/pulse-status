@@ -103,7 +103,7 @@ test("a component shows name, state, escaped description, bars and open incident
   assert.match(html, /<span class="state">down<\/span>/);
   assert.match(html, /<p class="description" data-key="description">Buy &lt;things&gt;<\/p>/);
   assert.match(html, /1 open incident/);
-  assert.match(html, /class="bar degraded"/);
+  assert.match(html, /<i class="degraded"><\/i>/);
   assert.match(html, /98\.0 % uptime, 90 days/);
 });
 
@@ -125,6 +125,7 @@ function state(extra: Partial<PollerState> = {}): PollerState {
   return {
     checks,
     latency: null,
+    componentLatency: null,
     incidents: [incident, { ...incident, id: 5, checkId: "loose" }],
     maintenance: [
       { checkId: "secret-web", start: 2_000_000, end: 3_000_000, note: "n" },
@@ -198,4 +199,60 @@ test("labels: hidden keys get the component names or the neutral label", () => {
   // The key the server sends for a hidden check in no component.
   assert.equal(labels.get("service"), "Service");
   assert.equal(checkLabels({ ...keyed, showChecks: true }).has("service"), false);
+});
+
+const latencyDays = Array.from({ length: 90 }, (_, i) => ({
+  date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+  p50Ms: i === 89 ? 9.96 : 120,
+  p95Ms: i === 89 ? 9.96 : 150,
+  count: 15,
+}));
+
+test("hidden mode: one chart and table per component with latency, labelled highest member check", () => {
+  const html = renderComponents(
+    {
+      ...view,
+      // Without uptime days, the table rows come from the latency days.
+      componentUptime: [],
+      componentLatency: [
+        { componentId: "shop", days: latencyDays },
+        { componentId: "unknown", days: latencyDays },
+      ],
+    },
+    env,
+  );
+  assert.equal(html.match(/class="latency-chart"/g)?.length, 1);
+  assert.match(html, /highest member check daily p95, last 7 days 150 ms/);
+  assert.match(
+    html,
+    /Solid line highest member check p95, dashed line highest member check p50\. Days are UTC days\./,
+  );
+  assert.match(
+    html,
+    /Highest member check p50 \(ms\)<\/th><th scope="col">Highest member check p95 \(ms\)/,
+  );
+  assert.doesNotMatch(html, /objective/);
+  // 9.96 ms shows as whole ms from 10 ms on.
+  assert.match(html, /<td>10<\/td><td>10<\/td>/);
+  assert.doesNotMatch(html, /10\.0/);
+  assert.ok(!html.includes("unknown"));
+});
+
+test("hidden mode: a component without an entry shows no latency text; one without results says so", () => {
+  const empty = latencyDays.map((day) => ({ ...day, p50Ms: null, p95Ms: null, count: 0 }));
+  const none = renderComponents({ ...view, componentLatency: [] }, env);
+  assert.doesNotMatch(none, /latency/);
+  const noData = renderComponents(
+    { ...view, componentLatency: [{ componentId: "shop", days: empty }] },
+    env,
+  );
+  assert.match(noData, /no latency data yet/);
+});
+
+test("with show-checks no component chart is drawn", () => {
+  const html = renderComponents(
+    { ...view, showChecks: true, componentLatency: [{ componentId: "shop", days: latencyDays }] },
+    env,
+  );
+  assert.doesNotMatch(html, /highest member check/);
 });

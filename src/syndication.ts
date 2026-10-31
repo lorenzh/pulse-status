@@ -1,6 +1,12 @@
 import type { ServerResponse } from "node:http";
+import {
+  type CheckState,
+  MANUAL_INCIDENT_IMPACTS,
+  type ManualIncidentImpact,
+} from "@lorenzh/pulse-contract";
 import type { AnswerSettings } from "./answer-cache.ts";
 import { parseBadgeLabel, renderBadge } from "./badge.ts";
+import { componentsWithIncidents } from "./components-view.ts";
 import {
   buildAtom,
   type FeedCheck,
@@ -149,21 +155,37 @@ function isManualUpdate(value: unknown): boolean {
   );
 }
 
+/** A manual incident as the feed and the component badge read it. */
+interface ParsedManualIncident extends FeedManualIncident {
+  resolvedAt: number | null;
+}
+
+const CHECK_STATES: readonly CheckState[] = ["up", "down", "degraded", "maintenance", "unknown"];
+
+function isCheckState(value: string): value is CheckState {
+  return (CHECK_STATES as readonly string[]).includes(value);
+}
+
+function isImpact(value: string): value is ManualIncidentImpact {
+  return (MANUAL_INCIDENT_IMPACTS as readonly string[]).includes(value);
+}
+
 /**
  * Manual incidents of the cached answer. A 404 (an older api) keeps `previous`, the list of the
  * last successful read; any other failure or malformed answer gives undefined.
  */
 function parseManualIncidents(
   answer: CachedAnswer,
-  previous: FeedManualIncident[],
-): FeedManualIncident[] | undefined {
+  previous: ParsedManualIncident[],
+): ParsedManualIncident[] | undefined {
   if (answer.status === 404) return previous;
   const list = jsonList(answer);
   if (list === undefined) return undefined;
-  const out: FeedManualIncident[] = [];
+  const out: ParsedManualIncident[] = [];
   for (const item of list) {
     if (
       !isObject(item) ||
+      !(item.resolvedAt === null || isTime(item.resolvedAt)) ||
       typeof item.id !== "number" ||
       typeof item.title !== "string" ||
       typeof item.impact !== "string" ||
@@ -179,6 +201,7 @@ function parseManualIncidents(
       title: item.title,
       componentIds: item.componentIds,
       impact: item.impact,
+      resolvedAt: item.resolvedAt,
       // Checked above.
       updates: item.updates as FeedManualIncident["updates"],
     });
@@ -248,7 +271,7 @@ async function serveFeed(
   ex: Exchange,
   opts: SyndicationOptions,
   publicUrl: string,
-  lastManual: { list: FeedManualIncident[] },
+  lastManual: { list: ParsedManualIncident[] },
 ): Promise<void> {
   const [checksAnswer, openAnswer, resolvedAnswer, componentsAnswer, manualAnswer] =
     await Promise.all([
@@ -326,26 +349,43 @@ async function serveBadge(
   sendTagged(ex, opts.settings, BADGE_TYPE, svg, { "content-security-policy": BADGE_CSP });
 }
 
+/** The page's state of a component: the api state combined with its open manual incidents. */
+function badgeState(component: ListedComponent, manual: readonly ParsedManualIncident[]): string {
+  if (!isCheckState(component.state)) return component.state;
+  const incidents = manual.flatMap((incident) =>
+    isImpact(incident.impact) ? [{ ...incident, impact: incident.impact }] : [],
+  );
+  const [shown] = componentsWithIncidents(
+    [{ id: component.id, state: component.state }],
+    incidents,
+  );
+  return shown?.state ?? component.state;
+}
+
 async function serveComponentBadge(
   ex: Exchange,
   opts: SyndicationOptions,
   id: string,
   search: string,
+  lastManual: { list: ParsedManualIncident[] },
 ): Promise<void> {
   const label = parseBadgeLabel(new URLSearchParams(search).get("label"));
   if (!label.isValid) {
     sendText(ex.res, 400, "invalid label");
     return;
   }
-  const [componentsAnswer, uptimeAnswer] = await Promise.all([
+  const [componentsAnswer, uptimeAnswer, manualAnswer] = await Promise.all([
     opts.read("/api/components"),
     opts.read("/api/components/uptime"),
+    opts.read("/api/manual-incidents"),
   ]);
   const components = parseComponents(componentsAnswer);
-  if (components === undefined) {
+  const manual = parseManualIncidents(manualAnswer, lastManual.list);
+  if (components === undefined || manual === undefined) {
     unavailable(ex.res);
     return;
   }
+  lastManual.list = manual;
   const component = components.find((item) => item.id === id);
   if (component === undefined) {
     notFound(ex.res);
@@ -353,7 +393,7 @@ async function serveComponentBadge(
   }
   const svg = renderBadge({
     label: label.label ?? component.name,
-    state: component.state,
+    state: badgeState(component, manual),
     uptime: uptimeOf(uptimeAnswer, "componentId", id),
   });
   sendTagged(ex, opts.settings, BADGE_TYPE, svg, { "content-security-policy": BADGE_CSP });
@@ -368,7 +408,7 @@ export function createSyndication(
   opts: SyndicationOptions,
 ): (url: URL, ifNoneMatch: string | undefined, res: ServerResponse) => Promise<boolean> {
   // Kept across requests: a 404 from an older api must not clear what an earlier read returned.
-  const lastManual: { list: FeedManualIncident[] } = { list: [] };
+  const lastManual: { list: ParsedManualIncident[] } = { list: [] };
   return async (url, ifNoneMatch, res) => {
     const ex: Exchange = { res, ifNoneMatch };
     if (url.pathname === "/feed.atom" && opts.publicUrl !== undefined) {
@@ -378,7 +418,7 @@ export function createSyndication(
     if (url.pathname.startsWith(COMPONENT_BADGE_PREFIX)) {
       const id = badgeId(url.pathname, COMPONENT_BADGE_PREFIX);
       if (id === undefined) notFound(res);
-      else await serveComponentBadge(ex, opts, id, url.search);
+      else await serveComponentBadge(ex, opts, id, url.search, lastManual);
       return true;
     }
     if (url.pathname.startsWith(BADGE_PREFIX)) {
