@@ -6,6 +6,7 @@ import {
   type ChecksResponse,
   type ComponentsResponse,
   type IncidentsResponse,
+  type LatencyResponse,
   MANUAL_INCIDENT_IMPACTS,
 } from "@lorenzh/pulse-contract";
 import type { AnswerSettings } from "./answer-cache.ts";
@@ -388,7 +389,21 @@ test("unchanged: hidden checks without components serve the filter output", asyn
       assert.deepEqual(calls, ["/components"]);
       continue;
     }
-    assert.equal(body, filteredOnly(h, path), path);
+    if (path === "/api/latency") {
+      // Literal expectation: every check keeps all 90 days, first and last day as written.
+      const latency = JSON.parse(body) as LatencyResponse;
+      assert.deepEqual(
+        latency.map((entry) => entry.checkId),
+        ["sentinel-id", "sentinel-loose", "db"],
+      );
+      for (const entry of latency) {
+        assert.equal(entry.days.length, 90);
+        assert.deepEqual(entry.days[0], { date: "2026-01-01", p50Ms: 10, p95Ms: 20, count: 1 });
+        assert.deepEqual(entry.days[89], { date: "2026-03-31", p50Ms: 99, p95Ms: 109, count: 1 });
+      }
+    } else {
+      assert.equal(body, filteredOnly(h, path), path);
+    }
     assert.deepEqual(calls, extra[path] ?? [path.slice("/api".length)], path);
   }
   h.broken.set("/checks", { status: 500, body: "{}" });

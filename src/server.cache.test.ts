@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { IncidentsResponse } from "@lorenzh/pulse-contract";
+import { createLogger } from "@lorenzh/pulse-kit";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
 
@@ -547,6 +548,39 @@ test("page: one stored render while its reads are current, with a tag and a 304"
   const later = await (await fetch(`${base}/`)).text();
   assert.ok(calls.length > reads);
   assert.equal(renderedAt(later), new Date(PAGE_T0 + 2001).toISOString());
+});
+
+test("page: a render that throws once is served, never stored, and the next request renders", async () => {
+  let isArmed = true;
+  const logged: string[] = [];
+  // The fake clock fails once, only when renderState itself calls it (after the poll): the
+  // reads, the poller and the cache keep working.
+  const now = (): number => {
+    const caller = (new Error("probe").stack ?? "").split("\n")[2] ?? "";
+    if (isArmed && caller.includes("renderState")) {
+      isArmed = false;
+      throw new Error("render failed");
+    }
+    return PAGE_T0;
+  };
+  const { base } = await pageServer({
+    cacheMs: 60_000,
+    now,
+    log: createLogger({ write: (_level, line) => logged.push(line) }),
+  });
+  const first = await fetch(`${base}/`);
+  const fallback = await first.text();
+  assert.equal(first.status, 200);
+  assert.equal(isArmed, false);
+  assert.equal(renderedAt(fallback), undefined);
+  assert.ok(
+    logged.some((line) => line.includes("render failed")),
+    logged.join(""),
+  );
+  const second = await fetch(`${base}/`);
+  const page = await second.text();
+  assert.equal(renderedAt(page), new Date(PAGE_T0).toISOString());
+  assert.notEqual(second.headers.get("etag"), first.headers.get("etag"));
 });
 
 test("page: two concurrent cold requests share one read per path and one body", async () => {

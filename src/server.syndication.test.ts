@@ -637,6 +637,16 @@ test("component badge: a manual incidents 404 keeps up, a 500 is unavailable", a
   assert.equal(await res.text(), "unavailable");
 });
 
+test("component badge: a manual incident with an unknown impact is unavailable", async () => {
+  const h = await startWithComponents({ cacheMs: 0 });
+  h.bodies["/components"] = [{ ...components[0], state: "up" }];
+  h.bodies["/manual-incidents"] = [{ ...manual("major", "investigating", null), impact: "bogus" }];
+  const res = await fetch(`${h.base}/badge/component/shop.svg`);
+  assert.equal(res.status, 503);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.equal(await res.text(), "unavailable");
+});
+
 test("component badge: a new incident changes the tag, not the uptime text", async () => {
   const h = await startWithComponents({ cacheMs: 0 });
   h.bodies["/components"] = [{ ...components[0], state: "up" }];

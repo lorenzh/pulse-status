@@ -157,6 +157,7 @@ function isManualUpdate(value: unknown): boolean {
 
 /** A manual incident as the feed and the component badge read it. */
 interface ParsedManualIncident extends FeedManualIncident {
+  impact: ManualIncidentImpact;
   resolvedAt: number | null;
 }
 
@@ -166,8 +167,10 @@ function isCheckState(value: string): value is CheckState {
   return (CHECK_STATES as readonly string[]).includes(value);
 }
 
-function isImpact(value: string): value is ManualIncidentImpact {
-  return (MANUAL_INCIDENT_IMPACTS as readonly string[]).includes(value);
+function isImpact(value: unknown): value is ManualIncidentImpact {
+  return (
+    typeof value === "string" && (MANUAL_INCIDENT_IMPACTS as readonly string[]).includes(value)
+  );
 }
 
 /**
@@ -188,7 +191,7 @@ function parseManualIncidents(
       !(item.resolvedAt === null || isTime(item.resolvedAt)) ||
       typeof item.id !== "number" ||
       typeof item.title !== "string" ||
-      typeof item.impact !== "string" ||
+      !isImpact(item.impact) ||
       !Array.isArray(item.componentIds) ||
       !item.componentIds.every((id: unknown) => typeof id === "string") ||
       !Array.isArray(item.updates) ||
@@ -352,13 +355,7 @@ async function serveBadge(
 /** The page's state of a component: the api state combined with its open manual incidents. */
 function badgeState(component: ListedComponent, manual: readonly ParsedManualIncident[]): string {
   if (!isCheckState(component.state)) return component.state;
-  const incidents = manual.flatMap((incident) =>
-    isImpact(incident.impact) ? [{ ...incident, impact: incident.impact }] : [],
-  );
-  const [shown] = componentsWithIncidents(
-    [{ id: component.id, state: component.state }],
-    incidents,
-  );
+  const [shown] = componentsWithIncidents([{ id: component.id, state: component.state }], manual);
   return shown?.state ?? component.state;
 }
 

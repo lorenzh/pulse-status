@@ -76,8 +76,9 @@ function fixture(hasComponents: boolean): Record<string, unknown> {
     "/incidents?status=resolved": Array.from({ length: 10 }, (_, n) => ({
       id: n + 100,
       checkId: checkIds[n] ?? "",
-      openedAt: NOW - (n + 2) * DAY,
-      resolvedAt: NOW - (n + 1) * DAY + 3_600_000,
+      // All ten resolve inside the seven-day window: the newest 2 h ago, the oldest 128 h ago.
+      openedAt: NOW - (n * 14 + 3) * 3_600_000,
+      resolvedAt: NOW - (n * 14 + 2) * 3_600_000,
       reason: "HTTP 500",
     })),
     "/maintenance": Array.from({ length: 5 }, (_, n) => ({
@@ -121,6 +122,8 @@ async function pageOf(options: Partial<ServerOptions>, hasComponents: boolean): 
 
 const byteLength = (html: string): number => new TextEncoder().encode(html).byteLength;
 const count = (html: string, text: string): number => html.split(text).length - 1;
+const resolvedCount = (html: string): number =>
+  (html.match(/data-key="incident:1\d\d"/g) ?? []).length;
 const isWithin = (bytes: number, limit: number): boolean => bytes <= limit;
 
 test("budget: the limit is inclusive", () => {
@@ -132,6 +135,7 @@ test("page weight: default layout (20 components, checks hidden) has charts and 
   const html = await pageOf({}, true);
   const bytes = byteLength(html);
   console.log(`page weight default: ${bytes} bytes`);
+  assert.equal(resolvedCount(html), 10);
   // The fixture name holds non-ASCII text: the string length is not the byte count.
   assert.ok(html.includes("Café API — Zürich"));
   assert.ok(html.length < bytes);
@@ -148,6 +152,7 @@ test("page weight: checks shown, 50 charts within the guard", async () => {
   const html = await pageOf({ showChecks: true }, true);
   const bytes = byteLength(html);
   console.log(`page weight shown: ${bytes} bytes`);
+  assert.equal(resolvedCount(html), 10);
   assert.ok(isWithin(bytes, GUARD_LIMIT), `${bytes} bytes`);
   assert.equal(count(html, 'class="latency-chart"'), 50);
   assert.equal(count(html, "highest member check"), 0);
@@ -157,6 +162,7 @@ test("page weight: no components, 50 checks and 50 charts within the guard", asy
   const html = await pageOf({}, false);
   const bytes = byteLength(html);
   console.log(`page weight fallback: ${bytes} bytes`);
+  assert.equal(resolvedCount(html), 10);
   assert.ok(isWithin(bytes, GUARD_LIMIT), `${bytes} bytes`);
   assert.equal(count(html, 'data-key="check:'), 50);
   assert.equal(count(html, 'class="latency-chart"'), 50);
