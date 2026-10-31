@@ -30,7 +30,7 @@ Bun runs the TypeScript source directly (no build step).
 ## Checks
 
 ```sh
-bun run lint    # Biome plus SonarJS (ESLint), cognitive complexity at most 15
+bun run lint    # Biome, SonarJS (ESLint, cognitive complexity at most 15), pulse-workflows
 bun run typecheck
 bun test        # bun:test with a line coverage gate of 80 %
 bun run format  # apply Biome fixes
@@ -51,8 +51,8 @@ Work test first. Tests sit next to the code as `src/<module>.test.ts`, use hand-
 
 `.github/workflows/ci.yml` runs on pull requests, on pushes to `main` and on `v*` tags. It has four jobs:
 
-- `check` uses the shared `check.yml` workflow of `lorenzh/pulse-config`, pinned to a commit SHA.
-- `docker` builds the image and fails if it holds `*.test.ts` or `*.spec.ts` files outside `node_modules`, or `/app/e2e` or Playwright. It runs twice, on `ubuntu-24.04` (amd64) and natively on `ubuntu-24.04-arm` (arm64); one failing leg does not cancel the other.
+- `check` uses the shared `check.yml` workflow of `lorenzh/pulse-config`, pinned to a commit SHA. Its lint step runs `pulse-workflows`, which fails on an unapproved or unpinned action, a checkout without `persist-credentials: false`, or a config ref that differs from the `package.json` pin.
+- `docker` builds the image and fails if it holds `*.test.ts` or `*.spec.ts` files outside `node_modules`, or `/app/e2e` or Playwright. The step `Image ignores dotenv files` then runs `bash scripts/image-dotenv.sh pulse-status:local`: the image must start healthy with a `.env`, `.env.production` or `.env.local` mounted into `/app`, and must start Bun with `--no-env-file`. It runs twice, on `ubuntu-24.04` (amd64) and natively on `ubuntu-24.04-arm` (arm64); one failing leg does not cancel the other.
 - `a11y` installs Chromium and runs `bun run check:a11y`.
 - `release` runs only on a tag and uses the shared `release.yml` workflow of `lorenzh/pulse-config` (see [Releasing](#releasing)). On a pull request or a push to `main` it is skipped.
 

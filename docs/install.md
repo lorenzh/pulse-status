@@ -21,7 +21,7 @@ Open http://localhost:8080 (the default `PORT`).
 
 ## With Docker
 
-The image is built from `Dockerfile` (multi-stage, `oven/bun:1.4.0-alpine` (pinned by digest)). It holds the production dependencies (including the two bundled fonts), `src` without tests, and `public`. It runs as the non-root `bun` user, exposes port `8080` and has a `HEALTHCHECK` on `GET /healthz` (liveness; use `GET /readyz` for traffic readiness).
+The image is built from `Dockerfile` (multi-stage, `oven/bun:1.4.0-alpine` (pinned by digest)). It holds the production dependencies (including the two bundled fonts), `src` without tests, and `public`. It runs as the non-root `bun` user, exposes port `8080` and has a `HEALTHCHECK` on `GET /healthz` (liveness; use `GET /readyz` for traffic readiness). The image starts `bun --no-env-file src/main.ts`, and its healthcheck also runs Bun with `--no-env-file`. Neither reads `.env` files, also not ones mounted into `/app`. Settings come from the container environment (`-e`, `docker run --env-file` read on the host, Compose `environment:` or `env_file:`) and the documented setting files. A source run with `bun start` uses plain `bun`, which loads dotenv files from the working directory.
 
 ```sh
 docker build --tag pulse-status:local .
