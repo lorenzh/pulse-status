@@ -212,6 +212,18 @@ test("the page carries poll interval and a browser timeout above the proxy timeo
   assert.match(await (await fetch(`${custom}/`)).text(), /data-timeout-ms="3500"/);
 });
 
+test("the largest timer settings render a browser timeout that fits a timer", async () => {
+  const base = await listen(
+    createStatusServer({
+      apiUrl: "http://127.0.0.1:1",
+      pollMs: 2147483647,
+      upstreamTimeoutMs: 2147481647,
+    }),
+  );
+  const page = await (await fetch(`${base}/`)).text();
+  assert.match(page, /data-poll-ms="2147483647" data-timeout-ms="2147483647"/);
+});
+
 test("sections.js is served as a browser module", async () => {
   const base = await listen(createStatusServer({ apiUrl: "http://127.0.0.1:1", pollMs: 5000 }));
   const js = await (await fetch(`${base}/sections.js`)).text();

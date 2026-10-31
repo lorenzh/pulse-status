@@ -46,7 +46,32 @@ test("millisecond settings: value, bound and invalid input", () => {
   for (const bad of ["abc", "-1", "1.5", "999"]) {
     assert.throws(() => readSettings({ POLL_MS: bad }), /^StartupError: POLL_MS: must be/, bad);
   }
-  assert.throws(() => readSettings({ POLL_MS: "999" }), /POLL_MS: must be an integer >= 1000$/);
+  assert.throws(
+    () => readSettings({ POLL_MS: "999" }),
+    /POLL_MS: must be an integer from 1000 to 2147483647$/,
+  );
+});
+
+test("timer settings: POLL_MS and the upstream timeout fit a timer", () => {
+  assert.throws(
+    () => readSettings({ POLL_MS: "2592000000" }),
+    /^StartupError: POLL_MS: must be an integer from 1000 to 2147483647$/,
+  );
+  assert.equal(readSettings({ POLL_MS: "2147483647" }).pollMs, 2147483647);
+  const timeout = (v: string): number =>
+    readSettings({ PULSE_STATUS_UPSTREAM_TIMEOUT_MS: v }).upstreamTimeoutMs;
+  assert.equal(timeout("2147481647"), 2147481647);
+  for (const bad of ["2147481648", "2147483647"]) {
+    assert.throws(
+      () => timeout(bad),
+      /^StartupError: PULSE_STATUS_UPSTREAM_TIMEOUT_MS: must be an integer from 1 to 2147481647$/,
+      bad,
+    );
+  }
+});
+
+test("PULSE_STATUS_CACHE_MS is not a timer and accepts large values", () => {
+  assert.equal(readSettings({ PULSE_STATUS_CACHE_MS: "3000000000" }).cacheMs, 3000000000);
 });
 
 test("PORT: range is 0 to 65535", () => {

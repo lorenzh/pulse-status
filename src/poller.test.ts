@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { ALLOWED_API_PATHS, filterApiBody } from "./api-filter.ts";
+import { startApiPoll } from "./api-poll.ts";
+import { createMetrics } from "./metrics.ts";
 import { createPoller, type PollerState } from "./poller.ts";
 import { renderChecks } from "./render.ts";
 import { createStatusServer } from "./server.ts";
@@ -1043,4 +1045,50 @@ test("a failed or invalid latency read keeps the last good value and does not fa
   const failing = await latencyRun(true, [() => new Response("x", { status: 500 })]);
   assert.equal(failing.states[0]?.error, null);
   assert.equal(failing.states[0]?.latency, null);
+});
+
+test("the largest rendered timeouts schedule no timer above the browser limit", async () => {
+  const delays: number[] = [];
+  const timer = {
+    setTimeout(_fn: () => void, ms: number) {
+      delays.push(ms);
+      return delays.length;
+    },
+    clearTimeout(_h: unknown) {},
+  };
+  const hang = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+  const poller = createPoller({
+    fetch: hang,
+    timer,
+    now: () => 0,
+    pollMs: 2147483647,
+    timeoutMs: 2147483647,
+    onUpdate: () => {},
+  });
+  poller.start();
+  await new Promise((r) => setImmediate(r));
+  assert.ok(delays.length > 0);
+  assert.ok(
+    delays.every((ms) => ms <= 2147483647),
+    String(delays),
+  );
+  assert.ok(delays.includes(2147483647));
+  poller.stop();
+
+  const serverDelays: number[] = [];
+  const stop = startApiPoll({
+    apiUrl: "http://api.test",
+    pollMs: 2147483647,
+    timeoutMs: 2147481647,
+    metrics: createMetrics({ now: () => 0, pollMs: 2147483647 }),
+    doFetch: hang,
+    setTimeout: (_fn, ms) => serverDelays.push(ms),
+    clearTimeout: () => {},
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.ok(
+    serverDelays.every((ms) => ms <= 2147483647),
+    String(serverDelays),
+  );
+  stop();
 });
