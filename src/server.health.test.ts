@@ -63,14 +63,13 @@ test("a version mismatch poll makes /readyz 503 with that reason, an ok poll rec
 });
 
 test("/metrics serves the series and leaks no hidden detail", async () => {
-  const upstream = createServer((_req, res) => {
+  const upstream = createServer((req, res) => {
+    const checks = [
+      { id: "web", url: "https://user:pw@internal.example/x", keyword: "secret-word" },
+    ];
     res
       .writeHead(200, { "content-type": "application/json" })
-      .end(
-        JSON.stringify([
-          { id: "web", url: "https://user:pw@internal.example/x", keyword: "secret-word" },
-        ]),
-      );
+      .end(JSON.stringify(req.url === "/components" ? [] : checks));
   });
   const apiUrl = await listen(upstream);
   const metrics = createMetrics({ now: Date.now, pollMs: 5000 });

@@ -117,6 +117,12 @@ export function renderComponents(view: ComponentView, env: TimeEnv): string {
 export const HIDDEN_CHECK_LABEL = "Service";
 
 /**
+ * What the server sends instead of the id of a hidden check in no component. Checks in a
+ * component get a key made of component ids, which `component.checkIds` also holds.
+ */
+export const HIDDEN_CHECK_KEY = "service";
+
+/**
  * What incident and maintenance entries call a check. Without `showChecks` it is the names of
  * its components, and a check in none gets the neutral `HIDDEN_CHECK_LABEL`. With
  * `showChecks` the check name is used, after its components when it has any.
@@ -130,6 +136,7 @@ export function checkLabels(view: ComponentView): CheckLabels {
   }
   if (!view.showChecks) {
     const hidden = new Map<string, string>(view.checks.map((c) => [c.id, HIDDEN_CHECK_LABEL]));
+    hidden.set(HIDDEN_CHECK_KEY, HIDDEN_CHECK_LABEL);
     for (const [id, names] of owners) hidden.set(id, names.join(", "));
     return hidden;
   }

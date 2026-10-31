@@ -142,7 +142,8 @@ function cleanTarget(check: Fields, isHidden: boolean): Fields {
     case "tcp":
       return isHidden ? {} : pick(check, ["host", "port"]);
     case "dns":
-      return isHidden ? {} : pick(check, ["dnsName", "recordType", "expected", "resolver"]);
+      // `expected` and `resolver` name internal addresses and are never served.
+      return isHidden ? {} : pick(check, ["dnsName", "recordType"]);
     case "domain":
       return isHidden ? {} : pick(check, ["domain", "warnDays"]);
     case undefined:

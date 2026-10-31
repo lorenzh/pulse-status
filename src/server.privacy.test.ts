@@ -61,13 +61,17 @@ interface Fake {
   calls: string[];
   status: number;
   body: string;
+  /** The `/components` body; the `status` and `body` overrides do not apply to it. */
+  components: string;
 }
 
 async function start(options: Partial<ServerOptions> = {}, fake?: Partial<Fake>) {
-  const state: Fake = { calls: [], status: 200, body: "", ...fake };
+  const state: Fake = { calls: [], status: 200, body: "", components: "[]", ...fake };
   const fakeFetch = (async (input: string | Request | URL) => {
     const url = String(input);
     state.calls.push(url);
+    if (url.endsWith("/components"))
+      return new Response(state.components, { headers: JSON_HEADERS });
     if (state.body !== "")
       return new Response(state.body, { status: state.status, headers: JSON_HEADERS });
     let body: unknown = [];

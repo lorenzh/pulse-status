@@ -1,4 +1,4 @@
-import { HIDDEN_CHECK_LABEL } from "./components-view.ts";
+import { HIDDEN_CHECK_KEY, HIDDEN_CHECK_LABEL } from "./components-view.ts";
 import { escapeXml } from "./xml.ts";
 
 export interface FeedCheck {
@@ -85,6 +85,25 @@ function entryLabel(check: FeedCheck, input: FeedInput): string {
   return owners.length === 0 ? HIDDEN_CHECK_LABEL : owners.join(", ");
 }
 
+/**
+ * The label of an incident, or undefined when the feed does not list it. With components and
+ * hidden checks the server sends hidden keys and no checks, so the label comes from the
+ * component members or `HIDDEN_CHECK_KEY`; a listed check still works for data without keys.
+ */
+function incidentLabel(checkId: string, input: FeedInput): string | undefined {
+  const check = input.checks.find((item) => item.id === checkId);
+  const components = input.components ?? [];
+  if (input.showChecks === true || components.length === 0) {
+    return check === undefined ? undefined : entryLabel(check, input);
+  }
+  const owners = components
+    .filter((component) => component.checkIds.includes(checkId))
+    .map((component) => component.name);
+  if (owners.length > 0) return owners.join(", ");
+  if (checkId === HIDDEN_CHECK_KEY || check !== undefined) return HIDDEN_CHECK_LABEL;
+  return undefined;
+}
+
 function toEntry(incident: FeedIncident, label: string): Entry {
   const lines = [`Opened ${rfc3339(incident.openedAt)}`];
   if (incident.resolvedAt !== null) lines.push(`Resolved ${rfc3339(incident.resolvedAt)}`);
@@ -124,15 +143,14 @@ function manualEntries(input: FeedInput): Entry[] {
 }
 
 function entries(input: FeedInput): Entry[] {
-  const checks = new Map(input.checks.map((check) => [check.id, check]));
   const seen = new Set<number>();
   const out: Entry[] = [];
   // Resolved first: if an incident shows in both lists, its newer state wins.
   for (const incident of [...input.resolved, ...input.open]) {
-    const check = checks.get(incident.checkId);
-    if (check === undefined || seen.has(incident.id)) continue;
+    const label = incidentLabel(incident.checkId, input);
+    if (label === undefined || seen.has(incident.id)) continue;
     seen.add(incident.id);
-    out.push(toEntry(incident, entryLabel(check, input)));
+    out.push(toEntry(incident, label));
   }
   return [...out, ...manualEntries(input)].sort(
     (a, b) => b.updated - a.updated || b.incidentId - a.incidentId || (a.key < b.key ? 1 : -1),
