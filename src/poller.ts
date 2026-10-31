@@ -19,6 +19,7 @@ import {
   validateUptimeResponse,
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
+import { isRecord } from "@lorenzh/pulse-kit/is-record";
 import { type PollerErrorKind, RESOLVED_WINDOW_MS } from "./render.ts";
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -101,10 +102,6 @@ function validServedChecks(body: unknown): ChecksResponse {
   valid(validateChecksResponse(filled, "checks"));
   // Checked above; only the fields the server withholds may be absent.
   return body as ChecksResponse;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function withPlaceholders(item: unknown): unknown {

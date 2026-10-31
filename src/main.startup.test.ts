@@ -60,7 +60,7 @@ test("an occupied PORT prints one line naming PORT and exits 2", async () => {
 
 test("POLL_MS below 1000 prints one line and exits 2", async () => {
   const r = await run({ PORT: "0", POLL_MS: "999", PULSE_API_URL: "http://127.0.0.1:1" });
-  assertOneLine(r, /^pulse-status: POLL_MS: must be an integer >= 1000$/);
+  assertOneLine(r, /^pulse-status: POLL_MS: must be an integer from 1000 to 2147483647$/);
 });
 
 test("an http PULSE_STATUS_LOGO prints one line and exits 2", async () => {

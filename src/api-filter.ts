@@ -1,3 +1,4 @@
+import { isRecord } from "@lorenzh/pulse-kit";
 /** Proxy allow-list: pathname plus exact query string, as sent by the page. */
 export const ALLOWED_API_PATHS = [
   "/api/uptime",
@@ -46,10 +47,6 @@ export function sanitizeText(text: string): string {
 
 type Fields = Record<string, unknown>;
 
-function isObject(value: unknown): value is Fields {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function cleanReason(value: unknown, isHidden: boolean): unknown {
   if (isHidden) return null;
   return typeof value === "string" ? sanitizeText(value) : value;
@@ -67,7 +64,7 @@ const CHECK_COMMON = ["id", "name", "type", "state", "lastResultAt", "certDaysLe
 
 /** The availability objective: numbers and null only, else dropped. */
 function cleanSlo(value: unknown): Fields | undefined {
-  if (!isObject(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const { target, windowDays, availability, budgetRemaining } = value;
   const isNumberOrNull = (v: unknown): boolean =>
     v === null || (typeof v === "number" && Number.isFinite(v));
@@ -86,7 +83,7 @@ function cleanLatency(entry: Fields): Fields {
   const out = pick(entry, ["checkId"]);
   if (Array.isArray(entry.days)) {
     out.days = entry.days
-      .filter(isObject)
+      .filter(isRecord)
       .map((day) => pick(day, ["date", "p50Ms", "p95Ms", "count"]));
   }
   return out;
@@ -104,14 +101,14 @@ const RESULT_FIELDS = [
 const WINDOW_FIELDS = ["checkId", "start", "end", "note"] as const;
 
 function cleanResult(result: unknown, isHidden: boolean): Fields {
-  if (!isObject(result)) return {};
+  if (!isRecord(result)) return {};
   const out = pick(result, RESULT_FIELDS);
   if ("reason" in result) out.reason = cleanReason(result.reason, isHidden);
   return out;
 }
 
 function cleanLocation(entry: unknown, isHidden: boolean): Fields | null {
-  if (!isObject(entry)) return null;
+  if (!isRecord(entry)) return null;
   return {
     ...pick(entry, ["stale", "location"]),
     result: cleanResult(entry.result, isHidden),
@@ -168,7 +165,7 @@ function cleanCheck(check: Fields, isHidden: boolean): Fields {
       .map((entry: unknown) => cleanLocation(entry, isHidden))
       .filter((entry): entry is Fields => entry !== null);
   }
-  if (isObject(check.maintenance)) out.maintenance = pick(check.maintenance, WINDOW_FIELDS);
+  if (isRecord(check.maintenance)) out.maintenance = pick(check.maintenance, WINDOW_FIELDS);
   return withSlo({ ...out, ...cleanTarget(check, isHidden) }, check);
 }
 
@@ -185,7 +182,7 @@ function cleanMaintenance(window: Fields): Fields {
 function cleanUptime(entry: Fields): Fields {
   const out = pick(entry, ["checkId", "uptime"]);
   if (Array.isArray(entry.days)) {
-    out.days = entry.days.filter(isObject).map((day) => pick(day, ["date", "uptime", "results"]));
+    out.days = entry.days.filter(isRecord).map((day) => pick(day, ["date", "uptime", "results"]));
   }
   return out;
 }
@@ -207,7 +204,7 @@ function cleanComponent(component: Fields): Fields {
 function cleanComponentUptime(entry: Fields): Fields {
   const out = pick(entry, ["componentId", "uptime"]);
   if (Array.isArray(entry.days)) {
-    out.days = entry.days.filter(isObject).map((day) => pick(day, ["date", "uptime", "results"]));
+    out.days = entry.days.filter(isRecord).map((day) => pick(day, ["date", "uptime", "results"]));
   }
   return out;
 }
@@ -230,7 +227,7 @@ function cleanManualIncident(incident: Fields): Fields {
   ]);
   if (Array.isArray(incident.updates)) {
     out.updates = incident.updates
-      .filter(isObject)
+      .filter(isRecord)
       .map((update) => pick(update, MANUAL_UPDATE_FIELDS));
   }
   return out;
@@ -262,7 +259,7 @@ export function filterApiBody(
   if (!Array.isArray(body)) return body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;
-  return body.filter(isObject).map((item) => clean(item, isHidden));
+  return body.filter(isRecord).map((item) => clean(item, isHidden));
 }
 
 /**
@@ -273,7 +270,7 @@ export function filterApiBody(
 export function limitResolvedWindow(body: unknown, cutoff: number): unknown {
   if (!Array.isArray(body)) return body;
   const resolvedAt = (item: unknown): number | null =>
-    isObject(item) && typeof item.resolvedAt === "number" ? item.resolvedAt : null;
+    isRecord(item) && typeof item.resolvedAt === "number" ? item.resolvedAt : null;
   return body
     .filter((item: unknown) => (resolvedAt(item) ?? Number.POSITIVE_INFINITY) >= cutoff)
     .sort((a: unknown, b: unknown) => (resolvedAt(b) ?? 0) - (resolvedAt(a) ?? 0));
