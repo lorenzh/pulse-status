@@ -4,6 +4,10 @@
 // `--server` loads another tree's server module, so the same script measures an older commit.
 // Each route gets one plain request first; every later request sends the last seen `etag` as
 // `If-None-Match`. `share304` counts only the measured loop.
+// `cpuMs`, `wallMs`, `rssMib` and `share304` are reported per route and in total. A route's
+// window holds only its measured loop; the total is one window over all route loops. `rssMib` is
+// a snapshot of process RSS right after the loop, never a difference. The route order is fixed,
+// so the first route (`/api/checks`) also carries the JIT warm-up.
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { resolve } from "node:path";
@@ -107,7 +111,17 @@ async function request(
 const share = (c: Counts): number =>
   c.requests === 0 ? 0 : Math.floor((c.notModified * 1000) / c.requests + 0.5) / 10;
 
-const perRoute: Record<string, { requests: number; share304: number }> = {};
+interface RouteResult {
+  requests: number;
+  cpuMs: number;
+  wallMs: number;
+  rssMib: number;
+  share304: number;
+}
+
+const mib = (bytes: number): number => Math.round(bytes / (1024 * 1024));
+
+const perRoute: Record<string, RouteResult> = {};
 const total: Counts = { requests: 0, notModified: 0 };
 const firstTags = new Map<string, string | null>();
 for (const path of ROUTES) firstTags.set(path, await request(path, null, null));
@@ -117,14 +131,24 @@ const wallStart = performance.now();
 for (const path of ROUTES) {
   const counts: Counts = { requests: 0, notModified: 0 };
   let tag = firstTags.get(path) ?? null;
+  const routeCpuStart = process.cpuUsage();
+  const routeWallStart = performance.now();
   for (let i = 0; i < REQUESTS; i++) tag = await request(path, tag, counts);
-  perRoute[path] = { requests: counts.requests, share304: share(counts) };
+  const routeWallMs = performance.now() - routeWallStart;
+  const routeCpu = process.cpuUsage(routeCpuStart);
+  perRoute[path] = {
+    requests: counts.requests,
+    cpuMs: Math.round((routeCpu.user + routeCpu.system) / 1000),
+    wallMs: Math.round(routeWallMs),
+    rssMib: mib(process.memoryUsage().rss),
+    share304: share(counts),
+  };
   total.requests += counts.requests;
   total.notModified += counts.notModified;
 }
 const wallMs = performance.now() - wallStart;
 const cpu = process.cpuUsage(cpuStart);
-const rssMib = process.memoryUsage().rss / (1024 * 1024);
+const rssMib = mib(process.memoryUsage().rss);
 server.close();
 
 console.log(
@@ -132,7 +156,7 @@ console.log(
     requests: total.requests,
     wallMs: Math.round(wallMs),
     cpuMs: Math.round((cpu.user + cpu.system) / 1000),
-    rssMib: Math.round(rssMib),
+    rssMib,
     share304: share(total),
     routes: perRoute,
   }),
