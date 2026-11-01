@@ -199,6 +199,13 @@ const contractModules = new Set([
   "components.js",
   "admin.js",
   "validate-admin.js",
+  "validate-tokens.js",
+  "validate-core.js",
+  "tokens.js",
+  "token-id.js",
+  "validate-audit.js",
+  "audit.js",
+  "revision.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
