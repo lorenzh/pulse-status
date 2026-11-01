@@ -1092,3 +1092,32 @@ test("the largest rendered timeouts schedule no timer above the browser limit", 
   );
   stop();
 });
+
+test("a nested result needs an integer latency and allows a 1000-character reason", async () => {
+  const withResult = (latencyMs: number) =>
+    checkOf("a", "A", {
+      locations: [
+        {
+          location: "eu",
+          result: {
+            checkId: "a",
+            timestamp: 1,
+            status: "down",
+            statusCode: 500,
+            latencyMs,
+            reason: "r".repeat(1000),
+            location: "eu",
+            attempts: 1,
+          },
+          stale: false,
+        },
+      ],
+    });
+  const run = (latencyMs: number) =>
+    pollOnce((async (url: string) =>
+      url.endsWith("/checks")
+        ? json([withResult(latencyMs)])
+        : json([])) as unknown as typeof fetch);
+  assert.equal((await run(13))?.error, null);
+  assert.equal((await run(12.5))?.error, "invalid");
+});
