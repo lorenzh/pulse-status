@@ -1,5 +1,3 @@
-import { ensureRovingStop, isBarsGroup, setBarTabStop } from "./bars.ts";
-
 /** The part of a DOM node that the patch uses; the browser's nodes and the test fake fit it. */
 export interface PatchNode {
   readonly nodeType: number;
@@ -97,47 +95,20 @@ function attributeMap(node: PatchNode): Map<string, string> {
   return new Map(Array.from(node.attributes, (attr) => [attr.name, attr.value]));
 }
 
-function isBar(node: PatchNode): boolean {
-  return (node.getAttribute("class") ?? "").split(" ").includes("bar");
-}
-
 function isDetails(node: PatchNode): boolean {
   return node.nodeName.toLowerCase() === "details";
 }
 
 function syncElement(old: PatchNode, next: PatchNode, env: PatchEnv): void {
-  // The roving tab stop of a bar and the open state of a details live in the DOM, not in the html.
-  let keep: string[] = [];
-  if (isBar(old)) keep = ["tabindex"];
-  else if (isDetails(old)) keep = ["open"];
+  // The open state of a details lives in the DOM, not in the html.
+  const keep = isDetails(old) ? ["open"] : [];
   const diff = diffAttributes(attributeMap(old), attributeMap(next), keep);
   for (const [name, value] of diff.set) old.setAttribute(name, value);
   for (const name of diff.remove) old.removeAttribute(name);
-  if (isBarsGroup(old)) reconcileBars(old, next, env);
-  else reconcileChildren(old, next, env, false);
+  reconcileChildren(old, next, env);
 }
 
-function reconcileBars(old: PatchNode, next: PatchNode, env: PatchEnv): void {
-  const active = env.activeElement();
-  const hadFocus = active !== null && active.parentNode === old;
-  reconcileChildren(old, next, env, true);
-  ensureRovingStop(old, env.activeElement());
-  if (hadFocus && active.parentNode !== old) {
-    // The focused day left the window: focus the nearest remaining bar.
-    const last = old.childNodes[old.childNodes.length - 1];
-    if (last !== undefined) {
-      setBarTabStop(old, last);
-      last.focus?.({ preventScroll: true });
-    }
-  }
-}
-
-function reconcileChildren(
-  parent: PatchNode,
-  next: PatchNode | PatchNode[],
-  env: PatchEnv,
-  hasDemotedInserts: boolean,
-): void {
+function reconcileChildren(parent: PatchNode, next: PatchNode | PatchNode[], env: PatchEnv): void {
   const oldNodes = Array.from(parent.childNodes);
   const newNodes = Array.isArray(next) ? next : Array.from(next.childNodes);
   const plan = planChildren(oldNodes.map(describe), newNodes.map(describe));
@@ -150,10 +121,7 @@ function reconcileChildren(
     const matched = plan.matches[position];
     const old = matched === null || matched === undefined ? undefined : oldNodes[matched];
     let node = fresh;
-    if (old === undefined) {
-      if (hasDemotedInserts && fresh.nodeType === ELEMENT_NODE)
-        fresh.setAttribute("tabindex", "-1");
-    } else {
+    if (old !== undefined) {
       node = old;
       if (fresh.nodeType === TEXT_NODE) {
         if (old.data !== fresh.data) old.data = fresh.data;
@@ -179,7 +147,7 @@ const lastHtml = new WeakMap<object, string>();
  */
 export function patchHtml(container: PatchNode, html: string, env: PatchEnv): void {
   if (lastHtml.get(container) === html) return;
-  reconcileChildren(container, env.parse(html), env, false);
+  reconcileChildren(container, env.parse(html), env);
   lastHtml.set(container, html);
 }
 

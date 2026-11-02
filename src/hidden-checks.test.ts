@@ -78,3 +78,27 @@ test("a malformed snapshot is rejected", () => {
     assert.equal(parseActiveCheckIds(bad), undefined, JSON.stringify(bad));
   }
 });
+
+test("hidden mode: incident reasons are always null, maintenance notes stay", () => {
+  const keys = hiddenCheckKeys(components, new Set());
+  const incidents = [
+    {
+      id: 1,
+      checkId: "db",
+      openedAt: 1,
+      resolvedAt: null,
+      reason: "connect ECONNREFUSED 10.9.8.7:5432",
+    },
+    { id: 2, checkId: "web", openedAt: 1, resolvedAt: 5, reason: "db.secret.internal down" },
+  ];
+  const hidden = hideCheckIds("/api/incidents", incidents, keys);
+  assert.deepEqual(
+    hidden?.map((item) => (item as { reason: unknown }).reason),
+    [null, null],
+  );
+  const windows = [{ checkId: "web", start: 1, end: 2, note: "Planned 10.9.8.7" }];
+  assert.deepEqual(hideCheckIds("/api/maintenance", windows, keys), [
+    { checkId: "components:shop", start: 1, end: 2, note: "Planned 10.9.8.7" },
+  ]);
+  assert.deepEqual(hideCheckIds("/api/latency", [{ checkId: "web", days: [] }], keys), []);
+});

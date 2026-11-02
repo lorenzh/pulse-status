@@ -1,8 +1,11 @@
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface Run {
   code: number | null;
@@ -10,10 +13,18 @@ interface Run {
   stderr: string;
 }
 
+// The children get no HOME, so Bun has no transpiler cache unless it is given one. A shared
+// cache lets every child after the first skip the transpile of the module graph.
+const transpilerCache = mkdtempSync(join(tmpdir(), "pulse-status-startup-"));
+
 function run(env: Record<string, string>): Promise<Run> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["src/main.ts"], {
-      env: { PATH: process.env.PATH ?? "", ...env },
+      env: {
+        PATH: process.env.PATH ?? "",
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: transpilerCache,
+        ...env,
+      },
     });
     let stdout = "";
     let stderr = "";
@@ -41,6 +52,7 @@ function assertOneLine(r: Run, pattern: RegExp): void {
 const blockers: Server[] = [];
 afterAll(() => {
   for (const s of blockers) s.close();
+  rmSync(transpilerCache, { recursive: true, force: true });
 });
 
 test("an invalid PULSE_API_URL prints one line without the value and exits 2", async () => {

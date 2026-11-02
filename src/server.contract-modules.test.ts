@@ -72,6 +72,23 @@ test("zod path: traversal, other extensions and unknown files answer 404", async
   }
 });
 
+test("zod path: encoded or non-canonical aliases of a real file answer 404", async () => {
+  const base = await start();
+  const control = await fetch(`${base}/pulse-contract/zod/v4/core/schemas.js`);
+  assert.equal(control.status, 200);
+  await control.arrayBuffer();
+  for (const path of [
+    "/pulse-contract/zod/alias-1%2f..%2fv4/core/schemas.js",
+    "/pulse-contract/zod/v4/core/%73chemas.js",
+    "/pulse-contract/zod/v4//core/schemas.js",
+  ]) {
+    const r = await fetch(base + path);
+    assert.equal(r.status, 404, path);
+    assert.equal(r.headers.get("etag"), null, path);
+    await r.arrayBuffer();
+  }
+});
+
 test("every import of the served contract graph resolves to a served file", async () => {
   const base = await start();
   const seen = new Set<string>();

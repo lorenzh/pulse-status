@@ -110,7 +110,8 @@ test("component entries are rendered on the server", async () => {
   const base = await listen(createStatusServer({ apiUrl, pollMs: 1000, now: () => NOW }));
   const html = await (await fetch(`${base}/`)).text();
   assert.match(html, /data-key="component:shop"/);
-  assert.match(html, /Shop, 90-day uptime 99\.0 %/);
+  assert.match(html, /<summary>Daily values, Shop<\/summary>/);
+  assert.match(html, /<th>2026-10-30<\/th><td>99.0<\/td><td>5<\/td>/);
   assert.doesNotMatch(html, /Checkout API/);
 });
 

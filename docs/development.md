@@ -15,15 +15,20 @@ Bun runs the TypeScript source directly (no build step).
 
 - `src/main.ts` reads the environment and starts the server.
 - `src/sections.ts` builds the HTML of all page sections before `public/client.js` shows them (browser module).
-- `src/patch.ts`, `src/bars.ts` and `src/announce.ts` run in the browser: the in-place keyed patch of the sections, the roving tab stop of the uptime bars, and the text of the live regions. `src/ssr.ts` renders the first state on the server. `src/patch.fake-dom.ts` is the test-only DOM.
+- `src/patch.ts` and `src/announce.ts` run in the browser: the in-place keyed patch of the sections (it keeps the `open` state of `<details>` and the focus), and the text of the live regions. `src/ssr.ts` renders the first state on the server. `src/patch.fake-dom.ts` is the test-only DOM.
 - `src/server.ts` is the HTTP server: page, theme, logo, fonts, browser modules and the `/api/*` proxy.
 - `src/api-filter.ts` is the proxy path allow-list, the per-endpoint field allow-list that builds each served object, the URL and reason sanitizing, and the 7-day window of resolved incidents (pure functions). The raw upstream cache lives in `src/server.ts`; the cache of finished answers is `src/answer-cache.ts` (pure). `bench/proxy-cache.ts` measures the cost of cached proxy requests and `bench/conditional.ts` the cost and `304` share of conditional requests to `/api/checks`, the feed and a badge (neither is run by `bun test` or CI). `src/http-cache.ts` computes the `ETag` of a served body and matches `If-None-Match` (pure).
+- `src/component-latency.ts` builds `/api/components/latency` from the raw `/components` and `/latency` reads: per component and UTC day, the highest p50 and p95 of its HTTP member checks (pure). Its types are imported by the browser modules as types only.
 - `src/hidden-checks.ts` builds the hidden keys from the upstream `/components` and `/checks` reads and rewrites the filtered answers when checks are hidden and components exist (pure functions).
 - `src/metrics.ts` and `src/api-poll.ts` hold the health and metrics state and the background API poll. The JSON logger, signal handling and shutdown (`runService`), the ops endpoints, the env readers and `escapeHtml`/`formatDuration` come from `@lorenzh/pulse-kit`.
 - `src/settings.ts` parses `PULSE_STATUS_HIDE_DETAILS`, `PULSE_STATUS_CACHE_MS` and `PULSE_STATUS_UPSTREAM_TIMEOUT_MS`.
 - `public/page.css` and `public/theme-init.js` are the page style and the theme bootstrap script. The page has no inline script or style, because the CSP forbids them.
 - `src/theme-config.ts` loads and validates the theme file and generates the CSS.
-- `src/poller.ts`, `src/render.ts`, `src/theme.ts` and `src/validate.ts` run in the browser. The server strips their types when it serves them. They import only types, with one exception: `poller.ts` imports `validate.ts`. A new browser module is added to `tsModules` in `src/server.ts`.
+- `src/poller.ts`, `src/render.ts`, `src/theme.ts`, `src/sections.ts`, `src/components-view.ts`, `src/patch.ts` and `src/announce.ts` run in the browser. The server strips their types when it serves them (`tsModules` in `src/server.ts`). Their imports:
+  - a relative `.ts` import of a sibling browser module is rewritten to `/<name>.js` (for example `poller.ts` imports `RESOLVED_WINDOW_MS` from `./render.ts`); a type-only import of a server module is erased;
+  - `@lorenzh/pulse-contract` is rewritten to `/pulse-contract/index.js` (validators, schemas and helpers run in the browser; zod is served from `/pulse-contract/zod/`);
+  - from the kit only `@lorenzh/pulse-kit/escape` and `@lorenzh/pulse-kit/format-duration`, rewritten to `/pulse-kit/*.js`.
+    A new browser module is added to `tsModules`.
 - Health: `/healthz` is liveness and `/readyz` readiness (`/healthz` used to be readiness). Tests that need readiness use `/readyz`.
 - `public/` is plain HTML and JavaScript. Biome does not check HTML and `tsc` does not check `public/`.
 

@@ -3,7 +3,7 @@ import { type Logger, StartupError } from "@lorenzh/pulse-kit";
 import { startApiPoll } from "./api-poll.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
-import { readSettings } from "./settings.ts";
+import { readSettings, type Settings } from "./settings.ts";
 
 export interface StartedServer {
   server: Server;
@@ -31,6 +31,15 @@ export function startFromEnv(
   doFetch?: typeof fetch,
   log?: Logger,
 ): StartedServer {
+  return startFromSettings(readSettings(env), doFetch, log);
+}
+
+/** Creates the server from parsed settings; it does not listen yet. */
+export function startFromSettings(
+  settings: Settings,
+  doFetch?: typeof fetch,
+  log?: Logger,
+): StartedServer {
   const {
     port,
     apiUrl,
@@ -43,7 +52,7 @@ export function startFromEnv(
     showChecks,
     cacheMs,
     upstreamTimeoutMs,
-  } = readSettings(env);
+  } = settings;
   const metrics = createMetrics({ now: Date.now, pollMs });
   const server = createServerOrFail({
     apiUrl,

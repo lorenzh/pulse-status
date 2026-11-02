@@ -492,8 +492,8 @@ function uptimeEntry(values: (number | null)[], total: number | null) {
 test("uptime: 90 bars, classes at the boundaries, labels and total", () => {
   const values: (number | null)[] = [100, 99.9, 99.89, 95, 94.99, 76, null];
   const html = renderChecks([base], [uptimeEntry(values, 99.24)]);
-  assert.equal(html.match(/class="bar /g)?.length, 90);
-  const classes = [...html.matchAll(/class="bar (\w+)"/g)].map((m) => m[1]);
+  assert.equal(html.match(/<i class="/g)?.length, 90);
+  const classes = [...html.matchAll(/<i class="(\w+)"/g)].map((m) => m[1]);
   assert.deepEqual(classes.slice(0, 7), [
     "up",
     "up",
@@ -503,18 +503,17 @@ test("uptime: 90 bars, classes at the boundaries, labels and total", () => {
     "down",
     "nodata",
   ]);
-  assert.match(html, /aria-label="2026-08-06 UTC: 76\.0 %"/);
-  assert.match(html, /title="2026-08-07 UTC: no data"/);
-  assert.equal(html.match(/tabindex="0"/g)?.length, 1);
-  assert.match(html, /role="group" aria-label="Site, 90-day uptime 99\.2 %"/);
+  assert.match(html, /<th>2026-08-06<\/th><td>76\.0<\/td>/);
+  assert.match(html, /<th>2026-08-07<\/th><td>no data<\/td>/);
+  assert.doesNotMatch(html, /tabindex/);
+  assert.match(html, /<summary>Daily values, Site<\/summary>/);
   assert.match(html, /99\.2 % uptime, 90 days/);
 });
 
 test("uptime: total null reads no data; missing entry gives no bars; escaping", () => {
   const html = renderChecks([base], [uptimeEntry([], null)]);
-  assert.match(html, /aria-label="Site, 90-day uptime no data"/);
   assert.match(html, /<span class="uptime-total">no data<\/span>/);
-  assert.doesNotMatch(renderChecks([base]), /class="bar|uptime-total/);
+  assert.doesNotMatch(renderChecks([base]), /class="bars|uptime-total/);
   assert.doesNotMatch(renderChecks([base], [{ ...uptimeEntry([], null), checkId: "z" }]), /bar/);
   const evil = uptimeEntry([], null);
   evil.days[0]!.date = '"><script>';
@@ -674,12 +673,12 @@ test("request secrets in an upstream payload are not rendered", () => {
   assert.doesNotMatch(html, /sentinel-secret/);
 });
 
-test("uptime group name holds the entry name; one tab stop; keys on groups and days", () => {
-  const html = renderUptime(uptimeEntry([100, 99], 99.5), "Checkout API");
-  assert.match(html, /aria-label="Checkout API, 90-day uptime 99\.5 %" data-key="bars"/);
-  assert.match(html, /data-key="day:2026-08-01"/);
-  assert.equal(html.match(/tabindex="0"/g)?.length, 1);
-  assert.match(html, /tabindex="0" title="2026-08-06 UTC/);
+test("uptime bars are decorative: hidden from assistive tech, no tab stop, no per-bar label", () => {
+  const html = renderUptime(uptimeEntry([100, 99], 99.5));
+  assert.match(html, /<div class="bars" aria-hidden="true" data-key="bars">/);
+  assert.doesNotMatch(html, /tabindex|role=|title=|aria-label|data-exact/);
+  assert.match(html, /<i class="up"><\/i>/);
+  assert.match(html, /99\.5 % uptime, 90 days/);
 });
 
 test("time has no tab stop and names its exact time; summary and banner have no role", () => {

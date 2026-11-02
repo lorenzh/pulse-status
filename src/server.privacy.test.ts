@@ -100,9 +100,10 @@ test("allow-listed paths are proxied", async () => {
     assert.equal(r.status, 200, path);
     assert.match(r.headers.get("content-type") ?? "", /application\/json/);
   }
+  // The component latency is built by status: with checks shown it is empty and reads nothing.
   assert.deepEqual(
     state.calls.map((c) => c.replace("http://api.test", "/api")),
-    [...ALLOWED_API_PATHS],
+    ALLOWED_API_PATHS.filter((path) => path !== "/api/components/latency"),
   );
 });
 
@@ -496,18 +497,6 @@ test("incidents, maintenance and uptime serve only their allow-listed keys", asy
   }
 });
 
-test("latency is per check: with checks hidden it is 404, never fetched and never in the page", async () => {
-  const { base, state } = await start();
-  const r = await fetch(`${base}/api/latency`);
-  assert.equal(r.status, 404);
-  const page = await (await fetch(`${base}/`)).text();
-  assert.doesNotMatch(page, /latency-chart/);
-  assert.deepEqual(
-    state.calls.filter((c) => c.includes("latency")),
-    [],
-  );
-});
-
 test("latency with checks shown serves only contract fields and no per-id route exists", async () => {
   const days = Array.from({ length: 90 }, (_, i) => ({
     date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
@@ -523,4 +512,330 @@ test("latency with checks shown serves only contract fields and no per-id route 
   assert.doesNotMatch(await r.text(), /LEAK/);
   assert.equal((await fetch(`${base}/api/checks/web/latency`)).status, 404);
   assert.equal((await fetch(`${base}/api/latency?x=1`)).status, 404);
+});
+
+// Latency matrix and hidden-mode reasons, against a stub api with one answer per path.
+
+const SECRET_IP = ["10", "9", "8", "7"].join(".");
+const SECRET_HOST = "db.secret.internal";
+const NOW = Date.UTC(2026, 9, 1, 12, 0, 0);
+const DAY_MS = 86_400_000;
+const DATES = Array.from({ length: 90 }, (_, i) =>
+  new Date(NOW - (89 - i) * DAY_MS).toISOString().slice(0, 10),
+);
+
+type DayValues = [p50: number | null, p95: number | null, count: number];
+
+function latencyEntry(checkId: string, valuesAt: (index: number) => DayValues, shift = 0) {
+  return {
+    checkId,
+    days: DATES.map((_, i) => {
+      const [p50Ms, p95Ms, count] = valuesAt(i);
+      const date = new Date(NOW - (89 - i - shift) * DAY_MS).toISOString().slice(0, 10);
+      return { date, p50Ms, p95Ms, count };
+    }),
+  };
+}
+
+const NO_RESULTS: DayValues = [null, null, 0];
+// Day 0: web has no results. Day 1: neither has results. Other days: both.
+const webDays = (i: number): DayValues => (i <= 1 ? NO_RESULTS : [80, 150, 10]);
+const apiDays = (i: number): DayValues => (i === 1 ? NO_RESULTS : [120, 140, 5]);
+
+function stubBodies(): Record<string, unknown> {
+  const http = (id: string, name: string) => ({
+    id,
+    name,
+    type: "http",
+    url: `https://${SECRET_HOST}/${id}`,
+    latencyObjectiveMs: 300,
+    ...probeState,
+  });
+  const probeState = {
+    intervalMs: 1000,
+    state: "up",
+    consecutiveDown: 0,
+    lastResultAt: null,
+    lastReason: null,
+    locations: [],
+  };
+  const reason = `connect ECONNREFUSED ${SECRET_IP}:5432`;
+  return {
+    "/checks": [
+      http("web", "Web"),
+      http("api", "Api"),
+      http("secret-check", "Secret DB"),
+      http("solo", "Solo"),
+      { id: "tcp-db", name: "Db", type: "tcp", host: SECRET_HOST, port: 5432, ...probeState },
+    ],
+    "/components": [
+      {
+        id: "shop",
+        name: "Shop",
+        checkIds: ["web", "api", "tcp-db"],
+        state: "up",
+        uptime: 99,
+        incidentIds: [],
+      },
+      {
+        id: "api-gw",
+        name: "Gateway",
+        checkIds: ["web", "secret-check"],
+        state: "up",
+        uptime: 99,
+        incidentIds: [],
+      },
+      {
+        id: "db",
+        name: "Database",
+        checkIds: ["tcp-db"],
+        state: "up",
+        uptime: 99,
+        incidentIds: [],
+      },
+    ],
+    "/components/uptime": [],
+    "/uptime": [],
+    "/latency": [
+      latencyEntry("web", webDays),
+      latencyEntry("api", apiDays),
+      latencyEntry("secret-check", () => [10, 20, 1]),
+      latencyEntry("solo", () => [997, 998, 999]),
+    ],
+    "/incidents?status=open": [
+      { id: 1, checkId: "web", openedAt: NOW - 1000, resolvedAt: null, reason },
+    ],
+    "/incidents?status=resolved": [
+      {
+        id: 2,
+        checkId: "secret-check",
+        openedAt: NOW - 5000,
+        resolvedAt: NOW - 2000,
+        reason: `GET https://${SECRET_HOST}/x failed`,
+      },
+    ],
+    "/maintenance": [],
+    "/manual-incidents": [],
+  };
+}
+
+interface Stub {
+  base: string;
+  calls: string[];
+  bodies: Record<string, unknown>;
+  failures: Map<string, number>;
+  clock: { now: number };
+}
+
+async function startStub(
+  options: Partial<ServerOptions> = {},
+  hasComponents = true,
+): Promise<Stub> {
+  const bodies = stubBodies();
+  if (!hasComponents) bodies["/components"] = [];
+  const failures = new Map<string, number>();
+  const calls: string[] = [];
+  const clock = { now: NOW };
+  const fakeFetch = (async (input: string | Request | URL) => {
+    const path = String(input).replace("http://api.test", "");
+    calls.push(path);
+    const status = failures.get(path);
+    if (status !== undefined)
+      return new Response('{"error":"x"}', { status, headers: JSON_HEADERS });
+    if (!Object.hasOwn(bodies, path))
+      return new Response("{}", { status: 404, headers: JSON_HEADERS });
+    return new Response(JSON.stringify(bodies[path]), { headers: JSON_HEADERS });
+  }) as unknown as typeof fetch;
+  const server = createStatusServer({
+    apiUrl: "http://api.test",
+    pollMs: 1,
+    fetch: fakeFetch,
+    cacheMs: 0,
+    now: () => clock.now,
+    ...options,
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  servers.push(server);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  return { base, calls, bodies, failures, clock };
+}
+
+async function getText(base: string, path: string): Promise<{ status: number; body: string }> {
+  const res = await fetch(base + path);
+  return { status: res.status, body: await res.text() };
+}
+
+interface ServedDay {
+  date: string;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  count: number;
+}
+
+test("latency: no components and defaults serve per-check latency and draw a chart", async () => {
+  const stub = await startStub({}, false);
+  const latency = await getText(stub.base, "/api/latency");
+  assert.equal(latency.status, 200);
+  const served = JSON.parse(latency.body) as { checkId: string }[];
+  assert.ok(served.some((entry) => entry.checkId === "web"));
+  const components = await getText(stub.base, "/api/components/latency");
+  assert.equal(components.status, 200);
+  assert.equal(components.body, "[]");
+  assert.match((await getText(stub.base, "/")).body, /class="latency-chart"/);
+});
+
+test("latency: hidden mode serves [] per check and the highest member check per component", async () => {
+  const stub = await startStub();
+  const latency = await getText(stub.base, "/api/latency");
+  assert.equal(latency.status, 200);
+  assert.equal(latency.body, "[]");
+  const res = await getText(stub.base, "/api/components/latency");
+  assert.equal(res.status, 200);
+  for (const text of ["secret-check", "Secret DB", "latencyObjectiveMs", "checkId", "997", "999"]) {
+    assert.ok(!res.body.includes(text), text);
+  }
+  const served = JSON.parse(res.body) as { componentId: string; days: ServedDay[] }[];
+  assert.deepEqual(
+    served.map((entry) => entry.componentId),
+    ["shop", "api-gw"],
+  );
+  const shop = served[0]?.days ?? [];
+  assert.equal(shop.length, 90);
+  assert.deepEqual(shop[0], { date: DATES[0], p50Ms: 120, p95Ms: 140, count: 5 });
+  assert.deepEqual(shop[1], { date: DATES[1], p50Ms: null, p95Ms: null, count: 0 });
+  assert.deepEqual(shop[2], { date: DATES[2], p50Ms: 120, p95Ms: 150, count: 15 });
+  assert.deepEqual(served[1]?.days[2], { date: DATES[2], p50Ms: 80, p95Ms: 150, count: 11 });
+  const page = (await getText(stub.base, "/")).body;
+  assert.equal(page.match(/class="latency-chart"/g)?.length, 2);
+  assert.match(page, /highest member check daily p95, last 7 days 150 ms/);
+  assert.match(page, /Highest member check p95 \(ms\)/);
+  assert.ok(!page.includes("Secret DB"));
+  assert.ok(!stub.calls.includes("/components/latency"));
+});
+
+test("latency: hidden mode fails closed when /components fails", async () => {
+  const stub = await startStub();
+  stub.failures.set("/components", 500);
+  for (const path of ["/api/latency", "/api/components/latency"]) {
+    const res = await getText(stub.base, path);
+    assert.equal(res.status, 502, path);
+    assert.ok(!res.body.includes("p95Ms"), path);
+  }
+});
+
+test("latency: with checks shown the component route is [] without a read", async () => {
+  const stub = await startStub({ showChecks: true });
+  const res = await getText(stub.base, "/api/components/latency");
+  assert.equal(res.status, 200);
+  assert.equal(res.body, "[]");
+  assert.equal(stub.calls.length, 0);
+  const page = (await getText(stub.base, "/")).body;
+  // web is a member of two components, so it is listed and charted twice.
+  assert.equal(page.match(/class="latency-chart"/g)?.length, 5);
+  assert.doesNotMatch(page, /highest member check/);
+  assert.ok(!stub.calls.includes("/components/latency"));
+});
+
+test("latency: shifted member dates and an invalid body are 502; an older api's 404 passes on", async () => {
+  const stub = await startStub();
+  stub.bodies["/latency"] = [latencyEntry("web", webDays), latencyEntry("api", apiDays, 1)];
+  const shifted = await getText(stub.base, "/api/components/latency");
+  assert.equal(shifted.status, 502);
+  assert.deepEqual(JSON.parse(shifted.body), { error: "invalid API response" });
+  stub.bodies["/latency"] = [{ checkId: "web", days: [] }];
+  assert.equal((await getText(stub.base, "/api/components/latency")).status, 502);
+  stub.bodies["/components"] = { not: "a list" };
+  assert.equal((await getText(stub.base, "/api/components/latency")).status, 502);
+  stub.bodies["/components"] = stubBodies()["/components"];
+  stub.failures.set("/latency", 404);
+  assert.equal((await getText(stub.base, "/api/components/latency")).status, 404);
+});
+
+test("latency: a membership change shows after the raw entry expires, not within the period", async () => {
+  const stub = await startStub({ cacheMs: 2000 });
+  const first = await fetch(`${stub.base}/api/components/latency`);
+  const body = await first.text();
+  stub.bodies["/components"] = [
+    { id: "shop", name: "Shop", checkIds: ["api"], state: "up", uptime: 99, incidentIds: [] },
+  ];
+  stub.clock.now = NOW + 1000;
+  const within = await fetch(`${stub.base}/api/components/latency`);
+  assert.equal(await within.text(), body);
+  assert.equal(within.headers.get("etag"), first.headers.get("etag"));
+  stub.clock.now = NOW + 2001;
+  const after = JSON.parse(
+    await getText(stub.base, "/api/components/latency").then((r) => r.body),
+  ) as {
+    componentId: string;
+    days: ServedDay[];
+  }[];
+  assert.equal(after.length, 1);
+  assert.equal(after[0]?.days[2]?.p95Ms, 140);
+});
+
+const reasonCases: readonly [string, Partial<ServerOptions>, boolean, boolean][] = [
+  // name, options, has components, reason expected to be kept
+  ["hidden mode, hideDetails false", { hideDetails: false }, true, false],
+  ["hidden mode, hideDetails true", { hideDetails: true }, true, false],
+  ["no components, hideDetails false", { hideDetails: false }, false, true],
+  [
+    "components with checks shown, hideDetails false",
+    { hideDetails: false, showChecks: true },
+    true,
+    true,
+  ],
+];
+
+for (const [name, options, hasComponents, isKept] of reasonCases) {
+  test(`reasons: ${name}`, async () => {
+    const stub = await startStub(
+      { ...options, publicUrl: "https://status.example", cacheMs: 2000 },
+      hasComponents,
+    );
+    const open = await fetch(`${stub.base}/api/incidents?status=open`);
+    const openBody = await open.text();
+    const [incident] = JSON.parse(openBody) as { reason: string | null }[];
+    assert.equal(
+      incident?.reason ?? null,
+      isKept ? `connect ECONNREFUSED ${SECRET_IP}:5432` : null,
+    );
+    if (isKept) return;
+    const resolved = await getText(stub.base, "/api/incidents?status=resolved");
+    const page = await getText(stub.base, "/");
+    const feed = await getText(stub.base, "/feed.atom");
+    assert.equal(feed.status, 200);
+    for (const [label, body] of [
+      ["open", openBody],
+      ["resolved", resolved.body],
+      ["page", page.body],
+      ["feed", feed.body],
+    ]) {
+      assert.ok(!body?.includes(SECRET_IP), `${label} ${SECRET_IP}`);
+      assert.ok(!body?.includes(SECRET_HOST), `${label} ${SECRET_HOST}`);
+    }
+    const etag = open.headers.get("etag") ?? "";
+    const again = await fetch(`${stub.base}/api/incidents?status=open`, {
+      headers: { "if-none-match": etag },
+    });
+    assert.equal(again.status, 304);
+    assert.equal((await getText(stub.base, "/api/incidents?status=open")).body, openBody);
+  });
+}
+
+test("reasons: manual incident text stays public in hidden mode", async () => {
+  const stub = await startStub({ hideDetails: false });
+  stub.bodies["/manual-incidents"] = [
+    {
+      id: 7,
+      title: "Checkout slow",
+      componentIds: ["shop"],
+      impact: "minor",
+      status: "investigating",
+      createdAt: NOW - 1000,
+      resolvedAt: null,
+      updates: [{ at: NOW - 1000, status: "investigating", message: `Investigating ${SECRET_IP}` }],
+    },
+  ];
+  const page = (await getText(stub.base, "/")).body;
+  assert.ok(page.includes(`Investigating ${SECRET_IP}`));
 });

@@ -138,6 +138,7 @@ test("sections: hide-details does not apply and the summary follows incident sta
   const state: PollerState = {
     checks: [],
     latency: null,
+    componentLatency: null,
     incidents: [],
     maintenance: [],
     resolved: [],

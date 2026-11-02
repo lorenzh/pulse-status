@@ -12,7 +12,16 @@ const TAG_LENGTH = 27;
  */
 export function etagFor(settings: AnswerSettings, body: string): string {
   const fingerprint = `${settings.isHidden ? 1 : 0}${settings.hasChecks ? 1 : 0}`;
-  const digest = createHash("sha256").update(`${fingerprint}\n${body}`, "utf8").digest("base64url");
+  return tagOf(`${fingerprint}\n${body}`);
+}
+
+/** The strong entity tag of a static asset: its exact bytes only, no settings. */
+export function assetEtag(body: string): string {
+  return tagOf(body);
+}
+
+function tagOf(input: string): string {
+  const digest = createHash("sha256").update(input, "utf8").digest("base64url");
   return `"${digest.slice(0, TAG_LENGTH)}"`;
 }
 

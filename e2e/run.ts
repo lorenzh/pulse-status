@@ -144,36 +144,48 @@ async function checkAxe(page: Page, label: string): Promise<void> {
   assert.deepEqual(summary, [], `axe violations (${label})`);
 }
 
-async function checkStructure(page: Page, entryName: string): Promise<void> {
-  const groups = await page.$$eval('[role="group"][data-key="bars"]', (els) =>
-    els.map((el) => el.getAttribute("aria-label") ?? ""),
+/** One page layout under test: the server it runs on and what the stub sends. */
+interface Layout {
+  name: "default" | "shown" | "fallback";
+  url: string;
+  hasComponents: boolean;
+  entryName: string;
+}
+
+async function checkStructure(page: Page, layout: Layout): Promise<void> {
+  // Bars are decorative: hidden from assistive tech, no tab stop, no per-bar label.
+  assert.ok((await page.$$('.bars[aria-hidden="true"]')).length > 0, "decorative bars present");
+  assert.equal((await page.$$('[role="group"][data-key="bars"]')).length, 0, "no bars group role");
+  assert.equal((await page.$$(".bars [tabindex], .bar[tabindex]")).length, 0, "no bar tab stop");
+  assert.equal((await page.$$(".bars [aria-label]")).length, 0, "no per-bar label");
+  const summaries = await page.$$eval(".daily-values > summary", (els) =>
+    els.map((el) => el.textContent ?? ""),
   );
-  assert.ok(groups.length > 0, "bars groups present");
-  for (const name of groups) assert.match(name, /, 90-day uptime /);
-  assert.ok(
-    groups.some((name) => name.includes(entryName)),
-    "group names the entry",
-  );
+  assert.ok(summaries.length > 0, "daily-values tables present");
+  for (const text of summaries) assert.match(text, /^Daily values, /);
+  assert.ok(summaries.includes(`Daily values, ${layout.entryName}`), "a table names the entry");
   const times = await page.$$eval("time[data-exact]", (els) =>
     els.map((el) => el.getAttribute("data-exact") ?? ""),
   );
   assert.ok(times.length > 0, "times present");
   for (const text of times) assert.match(text, / [A-Z][A-Za-z0-9+-]{1,7}$/, `zone in ${text}`);
-  const dayLabels = await page.$$eval(".bar", (els) =>
-    els.map((el) => el.getAttribute("aria-label")),
-  );
-  for (const label of dayLabels) assert.match(label ?? "", / UTC: /);
   assert.match((await page.textContent(".legend")) ?? "", /UTC/);
-  await checkLatencyChart(page);
+  await checkLatencyChart(page, layout);
   const span = (await page.textContent(".exact-span")) ?? "";
   assert.match(span, /(EDT|EST|GMT[+-]\d+)/, "span names the zone");
 }
 
-async function checkLatencyChart(page: Page): Promise<void> {
-  assert.match(
-    (await page.textContent(".latency-summary")) ?? "",
-    /^highest daily p95, last 7 days \d+ ms/,
-  );
+async function checkLatencyChart(page: Page, layout: Layout): Promise<void> {
+  const summary = (await page.textContent(".latency-summary")) ?? "";
+  if (layout.name === "default") {
+    assert.match(summary, /^highest member check daily p95, last 7 days \d+ ms/);
+    assert.ok(
+      (await page.$$('[data-key="component:shop"] .latency-chart')).length === 1,
+      "a component latency chart",
+    );
+  } else {
+    assert.match(summary, /^highest daily p95, last 7 days \d+ ms/);
+  }
   assert.equal(await page.getAttribute(".latency-svg", "aria-hidden"), "true");
   assert.ok((await page.$$(".latency-svg polyline.lat-p95")).length > 1, "null days leave gaps");
   const sloText = (await page.textContent("body")) ?? "";
@@ -182,11 +194,11 @@ async function checkLatencyChart(page: Page): Promise<void> {
     data.hasTarget,
     "the SLO sentence shows exactly when a target is set",
   );
-  await page.focus(".latency-details summary");
+  await page.focus(".daily-values summary");
   await page.keyboard.press("Enter");
-  assert.equal(await page.getAttribute(".latency-details", "open"), "");
+  assert.equal(await page.getAttribute(".daily-values", "open"), "");
   await polls(3);
-  assert.equal(await page.getAttribute(".latency-details", "open"), "", "open survives polls");
+  assert.equal(await page.getAttribute(".daily-values", "open"), "", "open survives polls");
   await page.keyboard.press("Enter");
 }
 
@@ -214,10 +226,8 @@ async function checkTabStops(page: Page): Promise<void> {
   const stops = await countTabStops(page);
   assert.ok(stops.size > 0, "entries are reachable by Tab");
   for (const [key, count] of stops) {
-    assert.ok(count <= 3, `${key}: at most 3 tab stops, got ${count}`);
-    // A check has its day bars and the one `<details>` summary of its latency chart.
-    const expected = key.startsWith("check:") ? 2 : 1;
-    assert.equal(count, expected, `${key}: ${expected} tab stop(s)`);
+    // The one tab stop of an entry is the summary of its daily-values table.
+    assert.equal(count, 1, `${key}: 1 tab stop`);
   }
 }
 
@@ -232,11 +242,10 @@ async function hasMarker(page: Page, selector: string): Promise<boolean> {
 }
 
 async function checkFocusSurvivesPolls(page: Page): Promise<void> {
-  // The component's bars: going down gives the component its first incident line.
-  await page.focus('[data-key="component:shop"] [data-key="bars"] .bar[tabindex=\'0\']');
-  const dayKey = await page.evaluate(() => document.activeElement?.getAttribute("data-key") ?? "");
-  assert.match(dayKey, /^day:/);
-  const focused = `[data-key="${dayKey}"]:focus`;
+  // The component's table summary: going down gives the component its first incident line.
+  const summary = '[data-key="component:shop"] > .daily-values > summary';
+  await page.focus(summary);
+  const focused = `${summary}:focus`;
   await markNode(page, focused);
   await polls(5);
   assert.ok(await hasMarker(page, focused), "same node after five polls");
@@ -315,70 +324,71 @@ async function checkNoJavaScript(browser: Browser, url: string): Promise<void> {
     assert.ok(text.includes(expected), `no-JS page shows ${expected}`);
   }
   assert.match(text, /Rendered .* UTC/);
+  // Native <details>: the table opens without JavaScript and its rows can be read.
+  await page.click(".daily-values > summary");
+  assert.equal(await page.getAttribute(".daily-values", "open"), "");
+  const head = (await page.textContent(".daily-values thead")) ?? "";
+  assert.match(head, /Date \(UTC\).*Uptime \(%\).*Highest member check p95 \(ms\).*Results/);
+  assert.ok(await page.isVisible(`.daily-values tbody th:text-is("${utcDay(0)}")`), "newest row");
   await context.close();
 }
 
-async function checkMatrixCell(
-  browser: Browser,
-  url: string,
-  cell: { hasComponents: boolean; hasTarget: boolean },
-): Promise<void> {
-  data.hasComponents = cell.hasComponents;
-  data.hasTarget = cell.hasTarget;
+async function checkLayout(browser: Browser, layout: Layout, hasTarget: boolean): Promise<void> {
+  data.hasComponents = layout.hasComponents;
+  data.hasTarget = hasTarget;
   for (const scheme of ["light", "dark"] as const) {
     for (const width of [360, 1280]) {
-      const { context, page } = await open(browser, url, { width, scheme });
-      const kind = cell.hasComponents ? "components" : "checks";
-      const label = `${scheme} ${width}px ${kind} ${cell.hasTarget ? "with" : "without"} target`;
+      const { context, page } = await open(browser, layout.url, { width, scheme });
+      const label = `${scheme} ${width}px ${layout.name} ${hasTarget ? "with" : "without"} target`;
       await checkAxe(page, label);
-      await checkStructure(page, cell.hasComponents ? "Online shop" : "Checkout API");
+      await checkStructure(page, layout);
       await context.close();
       console.log(`ok  ${label}`);
     }
   }
 }
 
-async function checkMatrix(browser: Browser, url: string): Promise<void> {
-  for (const hasComponents of [true, false]) {
-    for (const hasTarget of [false, true]) {
-      await checkMatrixCell(browser, url, { hasComponents, hasTarget });
-    }
-  }
-}
-
-async function checkBehavior(browser: Browser, url: string): Promise<void> {
-  data.hasComponents = true;
+async function checkBehavior(browser: Browser, layout: Layout): Promise<void> {
+  data.hasComponents = layout.hasComponents;
   data.hasTarget = true;
-  const { context, page } = await open(browser, url, { width: 1280, scheme: "light" });
+  const { context, page } = await open(browser, layout.url, { width: 1280, scheme: "light" });
   await checkTabStops(page);
   await checkQuietPolls(page);
   await checkFocusSurvivesPolls(page);
   await checkLiveRegions(page);
   await context.close();
-  console.log("ok  behavior");
+  console.log(`ok  behavior ${layout.name}`);
 }
 
 async function main(): Promise<void> {
   const api = startApi();
   const apiUrl = await listen(api);
-  const status = createStatusServer({
-    apiUrl,
-    pollMs: POLL_MS,
-    cacheMs: 0,
-    hideDetails: false,
-    showChecks: true,
-  });
-  const url = await listen(status);
+  // Default settings: with components the checks are hidden (hidden mode).
+  const hidden = createStatusServer({ apiUrl, pollMs: POLL_MS, cacheMs: 0 });
+  const shown = createStatusServer({ apiUrl, pollMs: POLL_MS, cacheMs: 0, showChecks: true });
+  const hiddenUrl = await listen(hidden);
+  const shownUrl = await listen(shown);
+  const layouts: Layout[] = [
+    { name: "default", url: hiddenUrl, hasComponents: true, entryName: "Online shop" },
+    { name: "shown", url: shownUrl, hasComponents: true, entryName: "Checkout API" },
+    // The fallback: the stub sends no components, so the checks are shown.
+    { name: "fallback", url: hiddenUrl, hasComponents: false, entryName: "Checkout API" },
+  ];
   const browser = await chromium.launch();
   try {
-    await checkMatrix(browser, url);
-    await checkBehavior(browser, url);
+    for (const layout of layouts) {
+      for (const hasTarget of [false, true]) await checkLayout(browser, layout, hasTarget);
+    }
+    const [defaultLayout] = layouts;
+    if (defaultLayout === undefined) throw new Error("no default layout");
+    await checkBehavior(browser, defaultLayout);
     data.hasComponents = true;
-    await checkNoJavaScript(browser, url);
+    await checkNoJavaScript(browser, hiddenUrl);
     console.log("ok  no JavaScript");
   } finally {
     await browser.close();
-    status.close();
+    hidden.close();
+    shown.close();
     api.close();
   }
 }

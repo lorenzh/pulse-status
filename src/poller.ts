@@ -6,6 +6,7 @@ import {
   fetchJson,
   type IncidentsResponse,
   type LatencyResponse,
+  latencyDaySchema,
   type MaintenanceResponse,
   type ManualIncidentsResponse,
   type UptimeResponse,
@@ -20,6 +21,7 @@ import {
   WIRE_VERSION_HEADER,
 } from "@lorenzh/pulse-contract";
 import { isRecord } from "@lorenzh/pulse-kit/is-record";
+import type { ComponentLatencyResponse } from "./component-latency.ts";
 import { type PollerErrorKind, RESOLVED_WINDOW_MS } from "./render.ts";
 
 export const DEFAULT_TIMEOUT_MS = 10_000;
@@ -34,8 +36,10 @@ export interface PollerState {
   uptime: UptimeResponse;
   /** Configured components in order; empty means the page shows checks. */
   components: ComponentsResponse;
-  /** 90-day latency per HTTP check; null when not read (checks hidden) or never fetched. */
+  /** 90-day latency per HTTP check; null until the first good read. Empty while checks are hidden. */
   latency: LatencyResponse | null;
+  /** 90-day latency per component (highest member check); null until the first good read. */
+  componentLatency: ComponentLatencyResponse | null;
   /** 90-day uptime per component; always present with `components`. */
   componentUptime: ComponentsUptimeResponse;
   /** Open and recently resolved manual incidents; empty when the API has none or lacks the route. */
@@ -63,8 +67,6 @@ export interface PollerOptions {
   timeoutMs?: number;
   /** Receives errors thrown by `onUpdate`; default `console.error`. */
   log?: (message: string, error: unknown) => void;
-  /** Reads `/latency` (the page shows per-check latency); default false. */
-  hasLatency?: boolean;
   /** Page visibility: while hidden the poller makes no requests. */
   visibility?: Visibility;
 }
@@ -137,6 +139,22 @@ function withDayPlaceholders(item: unknown): unknown {
   return { ...item, days };
 }
 
+const componentDaysSchema = latencyDaySchema.array().length(90);
+
+/** A list of `{ componentId, days }` with a non-empty id and 90 valid latency days each. */
+function isComponentLatency(body: unknown): body is ComponentLatencyResponse {
+  return (
+    Array.isArray(body) &&
+    body.every(
+      (item: unknown) =>
+        isRecord(item) &&
+        typeof item.componentId === "string" &&
+        item.componentId !== "" &&
+        componentDaysSchema.safeParse(item.days).success,
+    )
+  );
+}
+
 function errorKind(err: unknown): PollerErrorKind {
   if (err instanceof WireVersionError) return "version";
   if (err instanceof InvalidResponseError) return "invalid";
@@ -158,6 +176,7 @@ export function createPoller(options: PollerOptions): Poller {
     resolved: [],
     uptime: [],
     latency: null,
+    componentLatency: null,
     components: [],
     componentUptime: [],
     manualIncidents: [],
@@ -242,7 +261,6 @@ export function createPoller(options: PollerOptions): Poller {
    * the charts do not flicker away.
    */
   async function getLatency(signal: AbortSignal): Promise<LatencyResponse | null> {
-    if (options.hasLatency !== true) return null;
     try {
       const result = validateLatencyResponse(await getJson(`${base}/latency`, signal), "latency");
       if (result.ok) return result.value;
@@ -252,6 +270,21 @@ export function createPoller(options: PollerOptions): Poller {
       // Charts are optional: the page still shows the checks without them.
     }
     return state.latency;
+  }
+
+  /** Optional like the check latency: a failed or malformed answer keeps the last good value. */
+  async function getComponentLatency(
+    signal: AbortSignal,
+  ): Promise<ComponentLatencyResponse | null> {
+    try {
+      const body = await getJson(`${base}/components/latency`, signal);
+      if (isComponentLatency(body)) return body;
+      log("component latency response is invalid", null);
+    } catch (err) {
+      if (err instanceof WireVersionError) throw err;
+      // Charts are optional: the page still shows the components without them.
+    }
+    return state.componentLatency;
   }
 
   /** Optional like uptime: a failed or malformed response yields an empty list. */
@@ -316,6 +349,7 @@ export function createPoller(options: PollerOptions): Poller {
         resolved,
         uptime,
         latency,
+        componentLatency,
         components,
         componentUptime,
         manualIncidents,
@@ -330,6 +364,7 @@ export function createPoller(options: PollerOptions): Poller {
         getResolved(signal),
         getUptime(signal),
         getLatency(signal),
+        getComponentLatency(signal),
         // Required, unlike uptime: a failed or invalid path fails the refresh, a 404 included.
         getJson(`${base}/components`, signal).then((b) =>
           valid(validateComponentsResponse(b, "components")),
@@ -346,6 +381,7 @@ export function createPoller(options: PollerOptions): Poller {
         resolved,
         uptime,
         latency,
+        componentLatency,
         components,
         componentUptime,
         manualIncidents,

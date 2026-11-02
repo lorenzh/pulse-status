@@ -193,25 +193,17 @@ export function renderUptimeLegend(): string {
 }
 
 /**
- * The bars are one tab stop: only the last day carries `tabindex="0"`. The browser module
- * `bars.ts` moves the stop with the arrow keys.
+ * 90 decorative bars (`aria-hidden`) and the visible total. The daily-values table of the entry
+ * is the text equivalent of the bars.
  */
-export function renderUptime(
-  entry: Pick<ComponentUptime, "days" | "uptime">,
-  name: string,
-): string {
-  const groupLabel = entry.uptime === null ? "no data" : formatPercent(entry.uptime);
-  const total = entry.uptime === null ? "no data" : `${groupLabel} uptime, 90 days`;
-  const lastIndex = entry.days.length - 1;
-  const bars = entry.days.map((day, index) => {
-    const dayText = day.uptime === null ? "no data" : formatPercent(day.uptime);
-    const label = escapeHtml(`${day.date} UTC: ${dayText}`);
-    return `<span class="bar ${uptimeClass(day.uptime)}" role="img" data-key="day:${escapeHtml(day.date)}" tabindex="${index === lastIndex ? 0 : -1}" title="${label}" aria-label="${label}" data-exact="${label}"></span>`;
-  });
-  const groupName = escapeHtml(`${name}, 90-day uptime ${groupLabel}`);
+export function renderUptime(entry: Pick<ComponentUptime, "days" | "uptime">): string {
+  const total =
+    entry.uptime === null ? "no data" : `${formatPercent(entry.uptime)} uptime, 90 days`;
+  // Short markup: 90 bars per entry are a large part of the page.
+  const bars = entry.days.map((day) => `<i class="${uptimeClass(day.uptime)}"></i>`);
   return (
     `<div class="uptime" data-key="uptime">` +
-    `<div class="bars" role="group" aria-label="${groupName}" data-key="bars">${bars.join("")}</div>` +
+    `<div class="bars" aria-hidden="true" data-key="bars">${bars.join("")}</div>` +
     `<span class="uptime-total">${escapeHtml(total)}</span>` +
     `</div>`
   );
@@ -255,6 +247,10 @@ function renderMeta(check: CheckWithState, env: TimeEnv | undefined): string {
   if (check.lastReason && !reasonIsDays) parts.push(span("reason", check.lastReason));
   const filled = parts.filter((part) => part !== "");
   return filled.length === 0 ? "" : `<div class="meta" data-key="meta">${filled.join("")}</div>`;
+}
+
+function objectiveOf(check: CheckWithState): number | undefined {
+  return hasHttpFields(check) ? (check.latencyObjectiveMs ?? undefined) : undefined;
 }
 
 function hasHttpFields(check: CheckWithState): check is HttpCheck & CheckStateFields {
@@ -355,8 +351,9 @@ function runsOf(days: Latencies, series: Series): [number, number][][] {
 }
 
 function renderSeries(days: Latencies, series: Series, cls: string, max: number): string {
+  // Whole units across: a sub-unit step is invisible at this width and costs bytes on every point.
   const x = (index: number): string =>
-    ((index / Math.max(1, days.length - 1)) * CHART_WIDTH).toFixed(1);
+    String(Math.round((index / Math.max(1, days.length - 1)) * CHART_WIDTH));
   const y = (value: number): string =>
     (CHART_PAD + (1 - value / max) * (CHART_HEIGHT - 2 * CHART_PAD)).toFixed(1);
   const parts = runsOf(days, series).map((run) => {
@@ -392,52 +389,90 @@ function renderChartSvg(days: Latencies, objectiveMs: number | undefined): strin
   );
 }
 
-function renderLatencyTable(days: Latencies, name: string): string {
-  const cell = (value: number | null): string =>
-    value === null ? "no data" : formatLatencyMs(value);
-  const rows = [...days]
-    .reverse()
-    .map(
-      (day) =>
-        `<tr data-key="day:${escapeHtml(day.date)}"><th scope="row">${escapeHtml(day.date)}</th>` +
-        `<td>${cell(day.p50Ms)}</td><td>${cell(day.p95Ms)}</td><td>${day.count}</td></tr>`,
-    );
+/**
+ * The 90-day latency of one check or component: a text summary, an inline SVG (decorative,
+ * `aria-hidden`) and a legend. The values are in the daily-values table of the entry. A day
+ * without results is a gap. A component's series is its highest member check per day.
+ */
+export function renderLatencyChart(
+  entry: { days: Latencies } | undefined,
+  objectiveMs: number | undefined,
+  isComponent = false,
+): string {
+  const days = entry?.days ?? [];
+  const text = latencySummary(days, objectiveMs);
+  const summaryText = isComponent
+    ? text.replace(/^highest daily p95/, `${MEMBER} daily p95`)
+    : text;
+  const summary = `<p class="latency-summary" data-key="summary">${escapeHtml(summaryText)}</p>`;
+  if (!days.some((day) => day.count > 0)) {
+    return `<div class="latency-chart" data-key="latency">${summary}</div>`;
+  }
+  const legendText = isComponent
+    ? `Solid line ${MEMBER} p95, dashed line ${MEMBER} p50. Days are UTC days.`
+    : "Solid line p95, dashed line p50, dotted line objective. Days are UTC days.";
+  const legend = `<p class="latency-legend" data-key="legend">${legendText}</p>`;
+  return `<div class="latency-chart" data-key="latency">${summary}${renderChartSvg(days, objectiveMs)}${legend}</div>`;
+}
+
+const MEMBER = "highest member check";
+
+/** What the daily-values table of one entry shows. */
+export interface DailyValues {
+  name: string;
+  uptime: Pick<ComponentUptime, "days"> | undefined;
+  /** Latency days; undefined when the entry has no latency chart. */
+  latency: Latencies | undefined;
+  isComponent?: boolean;
+}
+
+function latencyCell(value: number | null | undefined): string {
+  return value == null ? "no data" : formatLatencyMs(value).slice(0, -" ms".length);
+}
+
+/**
+ * One `<details>` table per entry: a row per UTC date, newest first. Its summary is the only tab
+ * stop of the entry. Empty when the entry has neither uptime days nor a latency chart.
+ */
+export function renderDailyValues(values: DailyValues): string {
+  const latency = values.latency;
+  const uptimeDays = values.uptime?.days ?? [];
+  if (uptimeDays.length === 0 && latency === undefined) return "";
+  const latencyByDate = new Map((latency ?? []).map((day) => [day.date, day]));
+  const prefix = values.isComponent === true ? "Highest member check p" : "p";
+  const latencyHead =
+    latency === undefined
+      ? ""
+      : `<th scope="col">${prefix}50 (ms)</th><th scope="col">${prefix}95 (ms)</th>`;
+  const rowDays: { date: string; uptime?: number | null; results?: number }[] =
+    uptimeDays.length > 0 ? uptimeDays : (latency ?? []).map((day) => ({ date: day.date }));
+  const rows = [...rowDays].reverse().map((day) => {
+    const lat = latencyByDate.get(day.date);
+    const uptime = day.uptime == null ? "no data" : day.uptime.toFixed(1);
+    const latencyCells =
+      latency === undefined
+        ? ""
+        : `<td>${latencyCell(lat?.p50Ms)}</td><td>${latencyCell(lat?.p95Ms)}</td>`;
+    const results = day.results === undefined ? "no data" : String(day.results);
+    // A leading <th> in a body row is its row header; no scope attribute is needed.
+    return `<tr><th>${escapeHtml(day.date)}</th><td>${uptime}</td>${latencyCells}<td>${results}</td></tr>`;
+  });
   return (
-    `<details class="latency-details" data-key="details">` +
-    `<summary>${escapeHtml("Daily latency values, " + name)}</summary>` +
-    `<table><thead><tr><th scope="col">Date (UTC)</th><th scope="col">p50</th>` +
-    `<th scope="col">p95</th><th scope="col">Results</th></tr></thead>` +
+    `<details class="daily-values" data-key="daily">` +
+    `<summary>${escapeHtml("Daily values, " + values.name)}</summary>` +
+    `<table><thead><tr><th scope="col">Date (UTC)</th><th scope="col">Uptime (%)</th>` +
+    `${latencyHead}<th scope="col">Results</th></tr></thead>` +
     `<tbody>${rows.join("")}</tbody></table></details>`
   );
 }
 
-/**
- * The 90-day latency of one check: a text summary, an inline SVG (decorative, `aria-hidden`) and
- * a `<details>` table with the values, the only tab stop. A day without results is a gap.
- */
-export function renderLatencyChart(
-  entry: CheckLatency | undefined,
-  objectiveMs: number | undefined,
-  name: string,
-): string {
-  const days = entry?.days ?? [];
-  const summary = `<p class="latency-summary" data-key="summary">${escapeHtml(latencySummary(days, objectiveMs))}</p>`;
-  if (!days.some((day) => day.count > 0)) {
-    return `<div class="latency-chart" data-key="latency">${summary}</div>`;
-  }
-  const legend =
-    '<p class="latency-legend" data-key="legend">Solid line p95, dashed line p50, dotted line objective. Days are UTC days.</p>';
-  return (
-    `<div class="latency-chart" data-key="latency">${summary}${renderChartSvg(days, objectiveMs)}` +
-    `${legend}${renderLatencyTable(days, name)}</div>`
-  );
-}
-
-/** HTTP checks only, and only when the latency read is on (`latency` is not null). */
-function renderCheckLatency(check: CheckWithState, latency: LatencyResponse | null): string {
-  if (latency === null || !hasHttpFields(check)) return "";
-  const entry = latency.find((item) => item.checkId === check.id);
-  return renderLatencyChart(entry, check.latencyObjectiveMs ?? undefined, check.name);
+/** The latency days of an HTTP check; undefined for other types and before the first read. */
+function checkLatencyDays(
+  check: CheckWithState,
+  latency: LatencyResponse | null,
+): Latencies | undefined {
+  if (latency === null || !hasHttpFields(check)) return undefined;
+  return latency.find((item) => item.checkId === check.id)?.days ?? [];
 }
 
 function renderCheck(
@@ -447,6 +482,7 @@ function renderCheck(
   latency: LatencyResponse | null,
 ): string {
   const targetText = targetOf(check);
+  const latencyDays = checkLatencyDays(check, latency);
   return (
     `<li class="check state-${check.state}" data-key="check:${escapeHtml(check.id)}">` +
     `<div class="check-head"><span class="state">${check.state}</span>` +
@@ -454,8 +490,11 @@ function renderCheck(
     (targetText === "" ? "" : `<div class="url" data-key="url">${escapeHtml(targetText)}</div>`) +
     renderMeta(check, env) +
     renderSlo(check.slo) +
-    (entry ? renderUptime(entry, check.name) : "") +
-    renderCheckLatency(check, latency) +
+    (entry ? renderUptime(entry) : "") +
+    (latencyDays === undefined
+      ? ""
+      : renderLatencyChart({ days: latencyDays }, objectiveOf(check))) +
+    renderDailyValues({ name: check.name, uptime: entry, latency: latencyDays }) +
     `</li>`
   );
 }
