@@ -10,7 +10,6 @@ import {
   escapeHtml,
   handleOps,
   type Logger,
-  MAX_TIMER_DELAY_MS,
   type Readiness,
   sendJson,
 } from "@lorenzh/pulse-kit";
@@ -36,6 +35,7 @@ import { RESOLVED_WINDOW_MS } from "./render.ts";
 import { renderState } from "./ssr.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
+import { BROWSER_TIMEOUT_MARGIN_MS, MAX_UPSTREAM_TIMEOUT_MS } from "./upstream-timeout.ts";
 
 export interface ServerOptions {
   /** Base URL of pulse-api. */
@@ -71,10 +71,6 @@ export interface ServerOptions {
 
 export const DEFAULT_CACHE_MS = 2000;
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
-/** The browser waits this much longer than the proxy, so the proxy's 502 arrives first. */
-export const BROWSER_TIMEOUT_MARGIN_MS = 2000;
-// The page waits this plus the margin, and that sum must fit a browser timer.
-export const MAX_UPSTREAM_TIMEOUT_MS = MAX_TIMER_DELAY_MS - BROWSER_TIMEOUT_MARGIN_MS;
 
 interface ProxyAnswer {
   status: number;

@@ -22,6 +22,7 @@ Bun runs the TypeScript source directly (no build step).
 - `src/hidden-checks.ts` builds the hidden keys from the upstream `/components` and `/checks` reads and rewrites the filtered answers when checks are hidden and components exist (pure functions).
 - `src/metrics.ts` and `src/api-poll.ts` hold the health and metrics state and the background API poll. The JSON logger, signal handling and shutdown (`runService`), the ops endpoints, the env readers and `escapeHtml`/`formatDuration` come from `@lorenzh/pulse-kit`.
 - `src/settings.ts` parses `PULSE_STATUS_HIDE_DETAILS`, `PULSE_STATUS_CACHE_MS` and `PULSE_STATUS_UPSTREAM_TIMEOUT_MS`.
+- `src/upstream-timeout.ts` holds the upstream timeout limit and the browser timeout margin, shared by `src/settings.ts` and `src/server.ts`. It imports only `MAX_TIMER_DELAY_MS` from `@lorenzh/pulse-kit`, so a bad setting exits before Bun loads the server module graph.
 - `public/page.css` and `public/theme-init.js` are the page style and the theme bootstrap script. The page has no inline script or style, because the CSP forbids them.
 - `src/theme-config.ts` loads and validates the theme file and generates the CSS.
 - `src/poller.ts`, `src/render.ts`, `src/theme.ts`, `src/sections.ts`, `src/components-view.ts`, `src/patch.ts` and `src/announce.ts` run in the browser. The server strips their types when it serves them (`tsModules` in `src/server.ts`). Their imports:

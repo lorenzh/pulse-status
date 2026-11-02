@@ -8,7 +8,7 @@ import {
   readUrl,
   StartupError,
 } from "@lorenzh/pulse-kit";
-import { MAX_UPSTREAM_TIMEOUT_MS } from "./server.ts";
+import { MAX_UPSTREAM_TIMEOUT_MS } from "./upstream-timeout.ts";
 
 /** A shorter interval would load the API without a visible benefit. */
 export const MIN_POLL_MS = 1000;
