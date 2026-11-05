@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChecksResponse, IncidentsResponse } from "@lorenzh/pulse-contract";
 import { ALLOWED_API_PATHS } from "./api-filter.ts";
+import { etagFor } from "./http-cache.ts";
 import { createStatusServer, type ServerOptions } from "./server.ts";
 
 const servers: Server[] = [];
@@ -1006,3 +1007,188 @@ for (const hideDetails of [true, false]) {
     }
   });
 }
+
+// A non-array manual-incidents answer (spec 738): a fake api whose answer and clock change.
+
+const SHAPE_SENTINELS = ["SHAPE-TITLE-81", "SHAPE-UPDATE-82", "SHAPE-NOTE-83", "SHAPE-DRAFT-84"];
+const shapeRecord = (extra: Record<string, unknown>) => ({
+  id: "i1",
+  title: "SHAPE-TITLE-81",
+  componentIds: ["api"],
+  impact: "critical",
+  status: "investigating",
+  createdAt: PRIVATE_AT,
+  resolvedAt: null,
+  updates: [{ at: PRIVATE_AT, status: "investigating", message: "SHAPE-UPDATE-82" }],
+  notes: "SHAPE-NOTE-83",
+  draft: { status: "resolved", message: "SHAPE-DRAFT-84" },
+  ...extra,
+});
+const MALFORMED_MANUAL: readonly [string, unknown][] = [
+  ["internal singleton", shapeRecord({ visibility: "internal", publishedAt: 1 })],
+  ["draft object", shapeRecord({ visibility: "public", publishedAt: null })],
+  ["published internal", shapeRecord({ visibility: "internal", publishedAt: PRIVATE_AT })],
+  ["public singleton", shapeRecord({ visibility: "public", publishedAt: PRIVATE_AT })],
+  ["null", null],
+  ["string", "x"],
+  ["number", 0],
+  ["boolean", true],
+  ["empty object", {}],
+];
+const INVALID_BODY = '{"error":"invalid API response"}';
+const SHAPE_CACHE_MS = 60_000;
+
+interface ShapeOptions {
+  hideDetails: boolean;
+  showChecks: boolean;
+  cacheMs: number;
+}
+
+/** Like `startOnUpstream`, but the manual answer and the clock can change during the test. */
+async function startShape(options: ShapeOptions) {
+  let manual: unknown = [publicControl];
+  let clock = NOW;
+  const api = createServer((req, res) => {
+    const path = req.url ?? "";
+    const bodies = manualBodies([]);
+    bodies["/manual-incidents"] = manual;
+    if (!Object.hasOwn(bodies, path)) {
+      res.writeHead(404, JSON_HEADERS).end("{}");
+      return;
+    }
+    res
+      .writeHead(200, { ...JSON_HEADERS, "x-pulse-contract": "1" })
+      .end(JSON.stringify(bodies[path]));
+  });
+  await new Promise<void>((r) => api.listen(0, "127.0.0.1", r));
+  servers.push(api);
+  const server = createStatusServer({
+    apiUrl: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+    pollMs: 60_000,
+    now: () => clock,
+    publicUrl: "https://status.example.com",
+    ...options,
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  servers.push(server);
+  return {
+    base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    setManual: (body: unknown) => {
+      manual = body;
+    },
+    expire: () => {
+      clock += SHAPE_CACHE_MS + 1;
+    },
+  };
+}
+
+async function shapeServed(base: string, path: string, tag?: string) {
+  const res = await fetch(
+    base + path,
+    tag === undefined ? {} : { headers: { "if-none-match": tag } },
+  );
+  const headers = [...res.headers.entries()].map(([k, v]) => `${k}: ${v}`).join("\n");
+  return { res, body: await res.text(), headers };
+}
+
+function assertNoShapeSentinel(text: string, label: string): void {
+  for (const sentinel of SHAPE_SENTINELS)
+    assert.ok(!text.includes(sentinel), `${label} ${sentinel}`);
+}
+
+async function assertInvalidManual(base: string, label: string, tag?: string): Promise<void> {
+  const { res, body, headers } = await shapeServed(base, "/api/manual-incidents", tag);
+  assert.equal(res.status, 502, label);
+  assert.equal(body, INVALID_BODY, label);
+  assert.equal(res.headers.get("cache-control"), "no-store", label);
+  assert.equal(res.headers.get("etag"), null, label);
+  assert.equal(res.headers.get("x-pulse-contract"), "1", label);
+  assertNoShapeSentinel(body + headers, label);
+}
+
+const SHAPE_OPTIONS: ShapeOptions[] = [true, false].flatMap((hideDetails) =>
+  [true, false].flatMap((showChecks) =>
+    [SHAPE_CACHE_MS, 0].map((cacheMs) => ({ hideDetails, showChecks, cacheMs })),
+  ),
+);
+
+for (const options of SHAPE_OPTIONS) {
+  test(`manual incidents: a non-array answer is 502 without a tag (${JSON.stringify(options)})`, async () => {
+    const settings = { isHidden: options.hideDetails, hasChecks: options.showChecks };
+    for (const [name, body] of MALFORMED_MANUAL) {
+      const shape = await startShape(options);
+      const list = await shapeServed(shape.base, "/api/manual-incidents");
+      assert.equal(list.res.status, 200, name);
+      const listTag = list.res.headers.get("etag") ?? "";
+      shape.expire();
+      shape.setManual(body);
+      await assertInvalidManual(shape.base, name);
+      await assertInvalidManual(shape.base, `${name} *`, "*");
+      await assertInvalidManual(shape.base, `${name} old`, etagFor(settings, JSON.stringify(body)));
+      await assertInvalidManual(shape.base, `${name} list`, listTag);
+    }
+  });
+}
+
+test("manual incidents: list, then a singleton, then the list again after each cache period", async () => {
+  const shape = await startShape({ hideDetails: true, showChecks: false, cacheMs: SHAPE_CACHE_MS });
+  const first = await shapeServed(shape.base, "/api/manual-incidents");
+  assert.equal(first.res.status, 200);
+  const tag = first.res.headers.get("etag");
+  assert.ok(tag !== null);
+  shape.setManual(MALFORMED_MANUAL[3]?.[1]);
+  shape.expire();
+  await assertInvalidManual(shape.base, "singleton");
+  shape.setManual([publicControl]);
+  shape.expire();
+  const again = await shapeServed(shape.base, "/api/manual-incidents");
+  assert.equal(again.res.status, 200);
+  assert.equal(again.res.headers.get("etag"), tag);
+  assert.equal(again.body, first.body);
+});
+
+async function assertUnavailableSurfaces(base: string, name: string, listPageTag: string) {
+  const page = await shapeServed(base, "/");
+  assert.equal(page.res.status, 200, name);
+  assert.ok(page.body.includes("Cannot reach the API."), name);
+  assertNoShapeSentinel(page.body + page.headers, `${name} page`);
+  const pageTag = page.res.headers.get("etag");
+  assert.ok(pageTag !== null, name);
+  assert.notEqual(pageTag, listPageTag, name);
+  assert.equal((await shapeServed(base, "/")).res.headers.get("etag"), pageTag, name);
+  assert.equal((await shapeServed(base, "/", listPageTag)).res.status, 200, name);
+  for (const path of ["/feed.atom", "/badge/component/api.svg"]) {
+    const res = await shapeServed(base, path);
+    assert.equal(res.res.status, 503, `${name} ${path}`);
+    assert.equal(res.res.headers.get("etag"), null, `${name} ${path}`);
+    assertNoShapeSentinel(res.body + res.headers, `${name} ${path}`);
+  }
+}
+
+test("manual incidents: page, feed and badge after a valid list and then a non-array answer", async () => {
+  for (const [name, body] of MALFORMED_MANUAL) {
+    const shape = await startShape({
+      hideDetails: true,
+      showChecks: false,
+      cacheMs: SHAPE_CACHE_MS,
+    });
+    // Positive control: the valid public list is shown on every surface.
+    const page = await shapeServed(shape.base, "/");
+    assert.ok(page.body.includes("Checkout errors"), name);
+    const listPageTag = page.res.headers.get("etag") ?? "";
+    assert.ok((await shapeServed(shape.base, "/feed.atom")).body.includes(":manual:1:0"), name);
+    assert.equal((await shapeServed(shape.base, "/badge/component/api.svg")).res.status, 200, name);
+    shape.setManual(body);
+    shape.expire();
+    await assertUnavailableSurfaces(shape.base, name, listPageTag);
+  }
+});
+
+test("manual incidents: other routes keep a non-array answer", async () => {
+  const fake = { body: '{"x":1}' };
+  const { base } = await start({ showChecks: true }, fake);
+  const res = await fetch(`${base}/api/components/uptime`);
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '{"x":1}');
+  assert.ok(res.headers.get("etag") !== null);
+});

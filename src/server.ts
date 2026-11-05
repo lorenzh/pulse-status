@@ -559,6 +559,8 @@ async function buildAnswer(url: URL, ctx: ProxyContext, read: RawReader): Promis
   const own = await ownRead;
   if (!own.ok) return own.answer;
   let body = filterApiBody(url.pathname, own.value, ctx.isHidden);
+  // `undefined` is never serialized: it would build a broken body and tag it.
+  if (body === undefined) return answer(502, INVALID_RESPONSE, own.wireHeader);
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     // The cutoff uses the build time; the answer keeps it for at most the life of its raw entry.
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);

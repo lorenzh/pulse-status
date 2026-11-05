@@ -250,9 +250,11 @@ const CLEANERS: Record<string, (item: Fields, isHidden: boolean) => Fields> = {
 /**
  * Builds the served JSON from an allow-list per endpoint: unlisted fields, new upstream ones
  * included, never leave the server. URLs are sanitized and, when hidden, details removed.
+ * `undefined` means the body cannot be served: a manual-incidents answer that is not a list. It is
+ * checked before any property is read. Other routes return a non-array body unchanged.
  */
 export function filterApiBody(pathname: string, body: unknown, isHidden: boolean): unknown {
-  if (!Array.isArray(body)) return body;
+  if (!Array.isArray(body)) return pathname === "/api/manual-incidents" ? undefined : body;
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;
   if (pathname === "/api/manual-incidents") {

@@ -249,3 +249,49 @@ test("manual incidents: drafts and internal items are dropped, non-objects stay 
     ]);
   }
 });
+
+const MANUAL_NON_ARRAYS: readonly [string, unknown][] = [
+  [
+    "internal singleton",
+    { id: "i1", title: "SENTINEL-A-TITLE", visibility: "internal", publishedAt: 1, updates: [] },
+  ],
+  [
+    "draft object",
+    { id: "i2", title: "SENTINEL-B-TITLE", visibility: "public", publishedAt: null },
+  ],
+  ["published internal", { id: "i3", title: "SENTINEL-C", visibility: "internal", publishedAt: 5 }],
+  ["public singleton", { id: "i4", title: "SENTINEL-D", visibility: "public", publishedAt: 5 }],
+  ["null", null],
+  ["string", "x"],
+  ["number", 0],
+  ["boolean", true],
+  ["empty object", {}],
+];
+
+for (const isHidden of [true, false]) {
+  test(`manual incidents: a non-array body cannot be served (hidden ${isHidden})`, () => {
+    for (const [name, body] of MANUAL_NON_ARRAYS) {
+      assert.equal(filterApiBody("/api/manual-incidents", body, isHidden), undefined, name);
+    }
+  });
+
+  test(`manual incidents: a throwing title getter on a singleton is never read (hidden ${isHidden})`, () => {
+    let calls = 0;
+    const body = {
+      get title(): string {
+        calls++;
+        throw new Error("read");
+      },
+    };
+    assert.equal(filterApiBody("/api/manual-incidents", body, isHidden), undefined);
+    assert.equal(calls, 0);
+  });
+
+  test(`manual incidents: other routes keep a non-array body and [null] stays (hidden ${isHidden})`, () => {
+    const checks = {};
+    const uptime = { x: 1 };
+    assert.equal(filterApiBody("/api/checks", checks, isHidden), checks);
+    assert.equal(filterApiBody("/api/components/uptime", uptime, isHidden), uptime);
+    assert.deepEqual(filterApiBody("/api/manual-incidents", [null], isHidden), [null]);
+  });
+}

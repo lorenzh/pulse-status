@@ -1165,3 +1165,36 @@ test("a nested result needs an integer latency and allows a 1000-character reaso
   assert.equal((await run(13))?.error, null);
   assert.equal((await run(12.5))?.error, "invalid");
 });
+
+test("poller: a non-array manual incidents answer after a valid list fails and keeps the list", async () => {
+  const listed = {
+    id: 1,
+    title: "Checkout errors",
+    componentIds: [],
+    impact: "minor",
+    status: "investigating",
+    createdAt: 1,
+    resolvedAt: null,
+    updates: [{ at: 1, status: "investigating", message: "Looking" }],
+  };
+  const singleton = { ...listed, id: 9, title: "SINGLETON-4e1c", visibility: "public" };
+  let call = 0;
+  const updates: PollerState[] = [];
+  const poller = createPoller({
+    fetch: (async (input: string) => {
+      if (!String(input).endsWith("/manual-incidents")) return json([]);
+      return json(call++ === 0 ? [listed] : singleton);
+    }) as unknown as typeof fetch,
+    timer: { setTimeout: () => 0, clearTimeout: () => undefined },
+    now: () => 5,
+    pollMs: 1,
+    onUpdate: (s) => updates.push(s),
+    log: () => undefined,
+  });
+  await poller.refresh();
+  await poller.refresh();
+  assert.equal(updates[0]?.error, null);
+  assert.equal(updates[1]?.error, "invalid");
+  assert.deepEqual(updates[1]?.manualIncidents, [listed]);
+  assert.ok(!JSON.stringify(updates[1]).includes("SINGLETON-4e1c"));
+});
