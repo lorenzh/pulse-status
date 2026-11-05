@@ -1,7 +1,7 @@
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -839,3 +839,170 @@ test("reasons: manual incident text stays public in hidden mode", async () => {
   const page = (await getText(stub.base, "/")).body;
   assert.ok(page.includes(`Investigating ${SECRET_IP}`));
 });
+
+// Drafts, internal incidents, notes and draft updates (R7, decision 16): a fake api over HTTP.
+
+const PRIVATE_SENTINELS = ["DRAFT-7f3a", "INTERNAL-5d17", "NOTE-2b8e", "UPD-9c41"];
+const PUBLIC_AT = NOW - 3 * 3_600_000;
+const PRIVATE_AT = NOW - 60_000;
+
+const publicControl = {
+  id: 1,
+  title: "Checkout errors",
+  componentIds: ["web"],
+  impact: "major",
+  status: "investigating",
+  createdAt: PUBLIC_AT,
+  resolvedAt: null,
+  updates: [{ at: PUBLIC_AT, status: "investigating", message: "Looking into it" }],
+};
+const draftIncident = {
+  id: 2,
+  title: "DRAFT-7f3a",
+  componentIds: ["api"],
+  impact: "critical",
+  status: "investigating",
+  createdAt: PRIVATE_AT,
+  resolvedAt: null,
+  updates: [{ at: PRIVATE_AT, status: "investigating", message: "DRAFT-7f3a" }],
+  publishedAt: null,
+  visibility: "public",
+};
+const internalIncident = {
+  id: 3,
+  title: "INTERNAL-5d17",
+  componentIds: ["api"],
+  impact: "critical",
+  status: "investigating",
+  createdAt: PRIVATE_AT,
+  resolvedAt: null,
+  updates: [{ at: PRIVATE_AT, status: "investigating", message: "INTERNAL-5d17" }],
+  publishedAt: PRIVATE_AT,
+  visibility: "internal",
+};
+const controlWithPrivateFields = {
+  ...publicControl,
+  notes: [{ id: 1, at: PRIVATE_AT, author: "ops", message: "NOTE-2b8e" }],
+  draft: { status: "resolved", message: "UPD-9c41" },
+};
+const secondPublic = {
+  ...publicControl,
+  id: 4,
+  title: "Second public",
+  componentIds: ["api"],
+  impact: "minor",
+  createdAt: PUBLIC_AT + 1000,
+  updates: [{ at: PUBLIC_AT + 1000, status: "investigating", message: "Also public" }],
+};
+
+function manualBodies(manual: unknown[]): Record<string, unknown> {
+  const probe = { intervalMs: 1000, consecutiveDown: 0, lastResultAt: null, lastReason: null };
+  const check = (id: string) => ({
+    id,
+    name: id,
+    type: "http",
+    url: "https://x.test/",
+    state: "up",
+    locations: [],
+    ...probe,
+  });
+  return {
+    "/checks": [check("web"), check("api")],
+    "/components": [
+      { id: "web", name: "Web", checkIds: ["web"], state: "up", uptime: 99, incidentIds: [] },
+      { id: "api", name: "Api", checkIds: ["api"], state: "up", uptime: 99, incidentIds: [] },
+    ],
+    "/components/uptime": [
+      { componentId: "web", uptime: 99, days: [] },
+      { componentId: "api", uptime: 99, days: [] },
+    ],
+    "/uptime": [],
+    "/latency": [],
+    "/incidents?status=open": [],
+    "/incidents?status=resolved": [],
+    "/maintenance": [],
+    "/manual-incidents": manual,
+  };
+}
+
+/** A fake api over HTTP on port 0 and a status server in front of it, with a fixed clock. */
+async function startOnUpstream(manual: unknown[], hideDetails: boolean): Promise<string> {
+  const bodies = manualBodies(manual);
+  const api = createServer((req, res) => {
+    const path = req.url ?? "";
+    if (!Object.hasOwn(bodies, path)) {
+      res.writeHead(404, JSON_HEADERS).end("{}");
+      return;
+    }
+    res.writeHead(200, JSON_HEADERS).end(JSON.stringify(bodies[path]));
+  });
+  await new Promise<void>((r) => api.listen(0, "127.0.0.1", r));
+  servers.push(api);
+  const server = createStatusServer({
+    apiUrl: `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+    pollMs: 60_000,
+    // The page carries a tag only when it is stored; the fixed clock keeps every read current.
+    cacheMs: 60_000,
+    now: () => NOW,
+    hideDetails,
+    publicUrl: "https://status.example.com",
+  });
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  servers.push(server);
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+}
+
+const MANUAL_SURFACES = ["/api/manual-incidents", "/", "/feed.atom", "/badge/component/api.svg"];
+const PRIVATE_UPSTREAM = [controlWithPrivateFields, draftIncident, internalIncident];
+
+async function served(base: string, path: string, tag?: string) {
+  const res = await fetch(
+    base + path,
+    tag === undefined ? {} : { headers: { "if-none-match": tag } },
+  );
+  return { status: res.status, etag: res.headers.get("etag"), body: await res.text() };
+}
+
+for (const hideDetails of [true, false]) {
+  test(`manual incidents: drafts, internal items, notes and draft updates never served (hideDetails ${hideDetails})`, async () => {
+    const base = await startOnUpstream(PRIVATE_UPSTREAM, hideDetails);
+    for (const path of MANUAL_SURFACES) {
+      const res = await served(base, path);
+      assert.equal(res.status, 200, path);
+      for (const sentinel of PRIVATE_SENTINELS)
+        assert.ok(!res.body.includes(sentinel), `${path} ${sentinel}`);
+    }
+    const list = JSON.parse((await served(base, "/api/manual-incidents")).body) as unknown;
+    assert.deepEqual(list, [publicControl]);
+    const page = (await served(base, "/")).body;
+    assert.ok(page.includes("Checkout errors"));
+    assert.match((await served(base, "/badge/component/web.svg")).body, /down 99%/);
+    assert.match((await served(base, "/badge/component/api.svg")).body, /up 99%/);
+    const feed = (await served(base, "/feed.atom")).body;
+    assert.ok(feed.includes(":manual:1:0"));
+    assert.ok(!feed.includes(":manual:2:") && !feed.includes(":manual:3:"));
+    assert.ok(feed.includes("<updated>2026-10-01T09:00:00Z</updated>"));
+    assert.ok(!feed.includes("2026-10-01T11:59:00Z"));
+  });
+
+  test(`manual incidents: entity tags and 304 depend only on public items (hideDetails ${hideDetails})`, async () => {
+    const u1 = await startOnUpstream([publicControl], hideDetails);
+    const u2 = await startOnUpstream(PRIVATE_UPSTREAM, hideDetails);
+    const u3 = await startOnUpstream([publicControl, secondPublic], hideDetails);
+    for (const path of MANUAL_SURFACES) {
+      const one = await served(u1, path);
+      const two = await served(u2, path);
+      assert.equal(one.status, 200, path);
+      assert.ok(one.etag !== null, path);
+      assert.equal(two.body, one.body, path);
+      assert.equal(two.etag, one.etag, path);
+      const notModified = await served(u2, path, one.etag);
+      assert.equal(notModified.status, 304, path);
+      assert.equal(notModified.body, "", path);
+      // Positive control: a second public incident changes the tag, and the old tag is not a hit.
+      const three = await served(u3, path);
+      assert.notEqual(three.etag, one.etag, path);
+      assert.equal((await served(u3, path, one.etag)).status, 200, path);
+    }
+  });
+}

@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import {
   type CheckState,
+  isPublicManualIncident,
   type ManualIncidentImpact,
   validateManualIncident,
 } from "@lorenzh/pulse-contract";
@@ -166,6 +167,8 @@ function parseManualIncidents(
   if (list === undefined) return undefined;
   const out: ParsedManualIncident[] = [];
   for (const item of list) {
+    // A draft or internal item is never shown; a non-object item still makes the list malformed.
+    if (isRecord(item) && !isPublicManualIncident(item)) continue;
     const checked = validateManualIncident(item);
     if (!checked.ok) return undefined;
     const incident = checked.value;

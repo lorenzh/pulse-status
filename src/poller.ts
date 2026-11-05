@@ -5,10 +5,12 @@ import {
   type FetchJsonError,
   fetchJson,
   type IncidentsResponse,
+  isPublicManualIncident,
   type LatencyResponse,
   latencyDaySchema,
   type MaintenanceResponse,
   type ManualIncidentsResponse,
+  publicManualIncident,
   type UptimeResponse,
   validateChecksResponse,
   validateComponentsResponse,
@@ -318,7 +320,15 @@ export function createPoller(options: PollerOptions): Poller {
     const url = `${base}/manual-incidents`;
     const result = await fetchJson<ManualIncidentsResponse>(url, {
       fetch: options.fetch,
-      validate: (raw) => validateManualIncidentsResponse(raw, "manualIncidents"),
+      // Drafts and internal items are dropped before validation; the projection keeps only the
+      // public fields, so notes and draft updates never reach the page.
+      validate: (raw) => {
+        const checked = validateManualIncidentsResponse(
+          Array.isArray(raw) ? raw.filter(isPublicManualIncident) : raw,
+          "manualIncidents",
+        );
+        return checked.ok ? { ok: true, value: checked.value.map(publicManualIncident) } : checked;
+      },
       timeoutMs,
       signal,
       schedule,

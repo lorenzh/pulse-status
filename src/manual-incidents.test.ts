@@ -220,3 +220,64 @@ test("poller: other failures and malformed bodies fail the refresh", async () =>
   const [bad] = await run(() => json([{ ...open, impact: "huge" }]));
   assert.equal(bad?.error, "invalid");
 });
+
+// Drafts and internal incidents (R7): dropped before validation; notes and draft updates projected away.
+const draft = {
+  ...open,
+  id: 5,
+  title: "DRAFT-7f3a",
+  componentIds: ["api"],
+  impact: "critical",
+  status: "investigating",
+  updates: [{ at: NOW - 100, status: "investigating", message: "DRAFT-7f3a" }],
+  publishedAt: null,
+  visibility: "public",
+};
+const internal = {
+  ...draft,
+  id: 6,
+  title: "INTERNAL-5d17",
+  updates: [{ at: NOW - 100, status: "investigating", message: "INTERNAL-5d17" }],
+  publishedAt: NOW - 100,
+  visibility: "internal",
+};
+const internalResolved = { ...internal, id: 7, status: "resolved", resolvedAt: NOW - 200 };
+const withPrivateFields = {
+  ...open,
+  publishedAt: NOW - 3000,
+  visibility: "public",
+  notes: [{ id: 1, at: NOW - 50, author: "ops", message: "NOTE-2b8e" }],
+  draft: { status: "resolved", message: "UPD-9c41" },
+};
+
+test("poller: drafts and internal items are dropped and public items keep only public fields", async () => {
+  const [state] = await run(() =>
+    json([withPrivateFields, draft, internal, internalResolved, resolved]),
+  );
+  assert.equal(state?.error, null);
+  assert.deepEqual(state?.manualIncidents, [open, resolved]);
+  assert.ok(state);
+  const page = buildSections(
+    { ...state, components: [component("web", "up"), component("api", "up")] },
+    env,
+  );
+  const text = JSON.stringify(page);
+  for (const sentinel of ["DRAFT-7f3a", "INTERNAL-5d17", "NOTE-2b8e", "UPD-9c41"]) {
+    assert.ok(!text.includes(sentinel), sentinel);
+  }
+  assert.match(page.manual ?? "", /Name web/);
+  assert.match(page.manualResolved ?? "", /Old one/);
+  assert.deepEqual(
+    componentsWithIncidents(
+      [component("web", "up"), component("api", "up")],
+      state.manualIncidents,
+    ).map((c) => c.state),
+    ["down", "up"],
+  );
+});
+
+test("poller: a list of only private items is an empty list, not an error", async () => {
+  const [state] = await run(() => json([draft, internal]));
+  assert.equal(state?.error, null);
+  assert.deepEqual(state?.manualIncidents, []);
+});

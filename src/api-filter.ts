@@ -1,3 +1,4 @@
+import { isPublicManualIncident } from "@lorenzh/pulse-contract";
 import { isRecord } from "@lorenzh/pulse-kit";
 /** Proxy allow-list: pathname plus exact query string, as sent by the page. */
 export const ALLOWED_API_PATHS = [
@@ -255,8 +256,11 @@ export function filterApiBody(pathname: string, body: unknown, isHidden: boolean
   const clean = CLEANERS[pathname];
   if (clean === undefined) return body;
   if (pathname === "/api/manual-incidents") {
-    // A malformed incident stays as null, so the badge and feed see a malformed list (spec §8).
-    return body.map((item: unknown) => (isRecord(item) ? clean(item, isHidden) : null));
+    // A draft or internal item is dropped. A malformed incident stays as null, so the badge and
+    // feed see a malformed list (spec §8).
+    return body
+      .filter((item: unknown) => !isRecord(item) || isPublicManualIncident(item))
+      .map((item: unknown) => (isRecord(item) ? clean(item, isHidden) : null));
   }
   return body.filter(isRecord).map((item) => clean(item, isHidden));
 }

@@ -697,3 +697,31 @@ test("component badge: a new incident changes the tag, not the uptime text", asy
   assert.match(afterSvg, /98\.5%/);
   assert.match(afterSvg, /down/);
 });
+
+test("feed and component badge skip drafts and internal incidents; malformed items still fail", async () => {
+  const h = await startWithComponents();
+  h.bodies["/components"] = [{ ...components[0], state: "up" }];
+  const later = NOW;
+  const privateItem = (id: number, extra: Record<string, unknown>) => ({
+    ...manual("critical", "investigating", null),
+    id,
+    title: `PRIVATE-${id}`,
+    createdAt: later,
+    updates: [{ at: later, status: "investigating", message: "DRAFT-7f3a" }],
+    ...extra,
+  });
+  h.bodies["/manual-incidents"] = [
+    { ...manual("minor", "investigating", null), id: 9 },
+    privateItem(10, { publishedAt: null, visibility: "public" }),
+    privateItem(11, { publishedAt: later, visibility: "internal" }),
+  ];
+  const svg = await (await fetch(`${h.base}/badge/component/shop.svg`)).text();
+  assert.match(svg, /degraded 98\.5%/);
+  const feed = await (await fetch(`${h.base}/feed.atom`)).text();
+  assert.ok(feed.includes(":manual:9:0"));
+  assert.ok(!feed.includes("PRIVATE-") && !feed.includes("DRAFT-7f3a"));
+  assert.ok(!feed.includes(":manual:10:") && !feed.includes(":manual:11:"));
+  // The newest entry is the public update at NOW - 1000, never the later private one.
+  assert.ok(feed.includes("<updated>2026-06-10T11:59:59Z</updated>"));
+  assert.ok(!feed.includes("2026-06-10T12:00:00Z"));
+});

@@ -220,3 +220,32 @@ test("components and component uptime serve only their allow-listed keys", () =>
   ]);
   assert.ok(validateComponentsUptimeResponse(uptime, "componentsUptime").ok);
 });
+
+test("manual incidents: drafts and internal items are dropped, non-objects stay null", () => {
+  const item = {
+    id: 1,
+    title: "t",
+    componentIds: ["web"],
+    impact: "major",
+    status: "investigating",
+    createdAt: 1,
+    resolvedAt: null,
+    updates: [{ at: 1, status: "investigating", message: "m" }],
+  };
+  const upstream = [
+    { ...item, notes: [{ message: "NOTE-2b8e" }], draft: { message: "UPD-9c41" } },
+    { ...item, id: 2, publishedAt: null, visibility: "public", title: "DRAFT-7f3a" },
+    { ...item, id: 3, publishedAt: 5, visibility: "internal", title: "INTERNAL-5d17" },
+    { ...item, id: 4, publishedAt: 5, visibility: "public" },
+    null,
+    7,
+  ];
+  for (const isHidden of [true, false]) {
+    assert.deepEqual(filterApiBody("/api/manual-incidents", upstream, isHidden), [
+      item,
+      { ...item, id: 4 },
+      null,
+      null,
+    ]);
+  }
+});
