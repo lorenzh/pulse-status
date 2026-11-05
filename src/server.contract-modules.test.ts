@@ -42,6 +42,21 @@ test("served contract modules have no bare zod specifier", async () => {
   assert.match(schema, /from "\/pulse-contract\/zod\/index\.js"/);
 });
 
+test("serves the manual incident privacy guard and refuses its declaration file", async () => {
+  const base = await start();
+  const r = await fetch(`${base}/pulse-contract/manual-incident-public.js`);
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type") ?? "", /javascript/);
+  const js = await r.text();
+  assert.match(js, /isPublicManualIncident/);
+  assert.doesNotMatch(js, /from "zod"/);
+  for (const path of ["/pulse-contract/manual-incident-public.d.ts", "/pulse-contract/other.js"]) {
+    const refused = await fetch(base + path);
+    assert.equal(refused.status, 404, path);
+    await refused.arrayBuffer();
+  }
+});
+
 test("serves zod js files under /pulse-contract/zod/", async () => {
   const base = await start();
   const r = await fetch(`${base}/pulse-contract/zod/index.js`);
@@ -114,6 +129,7 @@ test("every import of the served contract graph resolves to a served file", asyn
     }
   }
   assert.ok(seen.has("/pulse-contract/zod/index.js"));
+  assert.ok(seen.has("/pulse-contract/manual-incident-public.js"));
   assert.ok(seen.size > 5);
 });
 
