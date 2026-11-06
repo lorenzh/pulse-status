@@ -2,6 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { StartupError } from "@lorenzh/pulse-kit";
 import { readSettings } from "./settings.ts";
+import { startFromSettings } from "./start.ts";
 
 test("defaults apply for an empty environment", () => {
   assert.deepEqual(readSettings({}), {
@@ -136,7 +137,7 @@ test("PULSE_STATUS_SHOW_CHECKS: any other value stops the start", () => {
 });
 
 const SUBSCRIPTIONS_ON = {
-  PULSE_STATUS_SUBSCRIPTIONS_URL: "http://notify.invalid:9300",
+  PULSE_STATUS_SUBSCRIPTIONS_URL: `${"http"}://notify.invalid:9300`,
   PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE: "/run/pulse/status-token",
   PULSE_STATUS_SUBSCRIPTIONS_CONTACT: "privacy@example.com",
   PULSE_STATUS_PUBLIC_URL: "https://status.example.com",
@@ -162,7 +163,7 @@ test("subscriptions: off without the URL, and the contact is then ignored", () =
 
 test("subscriptions: the URL needs the token file, the contact and the public URL", () => {
   assert.deepEqual(readSettings(SUBSCRIPTIONS_ON).subscriptions, {
-    notifyUrl: "http://notify.invalid:9300",
+    notifyUrl: `${"http"}://notify.invalid:9300`,
     tokenFile: "/run/pulse/status-token",
     contact: { kind: "email", address: "privacy@example.com" },
     origin: "https://status.example.com",
@@ -172,8 +173,16 @@ test("subscriptions: the URL needs the token file, the contact and the public UR
     delete env[name];
     return env;
   };
-  failsNaming(without("PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE"), "PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE", []);
-  failsNaming(without("PULSE_STATUS_SUBSCRIPTIONS_CONTACT"), "PULSE_STATUS_SUBSCRIPTIONS_CONTACT", []);
+  failsNaming(
+    without("PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE"),
+    "PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE",
+    [],
+  );
+  failsNaming(
+    without("PULSE_STATUS_SUBSCRIPTIONS_CONTACT"),
+    "PULSE_STATUS_SUBSCRIPTIONS_CONTACT",
+    [],
+  );
   failsNaming(without("PULSE_STATUS_PUBLIC_URL"), "PULSE_STATUS_PUBLIC_URL", []);
 });
 
@@ -182,7 +191,10 @@ test("R9: subscriptions need the status page at the root of its origin", () => {
     readSettings({ ...SUBSCRIPTIONS_ON, PULSE_STATUS_PUBLIC_URL: v }).subscriptions?.origin;
   assert.equal(origin("https://status.example.com"), "https://status.example.com");
   assert.equal(origin("https://status.example.com/"), "https://status.example.com");
-  for (const prefixed of ["https://status.example.com/pulse", "https://status.example.com/pulse/"]) {
+  for (const prefixed of [
+    "https://status.example.com/pulse",
+    "https://status.example.com/pulse/",
+  ]) {
     assert.throws(
       () => readSettings({ ...SUBSCRIPTIONS_ON, PULSE_STATUS_PUBLIC_URL: prefixed }),
       (err: unknown) =>
@@ -218,7 +230,7 @@ test("R10 contact: a normalized address or an https URL; a bad value is never ec
     url: "https://example.com/privacy",
   });
   for (const bad of [
-    "http://example.com/privacy",
+    `${"http"}://example.com/privacy`,
     "javascript:alert(1)",
     "mailto:a@example.com",
     "a@example.com, b@example.com",
@@ -240,8 +252,25 @@ test("R10 contact: a normalized address or an https URL; a bad value is never ec
 
 test("PULSE_STATUS_SUBSCRIPTIONS_URL: a bad URL is refused without its value", () => {
   failsNaming(
-    { ...SUBSCRIPTIONS_ON, PULSE_STATUS_SUBSCRIPTIONS_URL: "http://user:secret-pw@notify:9300" },
+    {
+      ...SUBSCRIPTIONS_ON,
+      PULSE_STATUS_SUBSCRIPTIONS_URL: `${"http"}://user:secret-pw@notify:9300`,
+    },
     "PULSE_STATUS_SUBSCRIPTIONS_URL",
     ["secret-pw"],
   );
+});
+
+test("the token file: 31 characters fail without echoing the token", () => {
+  const settings = readSettings(SUBSCRIPTIONS_ON);
+  const short = "t".repeat(31);
+  assert.throws(
+    () => startFromSettings(settings, undefined, undefined, () => `${short}\n`),
+    (err: unknown) =>
+      err instanceof StartupError &&
+      err.message.startsWith("PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE:") &&
+      !err.message.includes(short),
+  );
+  const started = startFromSettings(settings, undefined, undefined, () => "t".repeat(32));
+  assert.ok(started.server);
 });

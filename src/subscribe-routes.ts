@@ -136,7 +136,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
   const fail = (res: ServerResponse, path: string, err: unknown): void => {
     log.error("request failed", { path, error: err instanceof Error ? err.name : "unknown" });
     if (res.headersSent) {
-      res.destroy();
+      res.socket?.destroy();
       return;
     }
     sendPage(res, 500, messagePage(shell, "Error", "Something went wrong. Try again later."));
@@ -189,8 +189,8 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
     const cancelBody = once(
       schedule(() => {
         // A slow sender: drop it without an answer; the close frees its slot.
-        req.destroy();
-        res.destroy();
+        // Bun answers a destroyed request with an empty 200; dropping the socket writes nothing.
+        req.socket.destroy();
       }, SUBSCRIBE_BODY_TIMEOUT_MS),
     );
     res.once("close", cancelBody);
@@ -204,7 +204,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
         return;
       }
       // The client went away or the body failed: nothing can be answered.
-      res.destroy();
+      req.socket.destroy();
       return;
     }
     cancelBody();
@@ -265,7 +265,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
       text = await readBody(req, FORM_MAX_BYTES);
     } catch (err) {
       if (err instanceof BodyError && err.code === "too-large") tooLarge(res);
-      else res.destroy(); // the client went away
+      else req.socket.destroy(); // the client went away
       return;
     }
     const token = onlyField(text, "token");
