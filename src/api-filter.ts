@@ -280,3 +280,65 @@ export function limitResolvedWindow(body: unknown, cutoff: number): unknown {
     .filter((item: unknown) => (resolvedAt(item) ?? Number.POSITIVE_INFINITY) >= cutoff)
     .sort((a: unknown, b: unknown) => (resolvedAt(b) ?? 0) - (resolvedAt(a) ?? 0));
 }
+
+/** The page switches that remove fields or reorder items after the allow-list filter. */
+export interface PageSwitches {
+  showLatency: boolean;
+  showSlos: boolean;
+  /** Component ids first in this order; unlisted ones follow in upstream order. */
+  componentOrder: readonly string[];
+}
+
+const LATENCY_ROUTES = new Set(["/api/latency", "/api/components/latency"]);
+
+function withoutKey(item: Fields, key: string): Fields {
+  const out: Fields = {};
+  for (const [name, value] of Object.entries(item)) if (name !== key) out[name] = value;
+  return out;
+}
+
+function withoutResultLatency(location: unknown): unknown {
+  if (!isRecord(location) || !isRecord(location.result)) return location;
+  return { ...location, result: withoutKey(location.result, "latencyMs") };
+}
+
+function switchCheck(check: Fields, switches: PageSwitches): Fields {
+  let out = switches.showSlos ? check : withoutKey(check, "slo");
+  if (switches.showLatency) return out;
+  out = withoutKey(out, "latencyObjectiveMs");
+  if (Array.isArray(out.locations)) out.locations = out.locations.map(withoutResultLatency);
+  return out;
+}
+
+/** Orders components by their position in `order`; the sort is stable for the rest. */
+export function orderComponents<T>(items: readonly T[], order: readonly string[]): T[] {
+  const rank = new Map(order.map((id, index) => [id, index]));
+  const rankOf = (item: T): number => {
+    const id = isRecord(item) ? item.id : undefined;
+    return typeof id === "string" ? (rank.get(id) ?? order.length) : order.length;
+  };
+  return [...items].sort((a, b) => rankOf(a) - rankOf(b));
+}
+
+/**
+ * Applies `showLatency`, `showSlos` and the component order to a filtered body. Bodies that are
+ * not lists pass through unchanged.
+ */
+export function applyPageSwitches(
+  pathname: string,
+  body: unknown,
+  switches: PageSwitches,
+): unknown {
+  if (!Array.isArray(body)) return body;
+  if (!switches.showLatency && LATENCY_ROUTES.has(pathname)) return [];
+  if (pathname === "/api/checks") {
+    return body.map((item: unknown) => (isRecord(item) ? switchCheck(item, switches) : item));
+  }
+  if (pathname === "/api/components") {
+    const items = switches.showSlos
+      ? body
+      : body.map((item: unknown) => (isRecord(item) ? withoutKey(item, "slo") : item));
+    return orderComponents(items, switches.componentOrder);
+  }
+  return body;
+}

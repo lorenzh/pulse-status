@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ChecksResponse } from "@lorenzh/pulse-contract";
+import { type ChecksResponse, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { startFromEnv } from "./start.ts";
 
 const servers: Server[] = [];
@@ -115,3 +115,55 @@ for (const [name, env] of [
     assert.throws(() => startFromEnv({ ...env }), new RegExp(`^StartupError: ${name}:`));
   });
 }
+
+test("an unusable settings file fails startup without its content", () => {
+  const dir = mkdtempSync(join(tmpdir(), "status-start-"));
+  try {
+    const file = join(dir, "settings.json");
+    writeFileSync(file, '{"name": "secret-content"');
+    assert.throws(
+      () => startFromEnv({ PULSE_STATUS_SETTINGS_FILE: file }),
+      (err: unknown) =>
+        err instanceof Error &&
+        err.name === "StartupError" &&
+        err.message === "settings file: invalid JSON",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("with a token the page waits for the settings, then applies the database name", async () => {
+  const token = "start-sentinel-token";
+  const auth: (string | undefined)[] = [];
+  const upstream = createServer((req, res) => {
+    if (req.url?.startsWith("/service/status/")) auth.push(req.headers.authorization);
+    if (req.url === "/service/status/settings") {
+      const body = { revision: `sha256-${"a".repeat(64)}`, settings: { name: "Acme" } };
+      res
+        .writeHead(200, { "content-type": "application/json", [WIRE_VERSION_HEADER]: "1" })
+        .end(JSON.stringify(body));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" }).end("[]");
+  });
+  const apiUrl = await listen(upstream);
+  const started = startFromEnv({ PULSE_API_URL: apiUrl, PULSE_STATUS_API_TOKEN: token });
+  const base = await listen(started.server);
+  const waiting = await fetch(`${base}/`);
+  assert.equal(waiting.status, 503);
+  assert.deepEqual(await waiting.json(), { error: "settings not loaded" });
+  const stop = started.startPolling();
+  try {
+    let page = "";
+    for (let i = 0; i < 100 && !page.includes("<title>Acme</title>"); i++) {
+      const r = await fetch(`${base}/`);
+      page = r.status === 200 ? await r.text() : "";
+      if (!page.includes("Acme")) await Bun.sleep(10);
+    }
+    assert.match(page, /<title>Acme<\/title>/);
+    assert.ok(auth.includes(`Bearer ${token}`));
+  } finally {
+    stop();
+  }
+});

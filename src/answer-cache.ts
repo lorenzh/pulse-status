@@ -2,6 +2,8 @@
 export interface AnswerSettings {
   isHidden: boolean;
   hasChecks: boolean;
+  /** Fingerprint of the effective page settings; absent means the fixed start settings. */
+  fingerprint?: string | undefined;
 }
 
 /** One cached answer and the inputs it was built from. */
@@ -27,7 +29,7 @@ export interface AnswerLookup<A, D> {
 
 /** The cache key of an answer: settings, path and query. */
 export function answerKey(settings: AnswerSettings, pathname: string, search: string): string {
-  return `${settings.isHidden ? 1 : 0}${settings.hasChecks ? 1 : 0}:${pathname}${search}`;
+  return `${settings.fingerprint ?? ""}${settings.isHidden ? 1 : 0}${settings.hasChecks ? 1 : 0}:${pathname}${search}`;
 }
 
 function isReusable<A, D>(entry: AnswerEntry<A, D>, lookup: AnswerLookup<A, D>): boolean {

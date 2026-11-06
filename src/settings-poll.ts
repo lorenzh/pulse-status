@@ -15,6 +15,8 @@ import {
 
 /** Time limit of one settings read or report. */
 export const SETTINGS_TIMEOUT_MS = 5000;
+/** The report is sent after every poll; polls run at least this often, so it is a heartbeat too. */
+export const REPORT_HEARTBEAT_MS = 60_000;
 
 type Rejected = { source: "database" | "file"; reason: string };
 
@@ -197,7 +199,8 @@ export function startSettingsPoll(deps: SettingsPollDeps): SettingsPoll {
     } catch (err) {
       deps.log("status settings poll failed", { name: err instanceof Error ? err.name : "error" });
     }
-    if (!isStopped) handle = deps.setTimeout(() => void tick(), deps.pollMs);
+    if (!isStopped)
+      handle = deps.setTimeout(() => void tick(), Math.min(deps.pollMs, REPORT_HEARTBEAT_MS));
   };
 
   void tick();
