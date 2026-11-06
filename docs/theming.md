@@ -4,6 +4,8 @@ The default look is losoft: warm paper, deep plum ink, one amethyst accent, Spac
 
 An unreadable file, invalid JSON or an invalid value stops the server at start and names the file and the key path on one line, for example `theme file t.json: light.bg: invalid value`. There is no silent fallback.
 
+Name, logo, theme, component order and the switches can also come from the console (the database, through pulse-api) or from `PULSE_STATUS_SETTINGS_FILE`, see [configuration.md](configuration.md). A change applies on the next settings poll: `/theme.css`, the CSP `img-src` (for a new logo origin) and the page change without a restart, and an open page reloads once. Env values win over the file, the file over the database.
+
 ## Name and logo
 
 | Env                 | Default | Meaning                                                                                                                                                |

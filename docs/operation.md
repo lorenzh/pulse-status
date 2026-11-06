@@ -36,6 +36,16 @@ Both paths are not page content, bypass the cache and the API proxy, and carry n
 
 Logs come from pulse-kit. They are JSON lines (a field named `time`, `level` or `msg` never replaces the base key): `{"time":"<ISO 8601>","level":"info","msg":"...", ...fields}`. `warn` and `error` go to stderr, the rest to stdout. `PULSE_LOG_LEVEL` (`debug`, `info`, `warn`, `error`; default `info`) sets the minimum level.
 
+## Live page settings
+
+With `PULSE_STATUS_API_TOKEN` (or `_FILE`), the console's status settings apply while the server runs; see [configuration.md](configuration.md). Each answer, the page, `/theme.css` and the ETags are built from the settings current when the response is written, and the settings fingerprint is part of every cache key and ETag, so an answer read under old settings is never served under new ones. `GET /page-settings.json` returns `{"fingerprint": "<16 hex>"}` with `Cache-Control: no-store`; the page polls it and reloads once when the fingerprint changes.
+
+- `showLatency: false`: `/api/latency` and `/api/components/latency` answer `[]`, checks lose `latencyObjectiveMs` and `result.latencyMs`, and the page shows no latency label, chart or latency column.
+- `showSlos: false`: checks and components lose `slo`, and the page shows no availability line.
+- `componentOrder`: the listed components come first, unknown ids are ignored, the rest follow in pulse-api order. Groups follow their first component.
+
+The full and dev Compose stacks set `PULSE_STATUS_SHOW_CHECKS: "true"`. An env value locks its field, so in those stacks the console shows `showChecks` as "Set by PULSE_STATUS_SHOW_CHECKS" and cannot change it. This is intended; remove the variable to edit the field from the console.
+
 ## What the page shows
 
 - A summary line at the top, worst state wins: "N check(s) down", else "N check(s) degraded", else "All systems operational", plus " · N incident(s) open" when incidents are open. Maintenance and checks without data do not count as problems. It always carries the words, never colour alone.

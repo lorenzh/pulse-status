@@ -166,7 +166,8 @@ async function start(initial: Partial<Api> = {}) {
     revision++;
     await poll.pollNow();
   };
-  return { base, api, save, poll, serviceCalls, clock };
+  const snapshot = (): EffectiveSettings | undefined => current;
+  return { base, api, save, poll, serviceCalls, clock, snapshot };
 }
 
 async function json<T>(url: string): Promise<T> {
@@ -315,3 +316,78 @@ test("the first render shows no latency or SLO output when both switches are off
     assert.doesNotMatch(hidden, pattern);
   }
 });
+
+// Each field from the database applies after one poll on the same server, and clearing the
+// database key brings back the default. Expected values are literals.
+const DB_MATRIX: [string, StatusSettings, (e: EffectiveSettings) => unknown, unknown, unknown][] = [
+  ["name", { name: "Acme" }, (e) => e.name, "Acme", undefined],
+  [
+    "logoUrl",
+    { logoUrl: "https://logo.example/a.svg" },
+    (e) => (e.logo === null ? null : "url"),
+    "url",
+    null,
+  ],
+  [
+    "light colour",
+    { theme: { light: { accent: "#112233" } } },
+    (e) => e.css.includes("#112233"),
+    true,
+    false,
+  ],
+  [
+    "dark colour",
+    { theme: { dark: { bg: "#010203" } } },
+    (e) => e.css.includes("#010203"),
+    true,
+    false,
+  ],
+  [
+    "font",
+    { theme: { "font-sans": "Matrix Sans" } },
+    (e) => e.css.includes("Matrix Sans"),
+    true,
+    false,
+  ],
+  ["radius", { theme: { "radius-md": "7px" } }, (e) => e.css.includes("7px"), true, false],
+  ["componentOrder", { componentOrder: ["y"] }, (e) => e.componentOrder, ["y"], []],
+  ["showChecks on", { showChecks: true }, (e) => e.showChecks, true, false],
+  ["hideDetails off", { hideDetails: false }, (e) => e.hideDetails, false, true],
+  ["showLatency off", { showLatency: false }, (e) => e.showLatency, false, true],
+  ["showSlos off", { showSlos: false }, (e) => e.showSlos, false, true],
+];
+
+for (const [field, settings, read, applied, fallback] of DB_MATRIX) {
+  test(`matrix: database ${field} applies after one poll and clears to the default`, async () => {
+    const { save, snapshot } = await start();
+    await save({});
+    const first = snapshot();
+    assert.ok(first !== undefined);
+    assert.deepEqual(read(first), fallback);
+    await save(settings);
+    const next = snapshot();
+    assert.ok(next !== undefined);
+    assert.deepEqual(read(next), applied);
+    assert.notEqual(next.fingerprint, first.fingerprint);
+    await save({});
+    const cleared = snapshot();
+    assert.ok(cleared !== undefined);
+    assert.deepEqual(read(cleared), fallback);
+  });
+}
+
+// The other direction of each flag: the database value equal to the opposite of the above.
+for (const [flag, value] of [
+  ["showChecks", false],
+  ["hideDetails", true],
+  ["showLatency", true],
+  ["showSlos", true],
+] as const) {
+  test(`matrix: database ${flag}=${value} applies after one poll`, async () => {
+    const { save, snapshot } = await start();
+    await save({ [flag]: !value });
+    assert.equal(snapshot()?.[flag], !value);
+    await save({ [flag]: value });
+    assert.equal(snapshot()?.[flag], value);
+  });
+}
