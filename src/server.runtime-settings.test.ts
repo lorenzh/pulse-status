@@ -28,7 +28,11 @@ const check = {
   id: "web",
   name: "Web",
   type: "http",
+  url: "https://web.example/",
+  intervalMs: 1000,
   state: "down",
+  consecutiveDown: 1,
+  lastResultAt: 1,
   lastReason: "boom",
   latencyObjectiveMs: 500,
   slo: { target: 99.9, windowDays: 30, availability: 99.5, budgetRemaining: 0.2 },
@@ -36,15 +40,39 @@ const check = {
     {
       location: "a",
       stale: false,
-      result: { timestamp: 1, status: "down", latencyMs: 120, reason: "boom" },
+      result: {
+        checkId: "web",
+        location: "a",
+        timestamp: 1,
+        status: "down",
+        statusCode: 503,
+        latencyMs: 120,
+        reason: "boom",
+      },
     },
   ],
 };
 const components = [
-  { id: "x", name: "X", group: "g1", checkIds: [], state: "up", uptime: 1, slo: check.slo },
-  { id: "y", name: "Y", group: "g2", checkIds: [], state: "up", uptime: 1 },
-  { id: "z", name: "Z", group: "g1", checkIds: [], state: "up", uptime: 1 },
+  {
+    id: "x",
+    name: "X",
+    group: "g1",
+    checkIds: ["web"],
+    state: "up",
+    uptime: 1,
+    incidentIds: [],
+    slo: check.slo,
+  },
+  { id: "y", name: "Y", group: "g2", checkIds: ["web"], state: "up", uptime: 1, incidentIds: [] },
+  { id: "z", name: "Z", group: "g1", checkIds: ["web"], state: "up", uptime: 1, incidentIds: [] },
 ];
+
+const LATENCY_DAYS = Array.from({ length: 90 }, (_, i) => ({
+  date: new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10),
+  p50Ms: 80,
+  p95Ms: 140,
+  count: 5,
+}));
 
 interface Api {
   settings: StatusSettings;
@@ -69,7 +97,7 @@ function apiAnswer(path: string, api: Api, revision: number): Response {
   let body: unknown = [];
   if (path === "/checks") body = [check];
   else if (path === "/components") body = components;
-  else if (path === "/latency") body = [{ checkId: "web", days: [] }];
+  else if (path === "/latency") body = [{ checkId: "web", days: LATENCY_DAYS }];
   return new Response(JSON.stringify(body), { headers: JSON_HEADERS });
 }
 
@@ -271,5 +299,19 @@ test("the token never appears in served answers", async () => {
   assert.ok(serviceCalls.includes("/service/status/report"));
   for (const path of ["/", "/page-settings.json", "/api/checks", "/readyz"]) {
     assert.doesNotMatch(await (await fetch(base + path)).text(), new RegExp(TOKEN), path);
+  }
+});
+
+test("the first render shows no latency or SLO output when both switches are off", async () => {
+  const { base, save } = await start();
+  await save({ showChecks: true });
+  const shown = await (await fetch(`${base}/`)).text();
+  assert.match(shown, /class="slo"/);
+  assert.match(shown, /objective 500 ms/);
+  assert.match(shown, /latency-chart/);
+  await save({ showChecks: true, showLatency: false, showSlos: false });
+  const hidden = await (await fetch(`${base}/`)).text();
+  for (const pattern of [/class="slo"/, /class="latency"/, /latency-chart/, /objective/, /p95/]) {
+    assert.doesNotMatch(hidden, pattern);
   }
 });

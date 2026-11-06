@@ -1,8 +1,11 @@
 import { afterAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 interface Run {
   code: number | null;
@@ -42,9 +45,24 @@ function assertOneLine(r: Run, pattern: RegExp): void {
 }
 
 const blockers: Server[] = [];
+const dir = mkdtempSync(join(tmpdir(), "status-startup-"));
 afterAll(() => {
   for (const s of blockers) s.close();
+  rmSync(dir, { recursive: true, force: true });
 });
+
+const TOKEN = "startup-sentinel-token";
+const files = {
+  settingsTheme: join(dir, "settings-theme.json"),
+  legacyTheme: join(dir, "theme.json"),
+  badSettings: join(dir, "bad.json"),
+  emptyToken: join(dir, "empty-token"),
+  missing: join(dir, "missing"),
+};
+writeFileSync(files.settingsTheme, JSON.stringify({ theme: { light: { accent: "#112233" } } }));
+writeFileSync(files.legacyTheme, JSON.stringify({ accent: "#112233" }));
+writeFileSync(files.badSettings, `{"name": "${TOKEN}"`);
+writeFileSync(files.emptyToken, "");
 
 test("an invalid PULSE_API_URL prints one line without the value and exits 2", async () => {
   const r = await run({ PORT: "0", PULSE_API_URL: "not-a-url-secret" });
@@ -65,3 +83,42 @@ test("an invalid PULSE_LOG_LEVEL prints one line and exits 2", async () => {
   const r = await run({ PORT: "0", PULSE_LOG_LEVEL: "loud" });
   assertOneLine(r, /^pulse-status: PULSE_LOG_LEVEL: must be one of debug, info, warn, error$/);
 });
+
+for (const [name, env, pattern] of [
+  [
+    "a theme in both settings files",
+    { PULSE_STATUS_SETTINGS_FILE: files.settingsTheme, PULSE_STATUS_THEME: files.legacyTheme },
+    /^pulse-status: settings file: theme: cannot be set while PULSE_STATUS_THEME is set$/,
+  ],
+  [
+    "both token sources",
+    { PULSE_STATUS_API_TOKEN: TOKEN, PULSE_STATUS_API_TOKEN_FILE: files.emptyToken },
+    /^pulse-status: PULSE_STATUS_API_TOKEN and PULSE_STATUS_API_TOKEN_FILE cannot both be set$/,
+  ],
+  [
+    "an empty token file",
+    { PULSE_STATUS_API_TOKEN_FILE: files.emptyToken },
+    /^pulse-status: PULSE_STATUS_API_TOKEN_FILE=.+: file is empty$/,
+  ],
+  [
+    "an unreadable token file",
+    { PULSE_STATUS_API_TOKEN_FILE: files.missing },
+    /^pulse-status: PULSE_STATUS_API_TOKEN_FILE=.+: cannot read \(ENOENT\)$/,
+  ],
+  [
+    "an invalid settings file",
+    { PULSE_STATUS_SETTINGS_FILE: files.badSettings },
+    /^pulse-status: settings file: invalid JSON$/,
+  ],
+  [
+    "a missing settings file",
+    { PULSE_STATUS_SETTINGS_FILE: files.missing },
+    /^pulse-status: settings file: cannot read: ENOENT$/,
+  ],
+] as const) {
+  test(`${name} prints one line without the token and exits 2`, async () => {
+    const r = await run({ PORT: "0", ...env });
+    assertOneLine(r, pattern);
+    assert.ok(!r.stderr.includes(TOKEN));
+  });
+}

@@ -6,6 +6,7 @@ import type {
   Incident,
   UptimeResponse,
 } from "@lorenzh/pulse-contract";
+import { orderComponents } from "./api-filter.ts";
 import { type ComponentView, checkLabels, renderComponents } from "./components-view.ts";
 import type { PollerState } from "./poller.ts";
 import { renderSummary, type TimeEnv } from "./render.ts";
@@ -255,4 +256,20 @@ test("with show-checks no component chart is drawn", () => {
     env,
   );
   assert.doesNotMatch(html, /highest member check/);
+});
+
+test("components x(g1), y(g2), z(g1) ordered by [y] show y, x, z and groups g2 then g1", () => {
+  const ordered = orderComponents(
+    [
+      componentOf("x", "X", [], { group: "g1" }),
+      componentOf("y", "Y", [], { group: "g2" }),
+      componentOf("z", "Z", [], { group: "g1" }),
+    ],
+    ["gone", "y"],
+  );
+  const html = renderComponents({ ...view, components: ordered, componentUptime: [] }, env);
+  const headings = [...html.matchAll(/<h3 class="group-heading">([^<]*)<\/h3>/g)].map((m) => m[1]);
+  assert.deepEqual(headings, ["g2", "g1"]);
+  const names = [...html.matchAll(/<span class="name">([^<]*)<\/span>/g)].map((m) => m[1]);
+  assert.deepEqual(names, ["Y", "X", "Z"]);
 });

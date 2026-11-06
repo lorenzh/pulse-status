@@ -155,11 +155,12 @@ test("with a token the page waits for the settings, then applies the database na
   assert.deepEqual(await waiting.json(), { error: "settings not loaded" });
   const stop = started.startPolling();
   try {
+    // The first settings read starts at once; each request round trip lets it finish. No
+    // clock is involved, so the loop is bounded by request count, not by time.
     let page = "";
-    for (let i = 0; i < 100 && !page.includes("<title>Acme</title>"); i++) {
+    for (let i = 0; i < 200 && !page.includes("<title>Acme</title>"); i++) {
       const r = await fetch(`${base}/`);
       page = r.status === 200 ? await r.text() : "";
-      if (!page.includes("Acme")) await Bun.sleep(10);
     }
     assert.match(page, /<title>Acme<\/title>/);
     assert.ok(auth.includes(`Bearer ${token}`));

@@ -9,7 +9,13 @@ import {
   validateResult,
   validateUptimeResponse,
 } from "@lorenzh/pulse-contract";
-import { ALLOWED_API_PATHS, filterApiBody, isAllowedApiPath } from "./api-filter.ts";
+import {
+  ALLOWED_API_PATHS,
+  applyPageSwitches,
+  filterApiBody,
+  isAllowedApiPath,
+  orderComponents,
+} from "./api-filter.ts";
 
 const result = {
   checkId: "a",
@@ -295,3 +301,39 @@ for (const isHidden of [true, false]) {
     assert.deepEqual(filterApiBody("/api/manual-incidents", [null], isHidden), [null]);
   });
 }
+
+const SWITCHES_ON = { showLatency: true, showSlos: true, componentOrder: [] as string[] };
+const slo = { target: 99.9, windowDays: 30, availability: 99.5, budgetRemaining: 0.2 };
+const latencyCheck = {
+  id: "web",
+  latencyObjectiveMs: 500,
+  slo,
+  locations: [{ location: "a", stale: false, result: { timestamp: 1, latencyMs: 120 } }],
+};
+
+test("showLatency false empties both latency routes and removes latency fields of checks", () => {
+  const off = { ...SWITCHES_ON, showLatency: false };
+  assert.deepEqual(applyPageSwitches("/api/latency", [{ checkId: "web", days: [] }], off), []);
+  assert.deepEqual(applyPageSwitches("/api/components/latency", [{ componentId: "x" }], off), []);
+  assert.deepEqual(applyPageSwitches("/api/checks", [latencyCheck], off), [
+    { id: "web", slo, locations: [{ location: "a", stale: false, result: { timestamp: 1 } }] },
+  ]);
+  assert.deepEqual(applyPageSwitches("/api/checks", [latencyCheck], SWITCHES_ON), [latencyCheck]);
+});
+
+test("showSlos false removes slo from checks and components", () => {
+  const off = { ...SWITCHES_ON, showSlos: false };
+  const [check] = applyPageSwitches("/api/checks", [latencyCheck], off) as unknown[];
+  assert.equal(typeof check === "object" && check !== null && "slo" in check, false);
+  assert.deepEqual(applyPageSwitches("/api/components", [{ id: "x", slo }], off), [{ id: "x" }]);
+});
+
+test("componentOrder puts listed components first, ignores removed ids, keeps the rest", () => {
+  const list = [{ id: "x" }, { id: "y" }, { id: "z" }];
+  const ordered = applyPageSwitches("/api/components", list, {
+    ...SWITCHES_ON,
+    componentOrder: ["gone", "y"],
+  });
+  assert.deepEqual(ordered, [{ id: "y" }, { id: "x" }, { id: "z" }]);
+  assert.deepEqual(orderComponents(list, []), list);
+});

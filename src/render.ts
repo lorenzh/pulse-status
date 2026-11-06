@@ -471,7 +471,8 @@ function checkLatencyDays(
   check: CheckWithState,
   latency: LatencyResponse | null,
 ): Latencies | undefined {
-  if (latency === null || !hasHttpFields(check)) return undefined;
+  // An empty list is what the server sends when showLatency is off: no chart, no columns.
+  if (latency === null || latency.length === 0 || !hasHttpFields(check)) return undefined;
   return latency.find((item) => item.checkId === check.id)?.days ?? [];
 }
 

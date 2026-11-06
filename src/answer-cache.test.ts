@@ -170,3 +170,9 @@ test("a build that throws at once is also removed", async () => {
   await assert.rejects(cachedAnswerFor(answers, "k", { build, isValid, now: () => 0 }), /sync/);
   assert.equal(answers.has("k"), false);
 });
+
+test("the settings fingerprint is part of the answer key", () => {
+  const a = answerKey({ isHidden: true, hasChecks: false, fingerprint: "aaaa" }, "/api/checks", "");
+  const b = answerKey({ isHidden: true, hasChecks: false, fingerprint: "bbbb" }, "/api/checks", "");
+  assert.notEqual(a, b);
+});
