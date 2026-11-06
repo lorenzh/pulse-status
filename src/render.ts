@@ -166,7 +166,7 @@ export function renderLatency(check: CheckWithState): string {
       best === null || entry.result.timestamp > best.result.timestamp ? entry : best,
     null,
   );
-  if (newest === null) return "";
+  if (newest === null || typeof newest.result.latencyMs !== "number") return "";
   const objective =
     hasHttpFields(check) && check.latencyObjectiveMs != null
       ? ` · objective ${formatLatencyMs(check.latencyObjectiveMs)}`

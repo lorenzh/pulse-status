@@ -135,3 +135,23 @@ createPoller({
 setInterval(() => {
   if (lastState !== null) showUpdated(lastState);
 }, TICK_MS);
+
+// A new settings fingerprint reloads the page once, so name, theme and switches apply.
+const settingsFingerprint = document.body.dataset.settings;
+if (settingsFingerprint) {
+  let isReloading = false;
+  setInterval(async () => {
+    if (isReloading) return;
+    try {
+      const response = await fetch("/page-settings.json", { cache: "no-store" });
+      if (!response.ok) return;
+      const body = await response.json();
+      if (typeof body?.fingerprint === "string" && body.fingerprint !== settingsFingerprint) {
+        isReloading = true;
+        window.location.reload();
+      }
+    } catch {
+      // A failed read is retried on the next tick; the page keeps its state.
+    }
+  }, pollMs);
+}
