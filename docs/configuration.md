@@ -19,6 +19,15 @@ pulse-status reads these environment variables, all in `src/main.ts`. It has no 
 
 `PORT` is an integer from 0 to 65535 and `POLL_MS` an integer from 1000 to 2147483647 (`POLL_MS: must be an integer from 1000 to 2147483647`). `PULSE_STATUS_LOGO` must not be an `http://` URL (`PULSE_STATUS_LOGO: URL must use https`). An invalid value stops the server at start with exit code 2. `PULSE_STATUS_PUBLIC_URL` that is not an `http(s)` URL, or has credentials, a query or a fragment, stops the server at start (`PULSE_STATUS_PUBLIC_URL: must be ...`); a trailing slash is removed. An empty `PULSE_STATUS_PUBLIC_URL`,`PULSE_STATUS_THEME`, `PULSE_STATUS_NAME`, `PULSE_STATUS_LOGO` or `PULSE_STATUS_HIDE_DETAILS` counts as not set. An empty `PULSE_STATUS_SHOW_CHECKS` counts as not set. Any other value of `PULSE_STATUS_HIDE_DETAILS` or `PULSE_STATUS_SHOW_CHECKS`, and a `PULSE_STATUS_CACHE_MS` or `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` that is not an integer in range, stops the server at start. `PULSE_STATUS_UPSTREAM_TIMEOUT_MS` is an integer from 1 to 2147481647 (`PULSE_STATUS_UPSTREAM_TIMEOUT_MS: must be an integer from 1 to 2147481647`): the page adds 2000 ms, and a browser timer holds at most 2147483647 ms. Keep `PULSE_STATUS_CACHE_MS` below `POLL_MS`, so each poll sees fresh data.
 
+Settings for the console-edited page settings (read and checked at start; the live database layer is not applied yet):
+
+- `PULSE_STATUS_SHOW_LATENCY` and `PULSE_STATUS_SHOW_SLOS`: `true`, `false`, `1` or `0`, default `true`.
+- `PULSE_STATUS_SETTINGS_FILE`: path to a JSON file of the contract's `StatusSettings` shape (at most 1048576 bytes). A file that cannot be used stops the start. It cannot set `theme` while `PULSE_STATUS_THEME` is set.
+- `PULSE_STATUS_API_TOKEN` or `PULSE_STATUS_API_TOKEN_FILE`: token for the api's service routes. Setting both, or a token file that cannot be read or is empty, stops the start. No message holds the token. An empty variable counts as not set.
+- `PULSE_STATUS_SETTINGS_POLL_MS`: integer from 1000, default `15000`.
+
+Precedence per field: env, then the settings file (or the theme file for theme tokens), then the database, then the default. A set env value locks its field, also when it equals the default (`PULSE_STATUS_SHOW_CHECKS=false`).
+
 `PORT` and `POLL_MS` are parsed as plain integers: values such as `1e3` or `5000ms` stop the server at start.
 
 Example:

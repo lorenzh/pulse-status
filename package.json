@@ -31,7 +31,7 @@
   "dependencies": {
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@fontsource-variable/space-grotesk": "5.3.0",
-    "@lorenzh/pulse-contract": "github:lorenzh/pulse-contract#9ab7e2492a2cec91789fba7c742bdba900a800a9",
+    "@lorenzh/pulse-contract": "github:lorenzh/pulse-contract#c5ce6685ce8b563a243823bca451032291b81adb",
     "@lorenzh/pulse-kit": "github:lorenzh/pulse-kit#236df214f9df8658f2992dd6f7c100952c07102b",
     "zod": "4.6.7"
   },

@@ -32,6 +32,7 @@ import {
 import { assetEtag, etagFor, ifNoneMatchHits } from "./http-cache.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
+import { contentSecurityPolicy, type Logo, resolveLogo } from "./runtime-settings.ts";
 import { renderState } from "./ssr.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
@@ -117,13 +118,6 @@ function checkMs(name: string, value: number, min: number, max?: number): number
   return value;
 }
 
-const LOGO_TYPES: Record<string, string> = {
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".webp": "image/webp",
-};
-
 // Fixed allow-list: no part of the request is joined to a file path.
 const fontFiles: Record<string, string> = {
   "/fonts/space-grotesk.woff2":
@@ -131,34 +125,6 @@ const fontFiles: Record<string, string> = {
   "/fonts/jetbrains-mono.woff2":
     "../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2",
 };
-
-interface Logo {
-  /** Value of the img src attribute. */
-  src: string;
-  /** Origin of a remote logo, for the CSP. */
-  origin?: string;
-  /** Local file and content type, when served by this server. */
-  file?: string;
-  type?: string;
-}
-
-function resolveLogo(logo: string | undefined): Logo | null {
-  if (logo === undefined || logo === "") return null;
-  if (/^http:\/\//i.test(logo)) throw new Error("PULSE_STATUS_LOGO: URL must use https");
-  if (/^https:\/\//i.test(logo)) {
-    try {
-      new URL(logo);
-    } catch {
-      throw new Error(`PULSE_STATUS_LOGO: invalid URL ${logo}`);
-    }
-    return { src: logo, origin: new URL(logo).origin };
-  }
-  const type = LOGO_TYPES[extname(logo).toLowerCase()];
-  if (type === undefined)
-    throw new Error("PULSE_STATUS_LOGO: extension must be svg, png, jpg or webp");
-  if (!existsSync(logo)) throw new Error(`PULSE_STATUS_LOGO: cannot read ${logo}`);
-  return { src: "/logo", file: logo, type };
-}
 
 function wordmark(name: string, logo: Logo | null): string {
   const safe = escapeHtml(name);
@@ -203,6 +169,10 @@ const contractModules = new Set([
   "audit.js",
   "revision.js",
   "manual-incident-public.js",
+  "runtime-settings.js",
+  "notify-channels.js",
+  "resend.js",
+  "validate-runtime.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
@@ -342,21 +312,6 @@ function sendTaggedBody(
     return;
   }
   res.writeHead(200, { "content-type": type, ...headers }).end(body);
-}
-
-function contentSecurityPolicy(logoOrigin: string | undefined): string {
-  const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
-  return [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
-    `img-src ${img}`,
-    "font-src 'self'",
-    "connect-src 'self'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-  ].join("; ");
 }
 
 function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswer {
@@ -687,7 +642,7 @@ export function createStatusServer(options: ServerOptions): Server {
   // A configured name is the whole title; only the default carries "status".
   const title = options.name === undefined ? "pulse status" : name;
   const assetFor = createAssetStore(themeCss(loadTheme(options.themeFile)));
-  const logo = resolveLogo(options.logo);
+  const logo = resolveLogo(options.logo, existsSync);
   const mark = wordmark(name, logo);
   const isHidden = options.hideDetails ?? true;
   const csp = contentSecurityPolicy(logo?.origin);

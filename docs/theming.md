@@ -17,6 +17,8 @@ A local logo needs a supported extension and must exist at start. An `https://` 
 
 Set `PULSE_STATUS_THEME` to a JSON file. Every key is optional and unknown keys are ignored. A missing key falls back to the default theme, per variable and per mode.
 
+The theme keys are the contract's lists (`STATUS_COLOR_KEYS`, `STATUS_FONT_KEYS`, `STATUS_RADIUS_KEYS`). A `theme` in `PULSE_STATUS_SETTINGS_FILE` or in the database follows the contract rules, where a radius is at most 32 characters; the theme file keeps its own rules and has no such limit.
+
 ```json
 {
   "light": { "accent": "#0b6bcb" },
