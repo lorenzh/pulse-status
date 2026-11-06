@@ -3,7 +3,18 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadDefaultTheme, loadTheme, themeCss, validateName } from "./theme-config.ts";
+import { STATUS_FONT_KEYS, STATUS_RADIUS_KEYS } from "@lorenzh/pulse-contract";
+import {
+  COLOR_KEYS,
+  FONT_KEYS,
+  loadDefaultTheme,
+  loadTheme,
+  RADIUS_KEYS,
+  themeCss,
+  themeFromSettings,
+  themeToSettings,
+  validateName,
+} from "./theme-config.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "theme-"));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -25,6 +36,23 @@ test("a partial theme overrides per variable and per mode; unknown keys are igno
   assert.equal(theme.radii["radius-md"], "8px");
   assert.equal(theme.radii["radius-sm"], "6px");
   assert.equal(theme.light.nope, undefined);
+});
+
+test("the legacy theme file keeps accepting a 33-character radius", () => {
+  const radius = `${"1".repeat(31)}px`;
+  assert.equal(
+    loadTheme(themeFile({ "radius-sm": radius }, "long-radius.json")).radii["radius-sm"],
+    radius,
+  );
+});
+
+test("theme keys are the contract's lists", () => {
+  assert.deepEqual([...FONT_KEYS, ...RADIUS_KEYS], [...STATUS_FONT_KEYS, ...STATUS_RADIUS_KEYS]);
+  assert.equal(COLOR_KEYS.length, 20);
+  assert.deepEqual(
+    themeToSettings(themeFromSettings({ light: { bg: "#fff" }, "radius-md": "2px" })),
+    { light: { bg: "#fff" }, "radius-md": "2px" },
+  );
 });
 
 test("css has root, explicit dark and system dark blocks", () => {

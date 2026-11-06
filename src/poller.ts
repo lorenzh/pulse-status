@@ -130,7 +130,14 @@ function fillLocations(check: Record<string, unknown>): unknown {
   const checkId = typeof check.id === "string" ? check.id : "";
   return check.locations.map((entry: unknown) => {
     if (!isRecord(entry) || !isRecord(entry.result)) return entry;
-    const result = { checkId, statusCode: null, attempts: 1, location: "", ...entry.result };
+    const result = {
+      checkId,
+      statusCode: null,
+      attempts: 1,
+      location: "",
+      latencyMs: 0,
+      ...entry.result,
+    };
     return { location: "", ...entry, result };
   });
 }

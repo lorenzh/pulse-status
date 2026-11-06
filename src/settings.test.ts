@@ -14,9 +14,97 @@ test("defaults apply for an empty environment", () => {
     publicUrl: undefined,
     hideDetails: true,
     showChecks: false,
+    showLatency: true,
+    showSlos: true,
+    env: {},
+    settingsFile: undefined,
+    apiToken: undefined,
+    settingsPollMs: 15000,
     cacheMs: 2000,
     upstreamTimeoutMs: 4000,
   });
+});
+
+test("env page settings: a set value is recorded, also false; empty is unset", () => {
+  assert.deepEqual(
+    readSettings({
+      PULSE_STATUS_NAME: " Acme ",
+      PULSE_STATUS_LOGO: "https://cdn.example/l.svg",
+      PULSE_STATUS_SHOW_CHECKS: "false",
+      PULSE_STATUS_SHOW_LATENCY: "0",
+      PULSE_STATUS_SHOW_SLOS: "true",
+      PULSE_STATUS_HIDE_DETAILS: "1",
+    }).env,
+    {
+      name: "Acme",
+      logo: "https://cdn.example/l.svg",
+      showChecks: false,
+      showLatency: false,
+      showSlos: true,
+      hideDetails: true,
+    },
+  );
+  const blank = readSettings({
+    PULSE_STATUS_NAME: " ",
+    PULSE_STATUS_SHOW_CHECKS: "",
+    PULSE_STATUS_SHOW_LATENCY: "  ",
+    PULSE_STATUS_SETTINGS_FILE: "",
+  });
+  assert.deepEqual(blank.env, {});
+  assert.equal(blank.settingsFile, undefined);
+  assert.equal(
+    readSettings({ PULSE_STATUS_SETTINGS_FILE: "/etc/s.json" }).settingsFile,
+    "/etc/s.json",
+  );
+});
+
+test("PULSE_STATUS_SETTINGS_POLL_MS: default 15000, at least 1000", () => {
+  assert.equal(readSettings({ PULSE_STATUS_SETTINGS_POLL_MS: "1000" }).settingsPollMs, 1000);
+  assert.throws(
+    () => readSettings({ PULSE_STATUS_SETTINGS_POLL_MS: "999" }),
+    /^StartupError: PULSE_STATUS_SETTINGS_POLL_MS: must be an integer from 1000 to /,
+  );
+});
+
+test("api token: from the env or its file; errors never hold the token", () => {
+  const token = "s3cret-token-value";
+  const readFile = (path: string): string => {
+    if (path === "/run/token") return `${token}\n`;
+    if (path === "/run/empty") return " \n";
+    throw Object.assign(new Error(`EACCES ${token}`), { code: "EACCES" });
+  };
+  assert.equal(readSettings({ PULSE_STATUS_API_TOKEN: token }).apiToken, token);
+  assert.equal(
+    readSettings({ PULSE_STATUS_API_TOKEN_FILE: "/run/token" }, { readFile }).apiToken,
+    token,
+  );
+  // An empty file variable is not set, as the bench passes it.
+  assert.equal(
+    readSettings({ PULSE_STATUS_API_TOKEN_FILE: " ", PULSE_STATUS_API_TOKEN: token }).apiToken,
+    token,
+  );
+  const failures: [Record<string, string>, string][] = [
+    [
+      { PULSE_STATUS_API_TOKEN: token, PULSE_STATUS_API_TOKEN_FILE: "/run/token" },
+      "PULSE_STATUS_API_TOKEN and PULSE_STATUS_API_TOKEN_FILE cannot both be set",
+    ],
+    [
+      { PULSE_STATUS_API_TOKEN_FILE: "/run/empty" },
+      "PULSE_STATUS_API_TOKEN_FILE=/run/empty: file is empty",
+    ],
+    [
+      { PULSE_STATUS_API_TOKEN_FILE: "/run/locked" },
+      "PULSE_STATUS_API_TOKEN_FILE=/run/locked: cannot read (EACCES)",
+    ],
+  ];
+  for (const [env, message] of failures) {
+    assert.throws(
+      () => readSettings(env, { readFile }),
+      (err: unknown) =>
+        err instanceof StartupError && err.message === message && !err.message.includes(token),
+      message,
+    );
+  }
 });
 
 test("PULSE_STATUS_HIDE_DETAILS: empty hides details; true, false, 1 and 0 are accepted", () => {

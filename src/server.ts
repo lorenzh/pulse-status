@@ -19,7 +19,12 @@ import {
   answerKey,
   cachedAnswerFor,
 } from "./answer-cache.ts";
-import { filterApiBody, isAllowedApiPath, limitResolvedWindow } from "./api-filter.ts";
+import {
+  applyPageSwitches,
+  filterApiBody,
+  isAllowedApiPath,
+  limitResolvedWindow,
+} from "./api-filter.ts";
 import { componentLatency } from "./component-latency.ts";
 import {
   hiddenCheckKeys,
@@ -32,6 +37,12 @@ import {
 import { assetEtag, etagFor, ifNoneMatchHits } from "./http-cache.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
+import {
+  contentSecurityPolicy,
+  type EffectiveSettings,
+  type Logo,
+  resolveLogo,
+} from "./runtime-settings.ts";
 import { renderState } from "./ssr.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
@@ -67,6 +78,31 @@ export interface ServerOptions {
   metrics?: Metrics | undefined;
   /** Receives error detail that must not reach the client; default: discard. */
   log?: Logger | undefined;
+  /**
+   * Live page settings. When set, they replace name, logo, theme, hideDetails and showChecks
+   * above, and public routes answer 503 until `isReady` is true.
+   */
+  runtime?: RuntimeSettingsSource | undefined;
+}
+
+/** The current effective settings and whether the first settings read has finished. */
+export interface RuntimeSettingsSource {
+  current: () => EffectiveSettings;
+  isReady: () => boolean;
+}
+
+/** The page settings one request is served with. */
+interface PageSettings {
+  name: string | undefined;
+  logo: Logo | null;
+  css: string;
+  csp: string;
+  componentOrder: readonly string[];
+  hideDetails: boolean;
+  showChecks: boolean;
+  showLatency: boolean;
+  showSlos: boolean;
+  fingerprint: string | undefined;
 }
 
 export const DEFAULT_CACHE_MS = 2000;
@@ -95,6 +131,10 @@ interface ProxyContext {
   doFetch: typeof fetch;
   isHidden: boolean;
   hasChecks: boolean;
+  hasLatency: boolean;
+  hasSlos: boolean;
+  componentOrder: readonly string[];
+  fingerprint: string | undefined;
   cacheMs: number;
   timeoutMs: number;
   now: () => number;
@@ -117,13 +157,6 @@ function checkMs(name: string, value: number, min: number, max?: number): number
   return value;
 }
 
-const LOGO_TYPES: Record<string, string> = {
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".webp": "image/webp",
-};
-
 // Fixed allow-list: no part of the request is joined to a file path.
 const fontFiles: Record<string, string> = {
   "/fonts/space-grotesk.woff2":
@@ -131,34 +164,6 @@ const fontFiles: Record<string, string> = {
   "/fonts/jetbrains-mono.woff2":
     "../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2",
 };
-
-interface Logo {
-  /** Value of the img src attribute. */
-  src: string;
-  /** Origin of a remote logo, for the CSP. */
-  origin?: string;
-  /** Local file and content type, when served by this server. */
-  file?: string;
-  type?: string;
-}
-
-function resolveLogo(logo: string | undefined): Logo | null {
-  if (logo === undefined || logo === "") return null;
-  if (/^http:\/\//i.test(logo)) throw new Error("PULSE_STATUS_LOGO: URL must use https");
-  if (/^https:\/\//i.test(logo)) {
-    try {
-      new URL(logo);
-    } catch {
-      throw new Error(`PULSE_STATUS_LOGO: invalid URL ${logo}`);
-    }
-    return { src: logo, origin: new URL(logo).origin };
-  }
-  const type = LOGO_TYPES[extname(logo).toLowerCase()];
-  if (type === undefined)
-    throw new Error("PULSE_STATUS_LOGO: extension must be svg, png, jpg or webp");
-  if (!existsSync(logo)) throw new Error(`PULSE_STATUS_LOGO: cannot read ${logo}`);
-  return { src: "/logo", file: logo, type };
-}
 
 function wordmark(name: string, logo: Logo | null): string {
   const safe = escapeHtml(name);
@@ -203,6 +208,10 @@ const contractModules = new Set([
   "audit.js",
   "revision.js",
   "manual-incident-public.js",
+  "runtime-settings.js",
+  "notify-channels.js",
+  "resend.js",
+  "validate-runtime.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
@@ -342,21 +351,6 @@ function sendTaggedBody(
     return;
   }
   res.writeHead(200, { "content-type": type, ...headers }).end(body);
-}
-
-function contentSecurityPolicy(logoOrigin: string | undefined): string {
-  const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
-  return [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
-    `img-src ${img}`,
-    "font-src 'self'",
-    "connect-src 'self'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-  ].join("; ");
 }
 
 function answer(status: number, body: unknown, wireVersion?: string): ProxyAnswer {
@@ -529,7 +523,7 @@ async function hiddenAnswer(
  * there is no upstream route of that name. Empty when checks are shown.
  */
 async function buildComponentLatency(ctx: ProxyContext, read: RawReader): Promise<ProxyAnswer> {
-  if (ctx.hasChecks) return okAnswer([], undefined, ctx);
+  if (ctx.hasChecks || !ctx.hasLatency) return okAnswer([], undefined, ctx);
   const componentsRead = await read("/components");
   if (!componentsRead.ok) {
     return snapshotFailure(componentsRead.answer, componentsRead.answer.wireVersion);
@@ -558,9 +552,14 @@ async function buildAnswer(url: URL, ctx: ProxyContext, read: RawReader): Promis
     !ctx.hasChecks && needsComponents(url.pathname) ? read("/components") : undefined;
   const own = await ownRead;
   if (!own.ok) return own.answer;
-  let body = filterApiBody(url.pathname, own.value, ctx.isHidden);
+  const filtered = filterApiBody(url.pathname, own.value, ctx.isHidden);
   // `undefined` is never serialized: it would build a broken body and tag it.
-  if (body === undefined) return answer(502, INVALID_RESPONSE, own.wireHeader);
+  if (filtered === undefined) return answer(502, INVALID_RESPONSE, own.wireHeader);
+  let body = applyPageSwitches(url.pathname, filtered, {
+    showLatency: ctx.hasLatency,
+    showSlos: ctx.hasSlos,
+    componentOrder: ctx.componentOrder,
+  });
   if (url.pathname + url.search === "/api/incidents?status=resolved") {
     // The cutoff uses the build time; the answer keeps it for at most the life of its raw entry.
     body = limitResolvedWindow(body, ctx.now() - RESOLVED_WINDOW_MS);
@@ -641,7 +640,7 @@ async function proxyApi(
   req: IncomingMessage,
   res: ServerResponse,
   url: URL,
-  ctx: ProxyContext,
+  withView: <T>(build: (v: { ctx: ProxyContext }) => Promise<T>) => Promise<T>,
 ): Promise<void> {
   const rawUrl = req.url ?? "";
   // The raw target must equal the parsed one: a bare "?" is not the allow-listed form.
@@ -649,7 +648,7 @@ async function proxyApi(
     sendJson(res, 404, { error: "not found" }, { "cache-control": "no-store" });
     return;
   }
-  const result = await proxyAnswer(url, ctx);
+  const result = await withView((v) => proxyAnswer(url, v.ctx));
   const headers: Record<string, string> = {};
   if (result.wireVersion !== undefined) headers[WIRE_VERSION_HEADER] = result.wireVersion;
   if (result.etag === undefined) {
@@ -681,21 +680,64 @@ function logFailure(log: Logger, path: string, err: unknown): void {
   log.error("request failed", fields);
 }
 
+/** The fixed page settings of a server without live settings. Invalid values throw. */
+function fixedSettings(options: ServerOptions): PageSettings {
+  const name = options.name === undefined ? undefined : validateName(options.name);
+  const logo = resolveLogo(options.logo, existsSync);
+  return {
+    name,
+    logo,
+    css: themeCss(loadTheme(options.themeFile)),
+    csp: contentSecurityPolicy(logo?.origin),
+    componentOrder: [],
+    hideDetails: options.hideDetails ?? true,
+    showChecks: options.showChecks === true,
+    showLatency: true,
+    showSlos: true,
+    fingerprint: undefined,
+  };
+}
+
+/** Everything that depends on the page settings, built once per settings fingerprint. */
+interface View {
+  settings: PageSettings;
+  ctx: ProxyContext;
+  title: string;
+  mark: string;
+  assetFor: (pathname: string) => Promise<Asset | undefined>;
+  syndicate: ReturnType<typeof createSyndication>;
+}
+
+const SETTINGS_NOT_LOADED = { error: "settings not loaded" };
+/** Rebuilds of one answer when the settings change during its build; then it is served as is. */
+const MAX_VIEW_RETRIES = 3;
+
+function currentRuntime(options: ServerOptions): EffectiveSettings {
+  if (options.runtime === undefined) throw new Error("no runtime settings");
+  return options.runtime.current();
+}
+
+function toPageSettings(settings: EffectiveSettings): PageSettings {
+  return {
+    name: settings.name,
+    logo: settings.logo,
+    css: settings.css,
+    csp: settings.csp,
+    componentOrder: settings.componentOrder,
+    hideDetails: settings.hideDetails,
+    showChecks: settings.showChecks,
+    showLatency: settings.showLatency,
+    showSlos: settings.showSlos,
+    fingerprint: settings.fingerprint,
+  };
+}
+
 export function createStatusServer(options: ServerOptions): Server {
   // Invalid settings throw here, before the server can listen.
-  const name = validateName(options.name ?? "pulse");
-  // A configured name is the whole title; only the default carries "status".
-  const title = options.name === undefined ? "pulse status" : name;
-  const assetFor = createAssetStore(themeCss(loadTheme(options.themeFile)));
-  const logo = resolveLogo(options.logo);
-  const mark = wordmark(name, logo);
-  const isHidden = options.hideDetails ?? true;
-  const csp = contentSecurityPolicy(logo?.origin);
-  const ctx: ProxyContext = {
+  const fixed = options.runtime === undefined ? fixedSettings(options) : undefined;
+  const base = {
     apiBase: "",
     doFetch: options.fetch ?? fetch,
-    isHidden,
-    hasChecks: options.showChecks === true,
     cacheMs: checkMs("PULSE_STATUS_CACHE_MS", options.cacheMs ?? DEFAULT_CACHE_MS, 0),
     timeoutMs: checkMs(
       "PULSE_STATUS_UPSTREAM_TIMEOUT_MS",
@@ -704,27 +746,61 @@ export function createStatusServer(options: ServerOptions): Server {
       MAX_UPSTREAM_TIMEOUT_MS,
     ),
     now: options.now ?? Date.now,
-    cache: new Map(),
-    answers: new Map(),
+    cache: new Map<string, CacheEntry>(),
+    answers: new Map<string, AnswerEntry<ProxyAnswer, RawDep>>(),
   };
   let apiBase = options.apiUrl;
   while (apiBase.endsWith("/")) apiBase = apiBase.slice(0, -1);
-  ctx.apiBase = apiBase;
-
-  const syndicate = createSyndication({
-    read: (path) => cachedAnswer(path, ctx),
-    publicUrl: options.publicUrl,
-    name,
-    showChecks: options.showChecks,
-    settings: { isHidden: ctx.isHidden, hasChecks: ctx.hasChecks },
-  });
+  base.apiBase = apiBase;
   const feedLink =
     options.publicUrl === undefined
       ? ""
       : '<link rel="alternate" type="application/atom+xml" href="/feed.atom">';
+  const pages = new Map<string, AnswerEntry<Page, RawDep>>();
+
+  const buildView = (settings: PageSettings): View => {
+    const ctx: ProxyContext = {
+      ...base,
+      isHidden: settings.hideDetails,
+      hasChecks: settings.showChecks,
+      hasLatency: settings.showLatency,
+      hasSlos: settings.showSlos,
+      componentOrder: settings.componentOrder,
+      fingerprint: settings.fingerprint,
+    };
+    const name = settings.name ?? "pulse";
+    return {
+      settings,
+      ctx,
+      // A configured name is the whole title; only the default carries "status".
+      title: settings.name === undefined ? "pulse status" : name,
+      mark: wordmark(name, settings.logo),
+      assetFor: createAssetStore(settings.css),
+      syndicate: createSyndication({
+        read: (path) => cachedAnswer(path, ctx),
+        publicUrl: options.publicUrl,
+        name,
+        showChecks: settings.showChecks,
+        settings: ctx,
+      }),
+    };
+  };
+
+  let view = buildView(fixed ?? toPageSettings(currentRuntime(options)));
+  /** The view of the current settings; a new fingerprint drops the answers of the old one. */
+  const currentView = (): View => {
+    if (options.runtime === undefined) return view;
+    const next = options.runtime.current();
+    if (next.fingerprint === view.settings.fingerprint) return view;
+    // An entry in flight is no longer in the map, so it never stores under the new settings.
+    base.answers.clear();
+    pages.clear();
+    view = buildView(toPageSettings(next));
+    return view;
+  };
 
   const log: Logger = options.log ?? createLogger({ write: () => {} });
-  const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
+  const metrics = options.metrics ?? createMetrics({ now: base.now, pollMs: options.pollMs });
 
   // Read once: the template does not change while the server runs.
   const template = readFileSync(publicDir + "index.html", "utf8");
@@ -734,10 +810,15 @@ export function createStatusServer(options: ServerOptions): Server {
    * render fails; such a page is served but never stored.
    */
   const renderSections = async (
+    v: View,
     read: (path: string) => Promise<ProxyAnswer>,
   ): Promise<{ sections: Record<string, string>; isComplete: boolean }> => {
     try {
-      const sections = await renderState({ read, now: ctx.now, showChecks: ctx.hasChecks });
+      const sections = await renderState({
+        read,
+        now: v.ctx.now,
+        showChecks: v.ctx.hasChecks,
+      });
       return { sections, isComplete: true };
     } catch (err) {
       logFailure(log, "/", err);
@@ -746,38 +827,43 @@ export function createStatusServer(options: ServerOptions): Server {
   };
 
   const renderIndex = async (
+    v: View,
     read: (path: string) => Promise<ProxyAnswer>,
   ): Promise<RenderedPage> => {
-    const { sections, isComplete } = await renderSections(read);
+    const { sections, isComplete } = await renderSections(v, read);
     // One pass, so text inside a rendered section is never read as a placeholder.
     const values: Record<string, string> = {
       ...sections,
-      title: escapeHtml(title),
-      wordmark: mark,
+      title: escapeHtml(v.title),
+      wordmark: v.mark,
       feedLink,
       renderedLine: sections.rendered ?? "",
       checksTitle: sections.checksTitle ?? "Checks",
     };
+    const settingsAttr =
+      v.settings.fingerprint === undefined ? "" : ` data-settings="${v.settings.fingerprint}"`;
     const html = template
       .replace(
         "<body>",
         () =>
-          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}" data-show-checks="${ctx.hasChecks}">`,
+          `<body data-poll-ms="${options.pollMs}" data-timeout-ms="${v.ctx.timeoutMs + BROWSER_TIMEOUT_MARGIN_MS}" data-show-checks="${v.ctx.hasChecks}"${settingsAttr}>`,
       )
       .replace(/\{\{(\w+)\}\}/g, (_match, key: string) => values[key] ?? "");
     return { html, isComplete };
   };
 
-  const pages = new Map<string, AnswerEntry<Page, RawDep>>();
-  const page = (): Promise<Page> => {
+  const page = (v: View): Promise<Page> => {
+    const ctx = v.ctx;
     if (ctx.cacheMs === 0) {
-      return renderIndex((path) => cachedAnswer(path, ctx)).then((built) => ({ html: built.html }));
+      return renderIndex(v, (path) => cachedAnswer(path, ctx)).then((built) => ({
+        html: built.html,
+      }));
     }
-    return cachedAnswerFor(pages, "page", {
+    return cachedAnswerFor(pages, `${ctx.fingerprint ?? ""}:page`, {
       build: async () => {
         const deps: RawDep[] = [];
         let isStorable = true;
-        const built = await renderIndex(async (path) => {
+        const built = await renderIndex(v, async (path) => {
           const read = await readWithDeps(path, ctx);
           if (read.deps === undefined) isStorable = false;
           else deps.push(...read.deps);
@@ -791,9 +877,25 @@ export function createStatusServer(options: ServerOptions): Server {
     });
   };
 
+  /**
+   * Builds with the current view; when the settings change while it runs, builds again with the
+   * new view, so what is written is always filtered by the settings current at write time.
+   */
+  const withCurrentView = async <T>(build: (v: View) => Promise<T>): Promise<T> => {
+    let v = currentView();
+    for (let attempt = 0; ; attempt++) {
+      const result = await build(v);
+      const now = currentView();
+      if (now === v || attempt >= MAX_VIEW_RETRIES) return result;
+      v = now;
+    }
+  };
+
   // Liveness never looks at the API or at shutdown.
+  const isSettingsReady = (): boolean => options.runtime?.isReady() ?? true;
   const ops = {
     ready: (): Readiness => {
+      if (!isSettingsReady()) return { ready: false, reason: "settings not loaded" };
       const reason = metrics.notReadyReason();
       return reason === undefined ? { ready: true } : { ready: false, reason };
     },
@@ -801,16 +903,71 @@ export function createStatusServer(options: ServerOptions): Server {
     allowHead: true,
   };
 
-  const serveGenerated = async (
+  const serveIndex = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const { html, etag } = await withCurrentView(page);
+    if (etag !== undefined) {
+      sendTaggedBody(req, res, html, etag, "text/html; charset=utf-8");
+      return;
+    }
+    // Rendered on each request with the cache off: no tag; the browser revalidates on each load.
+    res
+      .writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" })
+      .end(html);
+  };
+
+  const serveLogo = async (res: ServerResponse, logo: Logo): Promise<void> => {
+    const image = await readFile(logo.file ?? "");
+    res
+      .writeHead(200, {
+        "content-type": logo.type ?? "application/octet-stream",
+        // A direct visit must not run script in the page origin; <img> still renders.
+        "content-security-policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+      })
+      .end(image);
+  };
+
+  /** Routes that need the page settings; false when none matched. */
+  const servePublic = async (
     req: IncomingMessage,
-    url: URL,
     res: ServerResponse,
-  ): Promise<boolean> =>
-    handleOps(req, res, ops) || (await syndicate(url, req.headers["if-none-match"], res));
+    url: URL,
+    v: View,
+  ): Promise<boolean> => {
+    if (url.pathname === "/page-settings.json") {
+      sendJson(
+        res,
+        200,
+        { fingerprint: v.settings.fingerprint ?? null },
+        { "cache-control": "no-store" },
+      );
+      return true;
+    }
+    if (await v.syndicate(url, req.headers["if-none-match"], res)) return true;
+    if (url.pathname === "/" || url.pathname === "/index.html") {
+      await serveIndex(req, res);
+      return true;
+    }
+    const logo = v.settings.logo;
+    if (url.pathname === "/logo" && logo?.file !== undefined) {
+      await serveLogo(res, logo);
+      return true;
+    }
+    const asset = await v.assetFor(url.pathname);
+    if (asset !== undefined) {
+      sendTaggedBody(req, res, asset.body, asset.etag, asset.type);
+      return true;
+    }
+    if (url.pathname.startsWith("/api/")) {
+      await proxyApi(req, res, url, withCurrentView);
+      return true;
+    }
+    return false;
+  };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
-    res.setHeader("content-security-policy", csp);
+    const v = currentView();
+    res.setHeader("content-security-policy", v.settings.csp);
     res.setHeader("x-content-type-options", "nosniff");
     res.setHeader("x-frame-options", "DENY");
     res.setHeader("referrer-policy", "no-referrer");
@@ -819,22 +976,7 @@ export function createStatusServer(options: ServerOptions): Server {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;
       }
-      if (await serveGenerated(req, url, res)) return;
-      if (url.pathname === "/" || url.pathname === "/index.html") {
-        const { html, etag } = await page();
-        if (etag !== undefined) {
-          sendTaggedBody(req, res, html, etag, "text/html; charset=utf-8");
-          return;
-        }
-        // Rendered on each request with the cache off: no tag; the browser revalidates on each load.
-        res
-          .writeHead(200, {
-            "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-cache",
-          })
-          .end(html);
-        return;
-      }
+      if (handleOps(req, res, ops)) return;
       const fontFile = Object.hasOwn(fontFiles, url.pathname) ? fontFiles[url.pathname] : undefined;
       if (fontFile !== undefined) {
         const font = await readFile(srcDir + fontFile);
@@ -846,26 +988,11 @@ export function createStatusServer(options: ServerOptions): Server {
           .end(font);
         return;
       }
-      if (url.pathname === "/logo" && logo?.file !== undefined) {
-        const image = await readFile(logo.file);
-        res
-          .writeHead(200, {
-            "content-type": logo.type ?? "application/octet-stream",
-            // A direct visit must not run script in the page origin; <img> still renders.
-            "content-security-policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
-          })
-          .end(image);
+      if (!isSettingsReady()) {
+        sendJson(res, 503, SETTINGS_NOT_LOADED, { "cache-control": "no-store" });
         return;
       }
-      const asset = await assetFor(url.pathname);
-      if (asset !== undefined) {
-        sendTaggedBody(req, res, asset.body, asset.etag, asset.type);
-        return;
-      }
-      if (url.pathname.startsWith("/api/")) {
-        await proxyApi(req, res, url, ctx);
-        return;
-      }
+      if (await servePublic(req, res, url, v)) return;
       res
         .writeHead(404, { "content-type": "application/json" })
         .end(JSON.stringify({ error: "not found" }));

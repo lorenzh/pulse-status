@@ -4,7 +4,9 @@ import type { AddressInfo } from "node:net";
 import AxeBuilder from "@axe-core/playwright";
 import { WIRE_VERSION, WIRE_VERSION_HEADER } from "@lorenzh/pulse-contract";
 import { type Browser, type BrowserContext, chromium, type Page } from "playwright";
+import { type EffectiveSettings, resolveSettings } from "../src/runtime-settings.ts";
 import { createStatusServer } from "../src/server.ts";
+import { loadDefaultTheme } from "../src/theme-config.ts";
 
 // Accessibility checks of the status page in Chromium. Not part of `bun test`: run `bun run check:a11y`.
 
@@ -16,9 +18,17 @@ interface StubData {
   isFailing: boolean;
   hasComponents: boolean;
   hasTarget: boolean;
+  /** Each location has a newest result with a latency. */
+  hasResults: boolean;
 }
 
-const data: StubData = { state: "up", isFailing: false, hasComponents: true, hasTarget: false };
+const data: StubData = {
+  state: "up",
+  isFailing: false,
+  hasComponents: true,
+  hasTarget: false,
+  hasResults: false,
+};
 
 function utcDay(offset: number): string {
   return new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
@@ -46,7 +56,23 @@ function body(path: string): unknown {
     consecutiveDown: data.state === "down" ? 3 : 0,
     lastResultAt: now - 60_000,
     lastReason: data.state === "down" ? "HTTP 500" : null,
-    locations: [],
+    locations: data.hasResults
+      ? [
+          {
+            location: "eu",
+            stale: false,
+            result: {
+              checkId: "web",
+              location: "eu",
+              timestamp: now - 60_000,
+              status: data.state,
+              statusCode: 200,
+              latencyMs: 87,
+              reason: null,
+            },
+          },
+        ]
+      : [],
     ...(data.hasTarget ? { slo } : {}),
   };
   const incident = {
@@ -360,6 +386,79 @@ async function checkBehavior(browser: Browser, layout: Layout): Promise<void> {
   console.log(`ok  behavior ${layout.name}`);
 }
 
+type Database = Parameters<typeof resolveSettings>[0]["database"];
+
+/** A server on live settings that the test changes; it is ready at once (no token). */
+async function startLive(
+  apiUrl: string,
+): Promise<{ server: Server; url: string; set: (database: Database) => void }> {
+  const defaultTheme = loadDefaultTheme();
+  const file = { settings: {}, themeVia: "settings file" } as const;
+  const resolve = (database: Database): EffectiveSettings =>
+    resolveSettings({ env: {}, file, database, defaultTheme });
+  let current = resolve({ showChecks: true });
+  const server = createStatusServer({
+    apiUrl,
+    pollMs: POLL_MS,
+    cacheMs: 0,
+    runtime: { current: () => current, isReady: () => true },
+  });
+  const url = await listen(server);
+  return {
+    server,
+    url,
+    set: (database) => {
+      current = resolve(database);
+    },
+  };
+}
+
+async function waitForState(page: Page, state: "down" | "operational"): Promise<void> {
+  await page.waitForFunction(
+    (word) => new RegExp(word).test(document.getElementById("summary")?.textContent ?? ""),
+    state,
+  );
+}
+
+async function checkLiveSettings(browser: Browser, apiUrl: string): Promise<void> {
+  data.hasComponents = true;
+  data.hasTarget = false;
+  data.hasResults = true;
+  const live = await startLive(apiUrl);
+  try {
+    const { context, page } = await open(browser, live.url, { width: 1280, scheme: "light" });
+    let loads = 0;
+    page.on("load", () => {
+      loads++;
+    });
+    assert.ok((await page.$$("li.check")).length > 0, "checks listed before the change");
+    assert.ok((await page.$$(".latency")).length > 0, "latency label shown before the change");
+    live.set({ name: "Renamed status", showChecks: false });
+    await page.waitForFunction(() => document.title === "Renamed status");
+    await page.waitForSelector(".bars");
+    await polls(10);
+    assert.equal(loads, 1, "the page reloads exactly once on a new fingerprint");
+    assert.match((await page.textContent("h1")) ?? "", /Renamed status/);
+    assert.equal((await page.$$("li.check")).length, 0, "no checks list after the change");
+
+    live.set({ name: "Renamed status", showChecks: true, showLatency: false });
+    await page.waitForFunction(() => document.querySelectorAll("li.check").length > 0);
+    await polls(2);
+    assert.equal(loads, 2, "one more reload for the next fingerprint");
+    data.state = "down";
+    await waitForState(page, "down");
+    data.state = "up";
+    await waitForState(page, "operational");
+    assert.equal(await page.textContent("#alert"), "", "no refresh error");
+    assert.equal((await page.$$(".latency, .latency-chart")).length, 0, "0 latency labels");
+    await context.close();
+    console.log("ok  live settings: one reload, new name, no checks, no latency");
+  } finally {
+    data.hasResults = false;
+    live.server.close();
+  }
+}
+
 async function main(): Promise<void> {
   const api = startApi();
   const apiUrl = await listen(api);
@@ -385,6 +484,7 @@ async function main(): Promise<void> {
     data.hasComponents = true;
     await checkNoJavaScript(browser, hiddenUrl);
     console.log("ok  no JavaScript");
+    await checkLiveSettings(browser, apiUrl);
   } finally {
     await browser.close();
     hidden.close();

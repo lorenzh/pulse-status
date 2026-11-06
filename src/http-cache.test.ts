@@ -94,3 +94,9 @@ test("assetEtag: the hash of the exact bytes only, without a settings fingerprin
   expect(assetEtag(body)).toMatch(/^"[A-Za-z0-9_-]{27}"$/);
   expect(assetEtag(`${body} `)).not.toBe(assetEtag(body));
 });
+
+test("the settings fingerprint changes the ETag of the same body", () => {
+  const a = etagFor({ ...HIDDEN, fingerprint: "aaaa" }, "[]");
+  const b = etagFor({ ...HIDDEN, fingerprint: "bbbb" }, "[]");
+  expect(a).not.toBe(b);
+});

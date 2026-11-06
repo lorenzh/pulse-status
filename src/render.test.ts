@@ -6,6 +6,7 @@ import {
   renderBanner,
   renderChecks,
   renderIncidents,
+  renderLatency,
   renderManualIncidents,
   renderResolvedIncidents,
   renderSummary,
@@ -442,6 +443,14 @@ test("up shows latency without objective", () => {
 
 test("no latency without a result", () => {
   assert.doesNotMatch(renderChecks([base]), /latency/);
+});
+
+test("renderLatency is empty for a result without latencyMs", () => {
+  const entry = loc("a", "up", false, 2, 42);
+  const result: Record<string, unknown> = { ...entry.result };
+  delete result.latencyMs;
+  const check = { ...base, locations: [{ ...entry, result }] } as CheckWithState;
+  assert.equal(renderLatency(check), "");
 });
 
 test("down shows no latency", () => {

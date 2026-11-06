@@ -31,6 +31,8 @@ Components: when pulse-api has `components` configured, the page lists them (gro
 
 Latency and availability: the page polls `/api/latency` and `/api/components/latency` and draws 90-day p50/p95 charts (inline SVG). With checks shown, or without components, there is one chart per HTTP check. With components and checks hidden (the default), there is one chart per component with HTTP member checks, showing per UTC day the highest member check p50 and p95; `/api/latency` then answers `[]`. Each entry has one `<details>` table of its daily values (uptime, latency, results); the uptime bars are decorative. Checks and components with an `availabilityTarget` show their 30-day availability and remaining error budget. See [docs/operation.md](docs/operation.md#latency-and-availability).
 
+Live page settings: with `PULSE_STATUS_API_TOKEN` or `PULSE_STATUS_API_TOKEN_FILE`, the server polls pulse-api's `GET /service/status/settings` every `PULSE_STATUS_SETTINGS_POLL_MS` (default 15000) and applies name, logo, theme, component order, `showChecks`, `hideDetails`, `showLatency` and `showSlos` without a restart; it reports what it applied to `PUT /service/status/report`. Until the first read, public routes answer `503` `settings not loaded`. New settings: `PULSE_STATUS_SHOW_LATENCY`, `PULSE_STATUS_SHOW_SLOS` (default `true`), `PULSE_STATUS_SETTINGS_FILE`. New route: `GET /page-settings.json` (`{fingerprint}`, `no-store`); an open page reloads once when it changes. Env wins over the settings file, which wins over the database. Needs pulse-contract 2.4.0. See [docs/configuration.md](docs/configuration.md) and [docs/operation.md](docs/operation.md#live-page-settings).
+
 ## Docker
 
 ```sh
