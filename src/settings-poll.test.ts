@@ -21,6 +21,7 @@ interface Answer {
   body?: string;
   etag?: string;
   wire?: string;
+  location?: string;
 }
 
 interface FakeApi {
@@ -59,6 +60,7 @@ async function startApi(): Promise<FakeApi> {
     const answer = api.answers.shift() ?? { status: 304 };
     const headers: Record<string, string> = { [WIRE_VERSION_HEADER]: answer.wire ?? "1" };
     if (answer.etag !== undefined) headers.etag = answer.etag;
+    if (answer.location !== undefined) headers.location = answer.location;
     res.writeHead(answer.status, headers).end(answer.body ?? "");
   });
   server = created;
@@ -135,6 +137,8 @@ const bad: [string, Answer][] = [
   ["oversized", { status: 200, body: " ".repeat(1_048_577) }],
   ["wire mismatch", { ...answer({ name: "Bad" }, rev("2"), '"e2"'), wire: "999" }],
   ["server error", { status: 500 }],
+  // A followed redirect would read this same route again and count a second read.
+  ["redirect", { status: 302, location: "/service/status/settings" }],
 ];
 
 for (const [label, badAnswer] of bad) {
@@ -148,6 +152,8 @@ for (const [label, badAnswer] of bad) {
     assert.equal(applied.at(-1)?.name, "Acme");
     assert.equal(api.reports.at(-1)?.appliedRevision, rev("1"));
     assert.equal(api.reports.at(-1)?.rejected?.source, "database");
+    // The first background poll and two pollNow calls: three reads, none from a redirect.
+    assert.equal(api.reads.length, 3, "one read per poll, no redirect followed");
     api.answers.push(answer({ name: "Beta" }, rev("3"), '"e3"'));
     await poll?.pollNow();
     assert.equal(api.reads.at(-1)?.ifNoneMatch, '"e1"');
