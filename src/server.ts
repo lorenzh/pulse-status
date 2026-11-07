@@ -758,6 +758,11 @@ const SETTINGS_NOT_LOADED = { error: "settings not loaded" };
 /** Rebuilds of one answer when the settings change during its build; then it is served as is. */
 const MAX_VIEW_RETRIES = 3;
 
+/** The settings kept changing while an answer was built: nothing stale is written. */
+class SettingsChangingError extends Error {
+  override name = "SettingsChangingError";
+}
+
 function currentRuntime(options: ServerOptions): EffectiveSettings {
   if (options.runtime === undefined) throw new Error("no runtime settings");
   return options.runtime.current();
@@ -970,11 +975,14 @@ export function createStatusServer(options: ServerOptions): Server {
     for (let attempt = 0; ; attempt++) {
       const result = await build(v);
       const now = currentView();
-      if (now === v || attempt >= MAX_VIEW_RETRIES) {
+      if (now === v) {
         // The CSP must match the logo origin of the view the body was built with.
         res.setHeader("content-security-policy", v.settings.csp);
         return result;
       }
+      // Fail closed: an answer filtered by an older snapshot may leak what the new one hides.
+      if (attempt >= MAX_VIEW_RETRIES)
+        throw new SettingsChangingError("settings changed during build");
       v = now;
     }
   };
@@ -1110,6 +1118,12 @@ export function createStatusServer(options: ServerOptions): Server {
         .writeHead(404, { "content-type": "application/json" })
         .end(JSON.stringify({ error: "not found" }));
     } catch (err) {
+      if (err instanceof SettingsChangingError && !res.headersSent) {
+        res
+          .writeHead(503, { "content-type": "application/json", "retry-after": "1" })
+          .end(JSON.stringify({ error: "settings changing" }));
+        return;
+      }
       logFailure(log, url.pathname, err);
       res
         .writeHead(500, { "content-type": "application/json" })

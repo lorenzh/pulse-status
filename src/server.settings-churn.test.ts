@@ -37,7 +37,7 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 100; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-test("security: four changes during a read must still use the final privacy setting", async () => {
+test("four settings changes during a read never write an answer filtered by an old snapshot", async () => {
   let settings: StatusSettings = { name: "Start", hideDetails: false, showChecks: true };
   let current = snapshot({});
   let reads = 0;
@@ -123,7 +123,7 @@ test("security: four changes during a read must still use the final privacy sett
   }
   const response = await pending;
   const text = await response.text();
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 503);
   assert.equal(current.hideDetails, true);
   assert.equal(reads, 4);
   assert.doesNotMatch(text, /private-host\.internal/, "privacy must apply at write time");
