@@ -56,7 +56,12 @@ type TokenRoute = {
   call: (token: string) => Promise<NotifyOutcome>;
 };
 
-function sendPage(res: ServerResponse, status: number, html: string): void {
+/**
+ * A page with a form sends `same-origin`: under `no-referrer` a browser posts the form with
+ * `Origin: null`, which the origin check refuses. Other pages keep the server's `no-referrer`.
+ */
+function sendPage(res: ServerResponse, status: number, html: string, hasForm = false): void {
+  if (hasForm) res.setHeader("referrer-policy", "same-origin");
   res.writeHead(status, {
     "content-type": "text/html; charset=utf-8",
     "cache-control": "no-store",
@@ -69,9 +74,6 @@ function sendPage(res: ServerResponse, status: number, html: string): void {
 function isOriginAllowed(req: IncomingMessage, origin: string): boolean {
   const sent = req.headers.origin;
   const site = req.headers["sec-fetch-site"];
-  // Our pages send `referrer-policy: no-referrer`, so browsers post their forms with
-  // `Origin: null` (Fetch "serializing a request origin"); only then does `Sec-Fetch-Site` decide.
-  if (sent === "null") return site === "same-origin";
   if (sent !== undefined) return sent === origin;
   return site === undefined || site === "same-origin" || site === "none";
 }
@@ -120,6 +122,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
       res,
       status,
       resultPage(shell, "Subscribe", subscribeSection(contact, INVALID_ADDRESS)),
+      true,
     );
   const answerPage = subscribeAnswerPage(shell, contact);
   const busyPage = messagePage(shell, "Busy", "The status page is busy. Try again in a minute.");
@@ -247,7 +250,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
       sendPage(res, 400, messagePage(shell, "Invalid link", INVALID_LINK));
       return;
     }
-    sendPage(res, 200, tokenFormPage(shell, route, token));
+    sendPage(res, 200, tokenFormPage(shell, route, token), true);
   };
 
   const postToken = async (

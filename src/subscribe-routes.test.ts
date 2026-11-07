@@ -110,26 +110,64 @@ test("origin, type, size and fields are refused with their codes and no notify c
   assert.equal(notify.calls.length, 0);
 });
 
-test("a form without Origin and Sec-Fetch-Site goes on; a same-origin one too, also with Origin null", async () => {
-  const { notify, status } = await fixture();
-  await send(status, formRequest("/subscribe", "email=sub-a%40e2e.invalid"));
-  await send(
-    status,
-    formRequest("/subscribe", "email=sub-b%40e2e.invalid", {
-      origin: TEST_ORIGIN,
-      "sec-fetch-site": "same-origin",
-    }),
-  );
-  // A browser posts our form with `Origin: null` (no-referrer) and `Sec-Fetch-Site: same-origin`.
-  await send(
-    status,
-    formRequest("/subscribe", "email=sub-c%40e2e.invalid", {
-      origin: "null",
-      "sec-fetch-site": "same-origin",
-    }),
-  );
-  await waitUntil(() => notify.calls.length === 3, "three calls");
-  assert.equal(notify.calls.length, 3);
+test("origin check on all three POST routes: real goes on; null, foreign and cross-site are 403", async () => {
+  const routes: [string, string][] = [
+    ["/subscribe", "email=sub-a%40e2e.invalid"],
+    ["/subscribe/confirm", `token=${CONFIRM_TOKEN}`],
+    ["/unsubscribe", `token=${UNSUBSCRIBE_TOKEN}`],
+  ];
+  const origins: [string, Record<string, string>, boolean][] = [
+    ["real", { origin: TEST_ORIGIN, "sec-fetch-site": "same-origin" }, true],
+    ["missing", {}, true],
+    ["null", { origin: "null" }, false],
+    ["null same-origin", { origin: "null", "sec-fetch-site": "same-origin" }, false],
+    ["foreign", { origin: "https://evil.example" }, false],
+    ["missing cross-site", { "sec-fetch-site": "cross-site" }, false],
+  ];
+  for (const [path, body] of routes) {
+    for (const [name, headers, isAllowed] of origins) {
+      const { notify, status } = await fixture(
+        (c) => answerJson(c.res, 202, accepted),
+        (c) => answerJson(c.res, 404, {}),
+      );
+      const client = await send(status, formRequest(path, body, headers));
+      if (isAllowed) {
+        await waitUntil(() => notify.calls.length === 1, `${path} ${name}`);
+      } else {
+        await client.closed;
+        assert.equal(statusOf(client.received()), 403, `${path} ${name}`);
+        assert.equal(notify.calls.length, 0, `${path} ${name}`);
+      }
+    }
+  }
+});
+
+test("form pages send referrer-policy same-origin; every other page no-referrer", async () => {
+  const { status } = await fixture();
+  const get = async (path: string): Promise<string> =>
+    exchange(status, `GET ${path} HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n`);
+  const cases: [string, string][] = [
+    [await get("/"), "same-origin"],
+    [await get("/index.html"), "same-origin"],
+    [await get(`/subscribe/confirm?token=${CONFIRM_TOKEN}`), "same-origin"],
+    [await get(`/unsubscribe?token=${UNSUBSCRIBE_TOKEN}`), "same-origin"],
+    [await exchange(status, formRequest("/subscribe", "email=bad")), "same-origin"],
+    [await get(`/subscribe/confirm?token=${CONFIRM_TOKEN}B`), "no-referrer"],
+    [await get("/unsubscribe?token=short"), "no-referrer"],
+    [await get("/theme.css"), "no-referrer"],
+    [await get("/nothing"), "no-referrer"],
+    [
+      await exchange(status, formRequest("/subscribe", "email=x", { origin: "null" })),
+      "no-referrer",
+    ],
+    [
+      await exchange(status, formRequest("/unsubscribe", `token=${UNSUBSCRIBE_TOKEN}`)),
+      "no-referrer",
+    ],
+  ];
+  for (const [raw, policy] of cases) {
+    assert.equal(headerOf(raw, "referrer-policy"), policy, raw.slice(0, 60));
+  }
 });
 
 test("a valid subscribe sends the exact contract body and bearer header", async () => {
@@ -173,7 +211,7 @@ test("link pages: GET and HEAD make no call; the token appears once, only on 200
   assert.match(get, /<form method="post" action="\/subscribe\/confirm">/);
   assert.match(get, /<button type="submit">Confirm subscription<\/button>/);
   assert.equal(headerOf(get, "cache-control"), "no-store");
-  assert.equal(headerOf(get, "referrer-policy"), "no-referrer");
+  assert.equal(headerOf(get, "referrer-policy"), "same-origin");
   assert.match(headerOf(get, "content-security-policy") ?? "", /form-action 'self'/);
 
   const head = await exchange(

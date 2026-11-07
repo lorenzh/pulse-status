@@ -860,6 +860,9 @@ export function createStatusServer(options: ServerOptions): Server {
   ): Promise<boolean> =>
     handleOps(req, res, ops) || (await syndicate(url, req.headers["if-none-match"], res));
 
+  // The subscribe form posts from the page; see `sendPage` in subscribe-routes.ts.
+  const pageReferrerPolicy = subscribeRoutes === undefined ? "no-referrer" : "same-origin";
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
     res.setHeader("content-security-policy", csp);
@@ -875,6 +878,7 @@ export function createStatusServer(options: ServerOptions): Server {
       }
       if (await serveGenerated(req, url, res)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
+        res.setHeader("referrer-policy", pageReferrerPolicy);
         const { html, etag } = await page();
         if (etag !== undefined) {
           sendTaggedBody(req, res, html, etag, "text/html; charset=utf-8");
