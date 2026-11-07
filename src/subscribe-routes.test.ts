@@ -507,11 +507,14 @@ test("self-check: an admission that counts after the body admits 257", async () 
   assert.equal(records.filter((r) => r.admitted).length, 257);
 });
 
-type FreePath = (status: StatusUnderTest) => Promise<void>;
+/** `since` is the timer count before the path started; counts only the path's own timers. */
+type FreePath = (status: StatusUnderTest, since: number) => Promise<void>;
 
 const validBody = "email=sub-r%40e2e.invalid&x";
 const rFull = (status: StatusUnderTest, body: string, headers: Record<string, string> = {}) =>
   send(status, formHead("/subscribe", Buffer.byteLength(body), headers) + body);
+const ownTimers = (status: StatusUnderTest, since: number, ms: number) =>
+  status.scheduler.timers.slice(since).filter((t) => t.ms === ms);
 
 const freePaths: [string, FreePath][] = [
   [
@@ -538,68 +541,71 @@ const freePaths: [string, FreePath][] = [
   ],
   [
     "disconnect during body",
-    async (status) => {
+    async (status, since) => {
       const c = await send(status, `${PARTIAL}email=`);
-      await waitUntil(() => timersOf(status, 5000) === 256, "body timer");
+      await waitUntil(() => ownTimers(status, since, 5000).length === 1, "body timer");
       c.socket.destroy();
     },
   ],
   [
     "disconnect before release",
-    async (status) => {
+    async (status, since) => {
       const c = await rFull(status, "email=sub-r%40e2e.invalid");
-      await waitUntil(() => timersOf(status, 2000) === 1, "release timer");
+      await waitUntil(() => ownTimers(status, since, 2000).length === 1, "release timer");
       c.socket.destroy();
       await waitUntil(
-        () => status.scheduler.timers.find((t) => t.ms === 2000)?.state === "cancelled",
+        () => ownTimers(status, since, 2000)[0]?.state === "cancelled",
         "release cancelled",
       );
     },
   ],
   [
     "5000 body deadline",
-    async (status) => {
+    async (status, since) => {
       const c = await send(status, `${PARTIAL}email=`);
-      await waitUntil(() => timersOf(status, 5000) === 256, "body timer");
-      status.scheduler.timers.at(-1)?.fire();
+      await waitUntil(() => ownTimers(status, since, 5000).length === 1, "body timer");
+      ownTimers(status, since, 5000)[0]?.fire();
       await c.closed;
       assert.equal(c.received().length, 0);
     },
   ],
   [
     "2000 release",
-    async (status) => {
+    async (status, since) => {
       const c = await rFull(status, "email=sub-r%40e2e.invalid");
-      await waitUntil(() => timersOf(status, 2000) === 1, "release timer");
-      status.scheduler.timers.find((t) => t.ms === 2000)?.fire();
+      await waitUntil(() => ownTimers(status, since, 2000).length === 1, "release timer");
+      ownTimers(status, since, 2000)[0]?.fire();
       await waitUntil(() => statusOf(c.received()) === 200, "answer");
     },
   ],
   [
     "415",
-    async (status) => {
-      const before = status.scheduler.timers.length;
+    async (status, since) => {
       const c = await rFull(status, validBody, { "content-type": "text/plain" });
       await waitUntil(() => statusOf(c.received()) === 415, "415");
-      assert.equal(status.scheduler.timers.length, before);
+      assert.equal(status.scheduler.timers.length, since);
     },
   ],
 ];
 
-for (const [name, path] of freePaths) {
-  test(`L9: path "${name}" frees exactly one slot at its response close`, async () => {
-    const { status } = await heldFixture();
-    const records = recordAdmission(status.server);
-    await partials(status, records, 255);
+// One server with 255 held partial bodies serves every path: each path and its probe free
+// their slots again before the next path starts, which the probe of the next path proves.
+test("L9: every free path frees exactly one slot at its response close", async () => {
+  const { status } = await heldFixture();
+  const records = recordAdmission(status.server);
+  await partials(status, records, 255);
+  for (const [name, path] of freePaths) {
     const start = records.length;
-    await path(status);
-    await waitUntil(() => records.length === start + 1, "R recorded");
+    await path(status, status.scheduler.timers.length);
+    await waitUntil(() => records.length === start + 1, `${name}: R recorded`);
     const r = records[start];
-    assert.equal(r?.admitted || r?.status === 415, true);
+    assert.equal(r?.admitted || r?.status === 415, true, name);
     await r?.closed;
+    const probed = records.length;
     await probe(status, records);
-  });
-}
+    await records[probed]?.closed;
+  }
+});
 
 test("L9: with 256 others admitted, a text/plain or invalid body still gets 503", async () => {
   const { notify, status } = await heldFixture();

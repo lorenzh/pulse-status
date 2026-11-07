@@ -105,9 +105,9 @@ const releaseCases: Case[] = [
 ];
 
 /**
- * A fresh fixture per request. Only "L9 one below" reuses its filled fixture for one order: its
- * request is released and closed before the next starts, which frees its slot (proven by the
- * L9 free-path tests), so the next request finds the same 255 admitted.
+ * A fresh fixture per request, unless `reuse` is given. A sharable case (L9 one below) and the
+ * notify outcomes reuse one fixture: each request is released and closed before the next starts,
+ * which frees its slot (proven by the L9 free-path tests), so the next request finds the same state.
  */
 async function answerFor(c: Case, address: string, reuse?: Fixture): Promise<string> {
   const f = reuse ?? (await fresh(c.behavior));
@@ -130,10 +130,9 @@ for (const c of releaseCases) {
       await c.prepare?.(f);
       return f;
     };
-    const first = await shared();
-    const ku = [await answerFor(c, K, first), await answerFor(c, U, first)];
-    const second = await shared();
-    const uk = [await answerFor(c, U, second), await answerFor(c, K, second)];
+    const f = await shared();
+    const ku = [await answerFor(c, K, f), await answerFor(c, U, f)];
+    const uk = [await answerFor(c, U, f), await answerFor(c, K, f)];
     assert.equal(ku[0], ku[1]);
     assert.equal(uk[0], uk[1]);
     assert.equal(ku[0], uk[0]);
@@ -181,10 +180,13 @@ const outcomes: [string, (call: NotifyCall) => void][] = [
 
 test("R8 notify outcomes: all nine answers are byte-equal, with the literal text", async () => {
   const answers: string[] = [];
+  let current: (call: NotifyCall) => void = accepted;
+  const f = await fresh((call) => current(call));
   for (const [, behavior] of outcomes) {
+    current = behavior;
     for (const address of [K, U]) {
       answers.push(
-        await answerFor({ name: "", behavior, isCalling: true, settle: finished }, address),
+        await answerFor({ name: "", behavior, isCalling: true, settle: finished }, address, f),
       );
     }
   }
