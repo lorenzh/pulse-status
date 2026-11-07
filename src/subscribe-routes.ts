@@ -68,8 +68,11 @@ function sendPage(res: ServerResponse, status: number, html: string): void {
 /** R2 origin check. `Host`, `X-Forwarded-*` and `Referer` are never read. */
 function isOriginAllowed(req: IncomingMessage, origin: string): boolean {
   const sent = req.headers.origin;
-  if (sent !== undefined) return sent === origin;
   const site = req.headers["sec-fetch-site"];
+  // Our pages send `referrer-policy: no-referrer`, so browsers post their forms with
+  // `Origin: null` (Fetch "serializing a request origin"); only then does `Sec-Fetch-Site` decide.
+  if (sent === "null") return site === "same-origin";
+  if (sent !== undefined) return sent === origin;
   return site === undefined || site === "same-origin" || site === "none";
 }
 

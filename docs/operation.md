@@ -189,3 +189,36 @@ The response shapes come from [pulse-contract](https://github.com/lorenzh/pulse-
 The server renders the current state into the page: summary, checks or components, incidents and maintenance. A note says that the page does not refresh without JavaScript and when it was rendered. Without JavaScript all times are UTC and say so. With JavaScript, the first poll replaces the UTC text with the visitor's zone. The server reads the same cached answers as the `/api/*` proxy, so a warm cache sends nothing upstream. When the API cannot be read the page is still answered with `200` and shows the unavailable view.
 
 Page size, measured by `src/server.page-weight.test.ts` (50 HTTP checks, 20 components, 90 days, served body of `/` in UTF-8 bytes): 243,043 bytes in the default layout (components, checks hidden, 20 component charts; the test fails above 250,000), 730,602 bytes with `PULSE_STATUS_SHOW_CHECKS=true` (50 charts) and 585,527 bytes without components (50 checks and charts); both fail above 1,000,000. Warm p95 of a request to `/` with the default cache (stored page, local API): about 1 ms in the default layout and 2 ms with the checks listed.
+
+## Email subscriptions
+
+With `PULSE_STATUS_SUBSCRIPTIONS_URL` set, the page has a form under "Maintenance" to get incident updates by email. pulse-notify stores the subscriptions and sends the mail; status only serves the forms and forwards them to notify with the bearer token. The forms work without JavaScript.
+
+| Route                                   | Answer                                                                                                                                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /subscribe`                       | `403` wrong origin, `503` busy, `415` not a form, `413` over 2048 bytes, `400` bad fields or address, else the same `200` "Check your inbox" page for every valid address, 2 s after the submit |
+| `GET`/`HEAD /subscribe/confirm?token=…` | `200` page with a button that confirms, or `400` for a bad link. Nothing changes until the button is pressed                                                                                    |
+| `POST /subscribe/confirm`               | `200` confirmed, `400` link not valid or expired, `503` notify failed                                                                                                                           |
+| `GET`/`HEAD /unsubscribe?token=…`       | `200` page with an unsubscribe button, or `400`                                                                                                                                                 |
+| `POST /unsubscribe`                     | `200` unsubscribed, `400` link not valid, `503` notify failed                                                                                                                                   |
+
+All these pages have `cache-control: no-store`. With subscriptions on, the CSP has `form-action 'self'`; without them, `form-action 'none'`, `405` for every `POST` and `404` for these paths.
+
+The subscribe answer does not tell whether an address is known. Status answers every valid address with the same bytes, written by one timer 2000 ms after the address passed, whatever notify answered and when. The call to notify ends after 1500 ms. A form is posted from the configured origin only: an `Origin` header must equal the origin of `PULSE_STATUS_PUBLIC_URL`, and without it a `Sec-Fetch-Site` header must be `same-origin` or `none`. `Host`, `X-Forwarded-*` and `Referer` are never read for this.
+
+Logs carry fixed texts and the failure kind of a notify call (`status <code>`, `timeout`, `network`, `version`, `invalid body`). They never hold an address, a token or the notify URL.
+
+### Operator duties
+
+- Answer the contact of `PULSE_STATUS_SUBSCRIPTIONS_CONTACT`.
+- Delete a subscription on request with `pulse-notify subscribers delete <address>`.
+- Keep backups of the notify data volume for a stated time and delete them after it. The subscription store is personal data and lives on the notify data volume only.
+
+### Known limits
+
+- Every valid subscribe answer arrives 2 s after the submit. At most 256 subscribe requests are admitted at once: each holds a slot while its body is read (at most 5 s) and while its answer waits for the 2 s release. Every further subscribe request gets the busy page (`503`) until a slot is free. Confirm and unsubscribe are never limited by this.
+- At most 8 calls to notify run at once; a further valid request makes no call and still gets the same answer.
+- There is no limit per visitor. A flood can fill notify's hourly mail limit and delay real confirmation mails for up to an hour.
+- Notify sends subscriber mail one by one; an SMTP outage delays later events.
+- Notify's rate limits are per process and start empty after a restart.
+- Root hosting only: subscriptions need the status page at the root of its origin.

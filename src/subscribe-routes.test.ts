@@ -85,6 +85,8 @@ test("origin, type, size and fields are refused with their codes and no notify c
     [formRequest("/subscribe", valid, { origin: "https://evil.example" }), 403],
     [formRequest("/subscribe", valid, { origin: "null" }), 403],
     [formRequest("/subscribe", valid, { "sec-fetch-site": "cross-site" }), 403],
+    [formRequest("/subscribe", valid, { origin: "null", "sec-fetch-site": "cross-site" }), 403],
+    [formRequest("/subscribe", valid, { origin: "null", "sec-fetch-site": "none" }), 403],
     [formRequest("/subscribe", valid, { "content-type": "application/json" }), 415],
     [formRequest("/subscribe", valid, { "content-type": "multipart/form-data; boundary=x" }), 415],
     [formRequest("/subscribe", `email=${"a".repeat(2043)}`), 413],
@@ -108,7 +110,7 @@ test("origin, type, size and fields are refused with their codes and no notify c
   assert.equal(notify.calls.length, 0);
 });
 
-test("a form without Origin and Sec-Fetch-Site goes on; a same-origin one too", async () => {
+test("a form without Origin and Sec-Fetch-Site goes on; a same-origin one too, also with Origin null", async () => {
   const { notify, status } = await fixture();
   await send(status, formRequest("/subscribe", "email=sub-a%40e2e.invalid"));
   await send(
@@ -118,8 +120,16 @@ test("a form without Origin and Sec-Fetch-Site goes on; a same-origin one too", 
       "sec-fetch-site": "same-origin",
     }),
   );
-  await waitUntil(() => notify.calls.length === 2, "two calls");
-  assert.equal(notify.calls.length, 2);
+  // A browser posts our form with `Origin: null` (no-referrer) and `Sec-Fetch-Site: same-origin`.
+  await send(
+    status,
+    formRequest("/subscribe", "email=sub-c%40e2e.invalid", {
+      origin: "null",
+      "sec-fetch-site": "same-origin",
+    }),
+  );
+  await waitUntil(() => notify.calls.length === 3, "three calls");
+  assert.equal(notify.calls.length, 3);
 });
 
 test("a valid subscribe sends the exact contract body and bearer header", async () => {

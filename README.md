@@ -31,6 +31,14 @@ Components: when pulse-api has `components` configured, the page lists them (gro
 
 Latency and availability: the page polls `/api/latency` and `/api/components/latency` and draws 90-day p50/p95 charts (inline SVG). With checks shown, or without components, there is one chart per HTTP check. With components and checks hidden (the default), there is one chart per component with HTTP member checks, showing per UTC day the highest member check p50 and p95; `/api/latency` then answers `[]`. Each entry has one `<details>` table of its daily values (uptime, latency, results); the uptime bars are decorative. Checks and components with an `availabilityTarget` show their 30-day availability and remaining error budget. See [docs/operation.md](docs/operation.md#latency-and-availability).
 
+## Email subscriptions
+
+Off by default. With `PULSE_STATUS_SUBSCRIPTIONS_URL` (the pulse-notify subscription listener), `PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE` (its bearer token, at least 32 characters), `PULSE_STATUS_SUBSCRIPTIONS_CONTACT` (an email address or `https` URL for privacy questions) and `PULSE_STATUS_PUBLIC_URL` set, the page has a form to get incident updates by email, with a notice on the stored data. Routes: `POST /subscribe`, `GET`/`HEAD`/`POST /subscribe/confirm` and `GET`/`HEAD`/`POST /unsubscribe`. Every valid subscribe gets the same answer 2 s after the submit, whether or not the address is known.
+
+Email subscriptions need the status page at the root of its origin, for example `https://status.example.com`. A path such as `/pulse` is refused at startup while subscriptions are on.
+
+Known limits: every valid subscribe answer arrives 2 s after the submit; while 256 subscribe requests are admitted (body being read for at most 5 s, or answer waiting 2 s), further subscribe requests get a busy page; there is no per-visitor limit, so a flood can delay real confirmation mails for up to an hour; notify sends events one by one and its rate limits restart empty. See [operation.md](docs/operation.md#email-subscriptions) and [configuration.md](docs/configuration.md).
+
 ## Docker
 
 ```sh
