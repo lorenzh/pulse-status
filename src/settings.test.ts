@@ -2,6 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { StartupError } from "@lorenzh/pulse-kit";
 import { readSettings } from "./settings.ts";
+import { startFromSettings } from "./start.ts";
 
 test("defaults apply for an empty environment", () => {
   assert.deepEqual(readSettings({}), {
@@ -22,6 +23,7 @@ test("defaults apply for an empty environment", () => {
     settingsPollMs: 15000,
     cacheMs: 2000,
     upstreamTimeoutMs: 4000,
+    subscriptions: undefined,
   });
 });
 
@@ -220,4 +222,150 @@ test("PULSE_STATUS_SHOW_CHECKS: any other value stops the start", () => {
     () => readSettings({ PULSE_STATUS_SHOW_CHECKS: "yes" }),
     (err) => err instanceof StartupError && err.message.includes("PULSE_STATUS_SHOW_CHECKS"),
   );
+});
+
+const SUBSCRIPTIONS_ON = {
+  PULSE_STATUS_SUBSCRIPTIONS_URL: `${"http"}://notify.invalid:9300`,
+  PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE: "/run/pulse/status-token",
+  PULSE_STATUS_SUBSCRIPTIONS_CONTACT: "privacy@example.com",
+  PULSE_STATUS_PUBLIC_URL: "https://status.example.com",
+};
+
+const failsNaming = (env: Record<string, string>, setting: string, hidden: string[]): void => {
+  assert.throws(
+    () => readSettings(env),
+    (err: unknown) =>
+      err instanceof StartupError &&
+      err.setting === setting &&
+      err.message.startsWith(`${setting}:`) &&
+      hidden.every((part) => !err.message.includes(part)),
+  );
+};
+
+test("subscriptions: off without the URL, and the contact is then ignored", () => {
+  assert.equal(
+    readSettings({ PULSE_STATUS_SUBSCRIPTIONS_CONTACT: "javascript:alert(1)" }).subscriptions,
+    undefined,
+  );
+});
+
+test("subscriptions: the URL needs the token file, the contact and the public URL", () => {
+  assert.deepEqual(readSettings(SUBSCRIPTIONS_ON).subscriptions, {
+    notifyUrl: `${"http"}://notify.invalid:9300`,
+    tokenFile: "/run/pulse/status-token",
+    contact: { kind: "email", address: "privacy@example.com" },
+    origin: "https://status.example.com",
+  });
+  const without = (name: keyof typeof SUBSCRIPTIONS_ON): Record<string, string> => {
+    const env: Record<string, string> = { ...SUBSCRIPTIONS_ON };
+    delete env[name];
+    return env;
+  };
+  failsNaming(
+    without("PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE"),
+    "PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE",
+    [],
+  );
+  failsNaming(
+    without("PULSE_STATUS_SUBSCRIPTIONS_CONTACT"),
+    "PULSE_STATUS_SUBSCRIPTIONS_CONTACT",
+    [],
+  );
+  failsNaming(without("PULSE_STATUS_PUBLIC_URL"), "PULSE_STATUS_PUBLIC_URL", []);
+});
+
+test("R9: subscriptions need the status page at the root of its origin", () => {
+  const origin = (v: string): string | undefined =>
+    readSettings({ ...SUBSCRIPTIONS_ON, PULSE_STATUS_PUBLIC_URL: v }).subscriptions?.origin;
+  assert.equal(origin("https://status.example.com"), "https://status.example.com");
+  assert.equal(origin("https://status.example.com/"), "https://status.example.com");
+  for (const prefixed of [
+    "https://status.example.com/pulse",
+    "https://status.example.com/pulse/",
+  ]) {
+    assert.throws(
+      () => readSettings({ ...SUBSCRIPTIONS_ON, PULSE_STATUS_PUBLIC_URL: prefixed }),
+      (err: unknown) =>
+        err instanceof StartupError &&
+        err.message ===
+          "PULSE_STATUS_PUBLIC_URL: must be an origin without a path when subscriptions are on (root hosting)",
+      prefixed,
+    );
+  }
+  for (const bad of ["https://u:p@status.example.com", "https://status.example.com/?x=1"]) {
+    assert.throws(
+      () => readSettings({ ...SUBSCRIPTIONS_ON, PULSE_STATUS_PUBLIC_URL: bad }),
+      /PULSE_STATUS_PUBLIC_URL: must be an http\(s\) URL without credentials, query or fragment$/,
+      bad,
+    );
+  }
+  assert.equal(
+    readSettings({ PULSE_STATUS_PUBLIC_URL: "https://status.example.com/pulse/" }).publicUrl,
+    "https://status.example.com/pulse",
+  );
+});
+
+test("R10 contact: a normalized address or an https URL; a bad value is never echoed", () => {
+  const contact = (v: string): unknown =>
+    readSettings({ ...SUBSCRIPTIONS_ON, PULSE_STATUS_SUBSCRIPTIONS_CONTACT: v }).subscriptions
+      ?.contact;
+  assert.deepEqual(contact("Privacy@Example.COM"), {
+    kind: "email",
+    address: "privacy@example.com",
+  });
+  assert.deepEqual(contact("https://example.com/privacy"), {
+    kind: "url",
+    url: "https://example.com/privacy",
+  });
+  for (const bad of [
+    `${"http"}://example.com/privacy`,
+    "javascript:alert(1)",
+    "mailto:a@example.com",
+    "a@example.com, b@example.com",
+    `https://example.com/${"p".repeat(493)}`,
+    "https://u:p@example.com/",
+  ]) {
+    failsNaming(
+      { ...SUBSCRIPTIONS_ON, PULSE_STATUS_SUBSCRIPTIONS_CONTACT: bad },
+      "PULSE_STATUS_SUBSCRIPTIONS_CONTACT",
+      [bad, "example.com", "alert"],
+    );
+  }
+  failsNaming(
+    { ...SUBSCRIPTIONS_ON, PULSE_STATUS_SUBSCRIPTIONS_CONTACT: "" },
+    "PULSE_STATUS_SUBSCRIPTIONS_CONTACT",
+    [],
+  );
+});
+
+test("PULSE_STATUS_SUBSCRIPTIONS_URL: a bad URL is refused without its value", () => {
+  failsNaming(
+    {
+      ...SUBSCRIPTIONS_ON,
+      PULSE_STATUS_SUBSCRIPTIONS_URL: `${"http"}://user:secret-pw@notify:9300`,
+    },
+    "PULSE_STATUS_SUBSCRIPTIONS_URL",
+    ["secret-pw"],
+  );
+});
+
+test("the token file: 31 characters fail without echoing the token", () => {
+  const settings = readSettings(SUBSCRIPTIONS_ON);
+  const short = "t".repeat(31);
+  assert.throws(
+    () =>
+      startFromSettings(settings, undefined, undefined, {
+        readFile: () => new TextEncoder().encode(`${short}\n`),
+        exists: () => true,
+      }),
+    (err: unknown) =>
+      err instanceof StartupError &&
+      err.message.startsWith("PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE:") &&
+      !err.message.includes(short),
+  );
+  const started = startFromSettings(settings, undefined, undefined, {
+    readFile: () => new TextEncoder().encode("t".repeat(32)),
+    exists: () => true,
+  });
+  assert.ok(started.server);
 });

@@ -33,6 +33,14 @@ Latency and availability: the page polls `/api/latency` and `/api/components/lat
 
 Live page settings: with `PULSE_STATUS_API_TOKEN` or `PULSE_STATUS_API_TOKEN_FILE`, the server polls pulse-api's `GET /service/status/settings` every `PULSE_STATUS_SETTINGS_POLL_MS` (default 15000) and applies name, logo, theme, component order, `showChecks`, `hideDetails`, `showLatency` and `showSlos` without a restart; it reports what it applied to `PUT /service/status/report`. Until the first read, public routes answer `503` `settings not loaded`. New settings: `PULSE_STATUS_SHOW_LATENCY`, `PULSE_STATUS_SHOW_SLOS` (default `true`), `PULSE_STATUS_SETTINGS_FILE`. New route: `GET /page-settings.json` (`{fingerprint}`, `no-store`); an open page reloads once when it changes. Env wins over the settings file, which wins over the database. Needs pulse-contract 2.4.0. See [docs/configuration.md](docs/configuration.md) and [docs/operation.md](docs/operation.md#live-page-settings).
 
+## Email subscriptions
+
+Off by default. With `PULSE_STATUS_SUBSCRIPTIONS_URL` (the pulse-notify subscription listener), `PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE` (its bearer token, at least 32 characters), `PULSE_STATUS_SUBSCRIPTIONS_CONTACT` (an email address or `https` URL for privacy questions) and `PULSE_STATUS_PUBLIC_URL` set, the page has a form to get incident updates by email, with a notice on the stored data. Routes: `POST /subscribe`, `GET`/`HEAD`/`POST /subscribe/confirm` and `GET`/`HEAD`/`POST /unsubscribe`. Every valid subscribe gets the same answer 2 s after the submit, whether or not the address is known.
+
+Email subscriptions need the status page at the root of its origin, for example `https://status.example.com`. A path such as `/pulse` is refused at startup while subscriptions are on.
+
+Known limits: every valid subscribe answer arrives 2 s after the submit; while 256 subscribe requests are admitted (body being read for at most 5 s, or answer waiting 2 s), further subscribe requests get a busy page; there is no per-visitor limit, so a flood can delay real confirmation mails for up to an hour; notify sends events one by one and its rate limits restart empty. See [operation.md](docs/operation.md#email-subscriptions) and [configuration.md](docs/configuration.md).
+
 ## Docker
 
 ```sh

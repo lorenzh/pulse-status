@@ -24,6 +24,59 @@ const JSON_HEADERS = { "content-type": "application/json" };
 const TOKEN = "sentinel-token-7f3a";
 const defaultTheme = loadDefaultTheme();
 
+test("subscriptions use live branding, allow same-origin forms and wait for settings", async () => {
+  const resolve = (settings: StatusSettings): EffectiveSettings =>
+    resolveSettings({
+      env: {},
+      file: { settings: {}, themeVia: "settings file" },
+      database: settings,
+      defaultTheme,
+    });
+  let current = resolve({ name: "Initial" });
+  let isReady = false;
+  const server = createStatusServer({
+    apiUrl: "http://api.test",
+    pollMs: 1000,
+    cacheMs: 0,
+    now: () => 1000,
+    fetch: Object.assign(async () => new Response("[]", { headers: JSON_HEADERS }), {
+      preconnect: () => {},
+    }),
+    schedule: () => () => {},
+    runtime: { current: () => current, isReady: () => isReady },
+    subscriptions: {
+      notifyUrl: "http://notify.test",
+      token: "subscription-sentinel-token",
+      contact: { kind: "email", address: "privacy@example.com" },
+      origin: "https://status.example.com",
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  servers.push(server);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  for (const path of ["/subscribe/confirm?token=bad", "/unsubscribe?token=bad"]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "settings not loaded" });
+  }
+  assert.equal((await fetch(`${base}/subscribe`, { method: "POST" })).status, 503);
+  isReady = true;
+  for (const name of ["Initial", "Updated"]) {
+    current = resolve({ name, logoUrl: "https://assets.example.com/logo.svg" });
+    const page = await fetch(`${base}/`);
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get("referrer-policy"), "same-origin");
+    assert.match(page.headers.get("content-security-policy") ?? "", /form-action 'self'/);
+    assert.match(page.headers.get("content-security-policy") ?? "", /https:\/\/assets.example.com/);
+    const html = await page.text();
+    assert.match(html, new RegExp(`<title>${name}</title>`));
+    assert.match(html, /id="subscribe"/);
+    const invalid = await fetch(`${base}/subscribe/confirm?token=bad`);
+    assert.equal(invalid.status, 400);
+    assert.match(await invalid.text(), new RegExp(`<title>Invalid link - ${name}</title>`));
+  }
+});
+
 const check = {
   id: "web",
   name: "Web",

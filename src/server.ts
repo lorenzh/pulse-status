@@ -43,7 +43,11 @@ import {
   type Logo,
   resolveLogo,
 } from "./runtime-settings.ts";
+import type { SubscriptionContact } from "./settings.ts";
 import { renderState } from "./ssr.ts";
+import { createNotifyClient, type Schedule } from "./subscribe-client.ts";
+import { contactLink, subscribeSection } from "./subscribe-pages.ts";
+import { createSubscribeRoutes, type SubscribeRoutes } from "./subscribe-routes.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 import { BROWSER_TIMEOUT_MARGIN_MS, MAX_UPSTREAM_TIMEOUT_MS } from "./upstream-timeout.ts";
@@ -83,6 +87,10 @@ export interface ServerOptions {
    * above, and public routes answer 503 until `isReady` is true.
    */
   runtime?: RuntimeSettingsSource | undefined;
+  /** Email subscriptions (R2); undefined means off, with today's answers. */
+  subscriptions?: ServerSubscriptions | undefined;
+  /** Timers of the subscription routes; default `setTimeout` with a cancel. */
+  schedule?: Schedule | undefined;
 }
 
 /** The current effective settings and whether the first settings read has finished. */
@@ -104,6 +112,23 @@ interface PageSettings {
   showSlos: boolean;
   fingerprint: string | undefined;
 }
+
+export interface ServerSubscriptions {
+  /** Base URL of the notify listener. */
+  notifyUrl: string;
+  /** Bearer token of the notify listener. */
+  token: string;
+  contact: SubscriptionContact;
+  /** Origin of PULSE_STATUS_PUBLIC_URL. */
+  origin: string;
+  /** The L9 admission cap; default 256. */
+  maxAdmitted?: number | undefined;
+}
+
+const defaultSchedule: Schedule = (fn, ms) => {
+  const handle = setTimeout(fn, ms);
+  return () => clearTimeout(handle);
+};
 
 export const DEFAULT_CACHE_MS = 2000;
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
@@ -208,10 +233,12 @@ const contractModules = new Set([
   "audit.js",
   "revision.js",
   "manual-incident-public.js",
-  "runtime-settings.js",
   "notify-channels.js",
   "resend.js",
+  "runtime-settings.js",
   "validate-runtime.js",
+  "subscriptions.js",
+  "validate-subscriptions.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
@@ -734,6 +761,7 @@ function toPageSettings(settings: EffectiveSettings): PageSettings {
 
 export function createStatusServer(options: ServerOptions): Server {
   // Invalid settings throw here, before the server can listen.
+  const subscriptions = options.subscriptions;
   const fixed = options.runtime === undefined ? fixedSettings(options) : undefined;
   const base = {
     apiBase: "",
@@ -759,6 +787,10 @@ export function createStatusServer(options: ServerOptions): Server {
   const pages = new Map<string, AnswerEntry<Page, RawDep>>();
 
   const buildView = (settings: PageSettings): View => {
+    settings = {
+      ...settings,
+      csp: contentSecurityPolicy(settings.logo?.origin, subscriptions !== undefined),
+    };
     const ctx: ProxyContext = {
       ...base,
       isHidden: settings.hideDetails,
@@ -802,6 +834,35 @@ export function createStatusServer(options: ServerOptions): Server {
   const log: Logger = options.log ?? createLogger({ write: () => {} });
   const metrics = options.metrics ?? createMetrics({ now: base.now, pollMs: options.pollMs });
 
+  const contact = subscriptions === undefined ? "" : contactLink(subscriptions.contact);
+  const subscribeHtml = subscriptions === undefined ? "" : subscribeSection(contact);
+  const subscribeRoutes: SubscribeRoutes | undefined =
+    subscriptions === undefined
+      ? undefined
+      : createSubscribeRoutes({
+          origin: subscriptions.origin,
+          contact,
+          shell: {
+            get title() {
+              return escapeHtml(currentView().title);
+            },
+            get wordmark() {
+              return currentView().mark;
+            },
+          },
+          notify: createNotifyClient({
+            baseUrl: subscriptions.notifyUrl,
+            token: subscriptions.token,
+            fetch: base.doFetch,
+            schedule: options.schedule ?? defaultSchedule,
+            tokenTimeoutMs: base.timeoutMs,
+          }),
+          schedule: options.schedule ?? defaultSchedule,
+          now: base.now,
+          log,
+          maxAdmitted: subscriptions.maxAdmitted,
+        });
+
   // Read once: the template does not change while the server runs.
   const template = readFileSync(publicDir + "index.html", "utf8");
 
@@ -839,6 +900,7 @@ export function createStatusServer(options: ServerOptions): Server {
       feedLink,
       renderedLine: sections.rendered ?? "",
       checksTitle: sections.checksTitle ?? "Checks",
+      subscribe: subscribeHtml,
     };
     const settingsAttr =
       v.settings.fingerprint === undefined ? "" : ` data-settings="${v.settings.fingerprint}"`;
@@ -944,6 +1006,7 @@ export function createStatusServer(options: ServerOptions): Server {
     }
     if (await v.syndicate(url, req.headers["if-none-match"], res)) return true;
     if (url.pathname === "/" || url.pathname === "/index.html") {
+      res.setHeader("referrer-policy", pageReferrerPolicy);
       await serveIndex(req, res);
       return true;
     }
@@ -964,6 +1027,9 @@ export function createStatusServer(options: ServerOptions): Server {
     return false;
   };
 
+  // The subscribe form posts from the page; see `sendPage` in subscribe-routes.ts.
+  const pageReferrerPolicy = subscribeRoutes === undefined ? "no-referrer" : "same-origin";
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const v = currentView();
@@ -972,13 +1038,10 @@ export function createStatusServer(options: ServerOptions): Server {
     res.setHeader("x-frame-options", "DENY");
     res.setHeader("referrer-policy", "no-referrer");
     try {
-      if (req.method !== "GET" && req.method !== "HEAD") {
-        res.writeHead(405, { allow: "GET, HEAD" }).end();
-        return;
-      }
-      if (handleOps(req, res, ops)) return;
+      const isRead = req.method === "GET" || req.method === "HEAD";
+      if (isRead && handleOps(req, res, ops)) return;
       const fontFile = Object.hasOwn(fontFiles, url.pathname) ? fontFiles[url.pathname] : undefined;
-      if (fontFile !== undefined) {
+      if (isRead && fontFile !== undefined) {
         const font = await readFile(srcDir + fontFile);
         res
           .writeHead(200, {
@@ -990,6 +1053,12 @@ export function createStatusServer(options: ServerOptions): Server {
       }
       if (!isSettingsReady()) {
         sendJson(res, 503, SETTINGS_NOT_LOADED, { "cache-control": "no-store" });
+        return;
+      }
+      // Subscription requests reach admission before any await (L9).
+      if (subscribeRoutes?.(req, res, url) === true) return;
+      if (!isRead) {
+        res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;
       }
       if (await servePublic(req, res, url, v)) return;

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { Server } from "node:http";
-import { type Logger, StartupError } from "@lorenzh/pulse-kit";
+import { type Logger, readSecretFile, StartupError } from "@lorenzh/pulse-kit";
 import { startApiPoll } from "./api-poll.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import {
@@ -12,10 +12,38 @@ import {
   resolveLogo,
   resolveSettings,
 } from "./runtime-settings.ts";
-import { createStatusServer, type ServerOptions } from "./server.ts";
-import { readSettings, type Settings } from "./settings.ts";
+import { createStatusServer, type ServerOptions, type ServerSubscriptions } from "./server.ts";
+import { readSettings, type Settings, type SubscriptionSettings } from "./settings.ts";
 import { startSettingsPoll } from "./settings-poll.ts";
 import { loadDefaultTheme, validateName } from "./theme-config.ts";
+
+const TOKEN_FILE = "PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE";
+const MIN_TOKEN_LENGTH = 32;
+const PRINTABLE_ASCII = /^[\x21-\x7e]+$/;
+
+/** Reads the bearer token once; the error never holds the token. */
+function readSubscriptions(
+  settings: SubscriptionSettings | undefined,
+  readFile: ((path: string) => string) | undefined,
+): ServerSubscriptions | undefined {
+  if (settings === undefined) return undefined;
+  const token = readSecretFile(settings.tokenFile, {
+    setting: TOKEN_FILE,
+    ...(readFile === undefined ? {} : { readFile }),
+  });
+  if (token.length < MIN_TOKEN_LENGTH || !PRINTABLE_ASCII.test(token)) {
+    throw new StartupError(
+      `${TOKEN_FILE}: the token must be at least ${MIN_TOKEN_LENGTH} printable ASCII characters`,
+      { setting: TOKEN_FILE },
+    );
+  }
+  return {
+    notifyUrl: settings.notifyUrl,
+    token,
+    contact: settings.contact,
+    origin: settings.origin,
+  };
+}
 
 export interface StartedServer {
   server: Server;
@@ -89,6 +117,9 @@ export function startFromSettings(
     resolveSettings({ env: envLayer, file, database, defaultTheme });
   let current: EffectiveSettings = resolve(initialFile, {});
   let isReady: () => boolean = () => settings.apiToken === undefined;
+  const subscriptions = readSubscriptions(settings.subscriptions, (path) =>
+    new TextDecoder().decode(io.readFile(path)),
+  );
   const metrics = createMetrics({ now: Date.now, pollMs });
   const realFetch = doFetch ?? fetch;
   const server = createServerOrFail({
@@ -101,6 +132,7 @@ export function startFromSettings(
     metrics,
     log,
     runtime: { current: () => current, isReady: () => isReady() },
+    subscriptions,
   });
   const startPolling = (): (() => void) => {
     const stopApi = startApiPoll({

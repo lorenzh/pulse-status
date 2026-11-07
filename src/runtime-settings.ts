@@ -70,7 +70,7 @@ export function resolveLogo(
   return { src: "/logo", file: logo, type };
 }
 
-export function contentSecurityPolicy(logoOrigin: string | undefined): string {
+export function contentSecurityPolicy(logoOrigin: string | undefined, hasForms = false): string {
   const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
   return [
     "default-src 'none'",
@@ -80,7 +80,7 @@ export function contentSecurityPolicy(logoOrigin: string | undefined): string {
     "font-src 'self'",
     "connect-src 'self'",
     "base-uri 'none'",
-    "form-action 'none'",
+    hasForms ? "form-action 'self'" : "form-action 'none'",
     "frame-ancestors 'none'",
   ].join("; ");
 }

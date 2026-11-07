@@ -164,11 +164,13 @@ async function open(
   return { context, page };
 }
 
-async function checkAxe(page: Page, label: string): Promise<void> {
+async function checkPageAxe(page: Page, label: string): Promise<void> {
   const result = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze();
   const summary = result.violations.map((v) => `${v.id}: ${v.nodes.length}`);
   assert.deepEqual(summary, [], `axe violations (${label})`);
 }
+
+const checkAxe = checkPageAxe;
 
 /** One page layout under test: the server it runs on and what the stub sends. */
 interface Layout {
@@ -459,6 +461,85 @@ async function checkLiveSettings(browser: Browser, apiUrl: string): Promise<void
   }
 }
 
+const CONFIRM_TOKEN = "A".repeat(43);
+const UNSUBSCRIBE_TOKEN = `${"B".repeat(22)}.${"C".repeat(43)}`;
+
+/** A fake notify listener: every call succeeds. */
+function startNotify(): Server {
+  return createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      const path = req.url ?? "";
+      const answers: Record<string, [number, string]> = {
+        "/subscriptions/confirm": [200, "confirmed"],
+        "/subscriptions/unsubscribe": [200, "unsubscribed"],
+      };
+      const [status, result] = answers[path] ?? [202, "accepted"];
+      res
+        .writeHead(status, {
+          "content-type": "application/json",
+          [WIRE_VERSION_HEADER]: String(WIRE_VERSION),
+        })
+        .end(JSON.stringify({ status: result }));
+    });
+  });
+}
+
+/** A free port on 127.0.0.1, so the configured origin can name it before the server starts. */
+async function freePort(): Promise<number> {
+  const probe = createServer();
+  await listen(probe);
+  const { port } = probe.address() as AddressInfo;
+  await new Promise((resolve) => probe.close(resolve));
+  return port;
+}
+
+async function checkSubscribePages(browser: Browser, url: string, isJs: boolean): Promise<void> {
+  // axe runs as a script in the page, so it cannot run with JavaScript off. The pages are the
+  // same server-rendered markup either way; without JavaScript the flow and keyboard are checked.
+  const checkAxe = isJs ? checkPageAxe : async (): Promise<void> => undefined;
+  for (const scheme of ["light", "dark"] as const) {
+    for (const width of [360, 1280]) {
+      const label = `${scheme} ${width}px subscriptions ${isJs ? "with" : "without"} JavaScript`;
+      const context = await browser.newContext({
+        viewport: { width, height: 900 },
+        colorScheme: scheme,
+        javaScriptEnabled: isJs,
+      });
+      const page = await context.newPage();
+      await page.goto(url);
+      await page.waitForSelector("#subscribe");
+      assert.equal(
+        await page.getAttribute("#subscribe-email", "aria-describedby"),
+        "subscribe-notice",
+      );
+      assert.match((await page.textContent("#subscribe-notice a")) ?? "", /privacy@example\.com/);
+      await checkAxe(page, `${label} form`);
+      await page.focus("#subscribe-email");
+      await page.keyboard.type("Visitor@Example.com");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Tab");
+      await page.keyboard.press("Enter");
+      await page.waitForSelector("text=Check your inbox");
+      await checkAxe(page, `${label} subscribe answer`);
+      await page.goto(`${url}/subscribe/confirm?token=${CONFIRM_TOKEN}`);
+      await checkAxe(page, `${label} confirm link`);
+      await page.getByRole("button", { name: "Confirm subscription" }).click();
+      await page.waitForSelector("text=Your subscription is confirmed.");
+      await checkAxe(page, `${label} confirmed`);
+      await page.goto(`${url}/unsubscribe?token=${UNSUBSCRIBE_TOKEN}`);
+      await checkAxe(page, `${label} unsubscribe link`);
+      await page.getByRole("button", { name: "Unsubscribe" }).click();
+      await page.waitForSelector("text=You are unsubscribed. You get no more emails.");
+      await checkAxe(page, `${label} unsubscribed`);
+      await page.goto(`${url}/subscribe/confirm?token=bad`);
+      await checkAxe(page, `${label} invalid link`);
+      await context.close();
+      console.log(`ok  ${label}`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const api = startApi();
   const apiUrl = await listen(api);
@@ -473,8 +554,26 @@ async function main(): Promise<void> {
     // The fallback: the stub sends no components, so the checks are shown.
     { name: "fallback", url: hiddenUrl, hasComponents: false, entryName: "Checkout API" },
   ];
+  const notify = startNotify();
+  const notifyUrl = await listen(notify);
+  const subscribePort = await freePort();
+  const subscribeOrigin = `${"http"}://127.0.0.1:${subscribePort}`;
+  const subscribing = createStatusServer({
+    apiUrl,
+    pollMs: POLL_MS,
+    cacheMs: 0,
+    subscriptions: {
+      notifyUrl,
+      token: "e2e-token-0123456789abcdefghijklmnop",
+      contact: { kind: "email", address: "privacy@example.com" },
+      origin: subscribeOrigin,
+    },
+  });
+  await new Promise<void>((resolve) => subscribing.listen(subscribePort, "127.0.0.1", resolve));
   const browser = await chromium.launch();
   try {
+    data.hasComponents = true;
+    for (const isJs of [true, false]) await checkSubscribePages(browser, subscribeOrigin, isJs);
     for (const layout of layouts) {
       for (const hasTarget of [false, true]) await checkLayout(browser, layout, hasTarget);
     }
@@ -489,6 +588,8 @@ async function main(): Promise<void> {
     await browser.close();
     hidden.close();
     shown.close();
+    subscribing.close();
+    notify.close();
     api.close();
   }
 }

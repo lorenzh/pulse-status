@@ -541,3 +541,35 @@ ul.resolved li {
   padding: 0.125rem 0.75rem 0.125rem 0;
   text-align: left;
 }
+
+#subscribe form {
+  display: grid;
+  gap: 0.5rem;
+  max-width: 40rem;
+}
+
+#subscribe input[type="email"] {
+  font: inherit;
+  padding: 0.5rem;
+  max-width: 100%;
+}
+
+#subscribe button,
+.subscribe-page button {
+  font: inherit;
+  justify-self: start;
+  padding: 0.5rem 1rem;
+}
+
+#subscribe-notice {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+#subscribe-notice h3 {
+  margin: 0.5rem 0 0;
+}
+
+.subscribe-error {
+  font-weight: 600;
+}
