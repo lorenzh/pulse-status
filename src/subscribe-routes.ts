@@ -138,8 +138,9 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
       resultPage(shell, "Subscribe", subscribeSection(contact, INVALID_ADDRESS)),
       true,
     );
-  const answerPage = subscribeAnswerPage(shell, contact);
-  const busyPage = messagePage(shell, "Busy", "The status page is busy. Try again in a minute.");
+  const answerPage = (): string => subscribeAnswerPage(shell, contact);
+  const busyPage = (): string =>
+    messagePage(shell, "Busy", "The status page is busy. Try again in a minute.");
   const forbidden = (res: ServerResponse): void =>
     sendPage(res, 403, messagePage(shell, "Not allowed", "Send this form from the status page."));
   const unsupported = (res: ServerResponse): void =>
@@ -174,7 +175,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
     const cancelRelease = schedule(() => {
       abort.abort();
       endCall();
-      sendPage(res, 200, answerPage);
+      sendPage(res, 200, answerPage());
     }, SUBSCRIBE_RELEASE_MS);
     res.once("close", () => {
       cancelRelease();
@@ -244,7 +245,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
     // Check and reservation in one synchronous step, before any body byte (L9).
     if (admitted >= maxAdmitted) {
       logBusy();
-      sendPage(res, 503, busyPage);
+      sendPage(res, 503, busyPage());
       return;
     }
     admitted++;

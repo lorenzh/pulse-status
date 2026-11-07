@@ -11,7 +11,7 @@ const TAG_LENGTH = 27;
  * privacy configurations never share a tag, even for equal bytes.
  */
 export function etagFor(settings: AnswerSettings, body: string): string {
-  const fingerprint = `${settings.isHidden ? 1 : 0}${settings.hasChecks ? 1 : 0}`;
+  const fingerprint = `${settings.fingerprint ?? ""}${settings.isHidden ? 1 : 0}${settings.hasChecks ? 1 : 0}`;
   return tagOf(`${fingerprint}\n${body}`);
 }
 

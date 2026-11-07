@@ -4,6 +4,8 @@ The default look is losoft: warm paper, deep plum ink, one amethyst accent, Spac
 
 An unreadable file, invalid JSON or an invalid value stops the server at start and names the file and the key path on one line, for example `theme file t.json: light.bg: invalid value`. There is no silent fallback.
 
+Name, logo, theme, component order and the switches can also come from the console (the database, through pulse-api) or from `PULSE_STATUS_SETTINGS_FILE`, see [configuration.md](configuration.md). A change applies on the next settings poll: `/theme.css`, the CSP `img-src` (for a new logo origin) and the page change without a restart, and an open page reloads once. Env values win over the file, the file over the database.
+
 ## Name and logo
 
 | Env                 | Default | Meaning                                                                                                                                                |
@@ -16,6 +18,8 @@ A local logo needs a supported extension and must exist at start. An `https://` 
 ## Theme file
 
 Set `PULSE_STATUS_THEME` to a JSON file. Every key is optional and unknown keys are ignored. A missing key falls back to the default theme, per variable and per mode.
+
+The theme keys are the contract's lists (`STATUS_COLOR_KEYS`, `STATUS_FONT_KEYS`, `STATUS_RADIUS_KEYS`). A `theme` in `PULSE_STATUS_SETTINGS_FILE` or in the database follows the contract rules, where a radius is at most 32 characters; the theme file keeps its own rules and has no such limit.
 
 ```json
 {

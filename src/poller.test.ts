@@ -864,6 +864,25 @@ test("checks as the allow-list serves them pass validation in both hide modes", 
   }
 });
 
+test("a result without latencyMs refreshes and gets no placeholder", async () => {
+  const served = [
+    checkOf("a", "A", {
+      locations: [
+        {
+          location: "eu",
+          stale: false,
+          result: { checkId: "a", timestamp: 1, status: "up", statusCode: 200, reason: null },
+        },
+      ],
+    }),
+  ];
+  const state = await pollOnce((async (url: string) =>
+    url.endsWith("/checks") ? json(served) : json([])) as unknown as typeof fetch);
+  assert.equal(state?.error, null);
+  const result = state?.checks[0]?.locations?.[0]?.result ?? {};
+  assert.equal("latencyMs" in result, false);
+});
+
 test("uptime as served without per-day results still validates", async () => {
   const served = filterApiBody(
     "/api/uptime",

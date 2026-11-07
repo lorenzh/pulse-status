@@ -149,7 +149,10 @@ test("renderChecks: only HTTP checks get a chart, and only when latency is read"
   const html = renderChecks([check, heartbeat], [], env, true, entries);
   assert.equal(html.match(/class="latency-chart"/g)?.length, 1);
   assert.doesNotMatch(renderChecks([check], [], env, true, null), /latency-chart/);
-  assert.match(renderChecks([check], [], env, true, []), /no latency data yet/);
+  // An empty list is the answer with showLatency off: no chart and no latency columns.
+  assert.doesNotMatch(renderChecks([check], [], env, true, []), /latency-chart|p95/);
+  const empty: LatencyResponse = [{ checkId: check.id, days: [] }];
+  assert.match(renderChecks([check], [], env, true, empty), /no latency data yet/);
 });
 
 test("patch: an open details stays open and unchanged chart html writes nothing", () => {

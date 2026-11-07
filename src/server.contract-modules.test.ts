@@ -133,6 +133,20 @@ test("every import of the served contract graph resolves to a served file", asyn
   assert.ok(seen.size > 5);
 });
 
+test("serves the four settings modules of contract 2.4.0", async () => {
+  const base = await start();
+  for (const path of [
+    "/pulse-contract/runtime-settings.js",
+    "/pulse-contract/notify-channels.js",
+    "/pulse-contract/resend.js",
+    "/pulse-contract/validate-runtime.js",
+  ]) {
+    const r = await fetch(base + path);
+    assert.equal(r.status, 200, path);
+    assert.doesNotMatch(await r.text(), /from "node:/, path);
+  }
+});
+
 test("serves the browser-safe kit modules and rewrites render.js to them", async () => {
   const base = await start();
   const render = await (await fetch(`${base}/render.js`)).text();

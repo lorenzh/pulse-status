@@ -1,32 +1,19 @@
 import { readFileSync } from "node:fs";
+import {
+  STATUS_COLOR_KEYS,
+  STATUS_FONT_KEYS,
+  STATUS_NAME_MAX,
+  STATUS_RADIUS_KEYS,
+  type StatusTheme,
+} from "@lorenzh/pulse-contract";
 import { z } from "zod";
 
 /** Server-side theme: loading, validating and merging the theme file, and generating CSS. */
 
-export const COLOR_KEYS = [
-  "bg",
-  "surface",
-  "rule",
-  "line-strong",
-  "field-line",
-  "text",
-  "lead",
-  "muted",
-  "accent",
-  "accent-text",
-  "tint",
-  "tint-line",
-  "success",
-  "success-tint",
-  "warning",
-  "warning-tint",
-  "error",
-  "error-tint",
-  "info",
-  "info-tint",
-] as const;
-export const FONT_KEYS = ["font-sans", "font-mono"] as const;
-export const RADIUS_KEYS = ["radius-sm", "radius-md", "radius-pill"] as const;
+// The key lists are the contract's, so the theme file and the settings share one list.
+export const COLOR_KEYS = STATUS_COLOR_KEYS;
+export const FONT_KEYS = STATUS_FONT_KEYS;
+export const RADIUS_KEYS = STATUS_RADIUS_KEYS;
 
 export type Palette = Record<string, string>;
 
@@ -51,7 +38,7 @@ function isFontValue(value: string): boolean {
     !/['"]/.test(value.replace(QUOTED_PAIR_RE, ""))
   );
 }
-export const NAME_MAX = 60;
+export const NAME_MAX = STATUS_NAME_MAX;
 
 const colorValue = z.string().regex(COLOR_RE);
 const fontValue = z.string().refine(isFontValue);
@@ -93,6 +80,24 @@ export function parseThemeFile(file: string, body: unknown): Partial<Theme> {
     fonts: definedEntries(data, FONT_KEYS),
     radii: definedEntries(data, RADIUS_KEYS),
   };
+}
+
+/** A contract theme (already validated) as a partial theme of the present tokens. */
+export function themeFromSettings(theme: StatusTheme): Partial<Theme> {
+  return {
+    light: definedEntries(theme.light, COLOR_KEYS),
+    dark: definedEntries(theme.dark, COLOR_KEYS),
+    fonts: definedEntries(theme, FONT_KEYS),
+    radii: definedEntries(theme, RADIUS_KEYS),
+  };
+}
+
+/** A partial theme in the contract's shape, so a theme-file theme joins the file layer. */
+export function themeToSettings(theme: Partial<Theme>): StatusTheme {
+  const out: StatusTheme = { ...theme.fonts, ...theme.radii };
+  if (theme.light !== undefined && Object.keys(theme.light).length > 0) out.light = theme.light;
+  if (theme.dark !== undefined && Object.keys(theme.dark).length > 0) out.dark = theme.dark;
+  return out;
 }
 
 export function mergeTheme(base: Theme, override: Partial<Theme>): Theme {
