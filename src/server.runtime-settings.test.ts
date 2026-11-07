@@ -127,6 +127,8 @@ const LATENCY_DAYS = Array.from({ length: 90 }, (_, i) => ({
   count: 5,
 }));
 
+const openIncident = { id: 1, checkId: "web", openedAt: 1, resolvedAt: null, reason: "boom" };
+
 interface Api {
   settings: StatusSettings;
   /** Status of the settings route; 200 answers with `settings`. */
@@ -150,12 +152,13 @@ function apiAnswer(path: string, api: Api, revision: number): Response {
   let body: unknown = [];
   if (path === "/checks") body = [check];
   else if (path === "/components") body = components;
+  else if (path === "/incidents") body = [openIncident];
   else if (path === "/latency") body = [{ checkId: "web", days: LATENCY_DAYS }];
   return new Response(JSON.stringify(body), { headers: JSON_HEADERS });
 }
 
 /** A status server on port 0 with a settings poll against a fake api; the clock is fake. */
-async function start(initial: Partial<Api> = {}) {
+async function start(initial: Partial<Api> = {}, publicUrl?: string) {
   const api: Api = {
     settings: {},
     settingsStatus: 200,
@@ -200,6 +203,7 @@ async function start(initial: Partial<Api> = {}) {
     apiUrl: "http://api.test",
     pollMs: 1,
     cacheMs: 60_000,
+    publicUrl,
     now: () => clock.now,
     fetch: doFetch,
     runtime: {
@@ -346,6 +350,54 @@ test("a privacy change during an upstream read is filtered with the new settings
   const again = (await json<ChecksResponse>(`${base}/api/checks`))[0];
   assert.equal(again?.lastReason, null);
 });
+
+const inFlightCases: [
+  string,
+  string,
+  StatusSettings,
+  StatusSettings,
+  (r: Response, body: string) => void,
+][] = [
+  [
+    "feed hides the reason",
+    "/feed.atom",
+    { hideDetails: false, showChecks: true },
+    { hideDetails: true, showChecks: true },
+    (_r, body) => assert.doesNotMatch(body, /Reason: boom/),
+  ],
+  [
+    "page CSP follows the new logo",
+    "/",
+    { logoUrl: "https://old.example/logo.svg" },
+    { logoUrl: "https://new.example/logo.svg" },
+    (r, body) => {
+      assert.match(body, /https:\/\/new\.example\/logo\.svg/);
+      assert.match(r.headers.get("content-security-policy") ?? "", /https:\/\/new\.example/);
+      assert.doesNotMatch(r.headers.get("content-security-policy") ?? "", /old\.example/);
+    },
+  ],
+];
+
+for (const [label, path, before, after, verify] of inFlightCases) {
+  test(`a settings change during an upstream read: ${label}`, async () => {
+    const { base, save, api } = await start({}, "https://status.example");
+    await save(before);
+    let release = (): void => {};
+    api.holdChecks = new Promise<void>((r) => {
+      release = r;
+    });
+    const started = new Promise<void>((r) => {
+      api.checksStarted = r;
+    });
+    const pending = fetch(base + path);
+    await started;
+    await save(after);
+    release();
+    const response = await pending;
+    assert.equal(response.status, 200);
+    verify(response, await response.text());
+  });
+}
 
 test("the token never appears in served answers", async () => {
   const { base, save, serviceCalls } = await start();

@@ -1,4 +1,3 @@
-import type { ServerResponse } from "node:http";
 import {
   type CheckState,
   isPublicManualIncident,
@@ -40,9 +39,14 @@ export interface SyndicationOptions {
   settings: AnswerSettings;
 }
 
+/** Where syndication writes its answer: a response, or a recorder that the server replays. */
+export interface ReplySink {
+  writeHead(status: number, headers: Record<string, string>): { end(body?: string): void };
+}
+
 /** One request as syndication sees it: the response and the `If-None-Match` value. */
 interface Exchange {
-  res: ServerResponse;
+  res: ReplySink;
   ifNoneMatch: string | undefined;
 }
 
@@ -199,12 +203,13 @@ function uptimeOf(
     : undefined;
 }
 
-function sendText(res: ServerResponse, status: number, body: string): void {
-  res.writeHead(status, {
-    "content-type": "text/plain; charset=utf-8",
-    "cache-control": "no-store",
-  });
-  res.end(body);
+function sendText(res: ReplySink, status: number, body: string): void {
+  res
+    .writeHead(status, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+    })
+    .end(body);
 }
 
 /**
@@ -227,8 +232,8 @@ function sendTagged(
   ex.res.writeHead(200, { "content-type": contentType, ...headers }).end(body);
 }
 
-const unavailable = (res: ServerResponse): void => sendText(res, 503, "unavailable");
-const notFound = (res: ServerResponse): void => sendText(res, 404, "not found");
+const unavailable = (res: ReplySink): void => sendText(res, 503, "unavailable");
+const notFound = (res: ReplySink): void => sendText(res, 404, "not found");
 
 /** The id of a `/badge/<id>.svg` (or component badge) path, else undefined (also for a malformed escape). */
 function badgeId(pathname: string, prefix = BADGE_PREFIX): string | undefined {
@@ -375,7 +380,7 @@ async function serveComponentBadge(
  */
 export function createSyndication(
   opts: SyndicationOptions,
-): (url: URL, ifNoneMatch: string | undefined, res: ServerResponse) => Promise<boolean> {
+): (url: URL, ifNoneMatch: string | undefined, res: ReplySink) => Promise<boolean> {
   // Kept across requests: a 404 from an older api must not clear what an earlier read returned.
   const lastManual: { list: ParsedManualIncident[] } = { list: [] };
   return async (url, ifNoneMatch, res) => {

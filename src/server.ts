@@ -48,7 +48,7 @@ import { renderState } from "./ssr.ts";
 import { createNotifyClient, type Schedule } from "./subscribe-client.ts";
 import { contactLink, subscribeSection } from "./subscribe-pages.ts";
 import { createSubscribeRoutes, type SubscribeRoutes } from "./subscribe-routes.ts";
-import { createSyndication } from "./syndication.ts";
+import { createSyndication, type ReplySink } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 import { BROWSER_TIMEOUT_MARGIN_MS, MAX_UPSTREAM_TIMEOUT_MS } from "./upstream-timeout.ts";
 
@@ -735,6 +735,25 @@ interface View {
   syndicate: ReturnType<typeof createSyndication>;
 }
 
+/** An answer written into a sink, replayed once the view it was built with is still current. */
+interface RecordedReply {
+  status: number;
+  headers: Record<string, string>;
+  body: string | undefined;
+}
+
+function recordReply(): { sink: ReplySink; reply: () => RecordedReply | undefined } {
+  let recorded: RecordedReply | undefined;
+  const sink: ReplySink = {
+    writeHead: (status, headers) => ({
+      end: (body) => {
+        recorded = { status, headers, body };
+      },
+    }),
+  };
+  return { sink, reply: () => recorded };
+}
+
 const SETTINGS_NOT_LOADED = { error: "settings not loaded" };
 /** Rebuilds of one answer when the settings change during its build; then it is served as is. */
 const MAX_VIEW_RETRIES = 3;
@@ -943,12 +962,19 @@ export function createStatusServer(options: ServerOptions): Server {
    * Builds with the current view; when the settings change while it runs, builds again with the
    * new view, so what is written is always filtered by the settings current at write time.
    */
-  const withCurrentView = async <T>(build: (v: View) => Promise<T>): Promise<T> => {
+  const withCurrentView = async <T>(
+    res: ServerResponse,
+    build: (v: View) => Promise<T>,
+  ): Promise<T> => {
     let v = currentView();
     for (let attempt = 0; ; attempt++) {
       const result = await build(v);
       const now = currentView();
-      if (now === v || attempt >= MAX_VIEW_RETRIES) return result;
+      if (now === v || attempt >= MAX_VIEW_RETRIES) {
+        // The CSP must match the logo origin of the view the body was built with.
+        res.setHeader("content-security-policy", v.settings.csp);
+        return result;
+      }
       v = now;
     }
   };
@@ -966,7 +992,7 @@ export function createStatusServer(options: ServerOptions): Server {
   };
 
   const serveIndex = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const { html, etag } = await withCurrentView(page);
+    const { html, etag } = await withCurrentView(res, page);
     if (etag !== undefined) {
       sendTaggedBody(req, res, html, etag, "text/html; charset=utf-8");
       return;
@@ -1004,7 +1030,15 @@ export function createStatusServer(options: ServerOptions): Server {
       );
       return true;
     }
-    if (await v.syndicate(url, req.headers["if-none-match"], res)) return true;
+    const syndicated = await withCurrentView(res, async (current) => {
+      const recorder = recordReply();
+      const isHit = await current.syndicate(url, req.headers["if-none-match"], recorder.sink);
+      return isHit ? recorder.reply() : undefined;
+    });
+    if (syndicated !== undefined) {
+      res.writeHead(syndicated.status, syndicated.headers).end(syndicated.body);
+      return true;
+    }
     if (url.pathname === "/" || url.pathname === "/index.html") {
       res.setHeader("referrer-policy", pageReferrerPolicy);
       await serveIndex(req, res);
@@ -1015,13 +1049,13 @@ export function createStatusServer(options: ServerOptions): Server {
       await serveLogo(res, logo);
       return true;
     }
-    const asset = await v.assetFor(url.pathname);
+    const asset = await withCurrentView(res, (current) => current.assetFor(url.pathname));
     if (asset !== undefined) {
       sendTaggedBody(req, res, asset.body, asset.etag, asset.type);
       return true;
     }
     if (url.pathname.startsWith("/api/")) {
-      await proxyApi(req, res, url, withCurrentView);
+      await proxyApi(req, res, url, (build) => withCurrentView(res, build));
       return true;
     }
     return false;
