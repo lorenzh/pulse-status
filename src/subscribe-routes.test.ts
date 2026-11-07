@@ -124,19 +124,20 @@ test("origin check on all three POST routes: real goes on; null, foreign and cro
     ["foreign", { origin: "https://evil.example" }, false],
     ["missing cross-site", { "sec-fetch-site": "cross-site" }, false],
   ];
+  const { notify, status } = await fixture(
+    (c) => answerJson(c.res, 202, accepted),
+    (c) => answerJson(c.res, 404, {}),
+  );
   for (const [path, body] of routes) {
     for (const [name, headers, isAllowed] of origins) {
-      const { notify, status } = await fixture(
-        (c) => answerJson(c.res, 202, accepted),
-        (c) => answerJson(c.res, 404, {}),
-      );
+      const before = notify.calls.length;
       const client = await send(status, formRequest(path, body, headers));
       if (isAllowed) {
-        await waitUntil(() => notify.calls.length === 1, `${path} ${name}`);
+        await waitUntil(() => notify.calls.length === before + 1, `${path} ${name}`);
       } else {
         await client.closed;
         assert.equal(statusOf(client.received()), 403, `${path} ${name}`);
-        assert.equal(notify.calls.length, 0, `${path} ${name}`);
+        assert.equal(notify.calls.length, before, `${path} ${name}`);
       }
     }
   }
