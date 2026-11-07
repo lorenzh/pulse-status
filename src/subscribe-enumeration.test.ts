@@ -1,0 +1,204 @@
+import { afterEach, test } from "bun:test";
+import assert from "node:assert/strict";
+import {
+  answerJson,
+  driveSubscribe,
+  type FakeNotify,
+  formHead,
+  formRequest,
+  type ManualScheduler,
+  manualScheduler,
+  type NotifyCall,
+  rawClient,
+  SMALL_ADMITTED,
+  startFakeNotify,
+  startStatus,
+  statusOf,
+  waitUntil,
+  withoutDate,
+} from "./subscribe-test-support.ts";
+
+const K = "sub-k@e2e.invalid";
+const U = "sub-u@e2e.invalid";
+
+const cleanups: (() => Promise<void> | void)[] = [];
+afterEach(async () => {
+  while (cleanups.length > 0) await cleanups.pop()?.();
+});
+
+interface Fixture {
+  port: number;
+  scheduler: ManualScheduler;
+  notify: FakeNotify;
+}
+
+async function fresh(behavior: (call: NotifyCall) => void): Promise<Fixture> {
+  const scheduler = manualScheduler();
+  const notify = await startFakeNotify(behavior, scheduler);
+  const status = await startStatus(notify.url, scheduler, {}, SMALL_ADMITTED);
+  cleanups.push(
+    () => notify.close(),
+    () => status.close(),
+  );
+  return { port: status.port, scheduler, notify };
+}
+
+const isK = (call: NotifyCall): boolean => call.body.includes("sub-k");
+const finished = (call: NotifyCall | undefined): Promise<void> =>
+  waitUntil(() => call === undefined || call.res.writableFinished || call.isAborted(), "fake done");
+
+/** Admits `waiting` answers that wait for their release and `partial` unfinished bodies. */
+async function fill(f: Fixture, waiting: number, partial: number): Promise<void> {
+  const before = f.scheduler.timers.length;
+  for (let i = 0; i < waiting; i++) {
+    await rawClient(f.port, formRequest("/subscribe", `email=w${i}%40e2e.invalid`));
+  }
+  for (let i = 0; i < partial; i++) await rawClient(f.port, `${formHead("/subscribe", 30)}email=`);
+  await waitUntil(
+    () =>
+      f.scheduler.timers.filter((t, i) => i >= before && t.ms === 5000).length ===
+      waiting + partial,
+    "filled",
+  );
+}
+
+type Case = {
+  name: string;
+  behavior: (call: NotifyCall) => void;
+  isCalling: boolean;
+  prepare?: (f: Fixture) => Promise<void>;
+  settle?: (call: NotifyCall | undefined) => Promise<void>;
+  /** One filled fixture serves both requests of an order. */
+  isSharable?: boolean;
+};
+
+const accepted = (call: NotifyCall): void => answerJson(call.res, 202, { status: "accepted" });
+
+// "below every limit", "L0 full" and "L8" are proven byte-equal in K/P/U and U/P/K orders by the
+// D22 cases of subscribe-timing.test.ts ("202 for K, a closed socket for U", "L0 full",
+// "no answer, ..."); they are not repeated here.
+const releaseCases: Case[] = [
+  {
+    name: "L9 one below (half waiting, half minus 1 partial)",
+    behavior: accepted,
+    isCalling: false,
+    prepare: (f) => fill(f, SMALL_ADMITTED / 2, SMALL_ADMITTED / 2 - 1),
+    isSharable: true,
+  },
+];
+
+/**
+ * A fresh fixture per request, unless `reuse` is given. A sharable case (L9 one below) and the
+ * notify outcomes reuse one fixture: each request is released and closed before the next starts,
+ * which frees its slot (proven by the L9 free-path tests), so the next request finds the same state.
+ */
+async function answerFor(c: Case, address: string, reuse?: Fixture): Promise<string> {
+  const f = reuse ?? (await fresh(c.behavior));
+  if (reuse === undefined) await c.prepare?.(f);
+  const driven = await driveSubscribe(f.port, f.scheduler, f.notify, address, {
+    // Half the cap of waiting answers (at least 8) hold L0 under "one below", so that case makes no call either.
+    isCalling: c.isCalling,
+    ...(c.settle === undefined ? {} : { settle: c.settle }),
+  });
+  assert.equal(driven.bytesBeforeRelease, 0);
+  assert.equal(statusOf(driven.answer), 200);
+  return withoutDate(driven.answer);
+}
+
+for (const c of releaseCases) {
+  test(`R8 ${c.name}: K and U get byte-equal answers in both orders`, async () => {
+    const shared = async (): Promise<Fixture | undefined> => {
+      if (c.isSharable !== true) return undefined;
+      const f = await fresh(c.behavior);
+      await c.prepare?.(f);
+      return f;
+    };
+    const f = await shared();
+    const ku = [await answerFor(c, K, f), await answerFor(c, U, f)];
+    const uk = [await answerFor(c, U, f), await answerFor(c, K, f)];
+    assert.equal(ku[0], ku[1]);
+    assert.equal(uk[0], uk[1]);
+    assert.equal(ku[0], uk[0]);
+  });
+}
+
+test("R8 L9 full (half waiting, half partial): valid and invalid get the same 503 page", async () => {
+  const answers: string[] = [];
+  // A refused request takes no slot and reads nothing, so one full fixture serves every order.
+  const f = await fresh(accepted);
+  await fill(f, SMALL_ADMITTED / 2, SMALL_ADMITTED / 2);
+  for (const body of [
+    `email=${K}`,
+    `email=${U}`,
+    `email=${U}`,
+    `email=${K}`,
+    "email=not-an-address",
+  ]) {
+    const calls = f.notify.calls.length;
+    const client = await rawClient(f.port, formRequest("/subscribe", body));
+    await client.closed;
+    assert.equal(statusOf(client.received()), 503);
+    assert.equal(f.notify.calls.length, calls);
+    answers.push(withoutDate(client.received()));
+  }
+  for (const answer of answers) assert.equal(answer, answers[0]);
+  assert.match(answers[0] ?? "", /The status page is busy\. Try again in a minute\./);
+  assert.match(answers[0] ?? "", /cache-control: no-store/i);
+});
+
+const outcomes: [string, (call: NotifyCall) => void][] = [
+  ["202", accepted],
+  ["400", (c) => answerJson(c.res, 400, { error: "bad" })],
+  ["401", (c) => answerJson(c.res, 401, { error: "auth" })],
+  ["429", (c) => answerJson(c.res, 429, { error: "slow" })],
+  ["503", (c) => answerJson(c.res, 503, { error: "store" })],
+  ["302", (c) => c.res.writeHead(302, { location: "http://127.0.0.1:9/" }).end()],
+  ["200 bad body", (c) => answerJson(c.res, 200, { status: "nope" })],
+  [
+    "202 wire 2",
+    (c) => answerJson(c.res, 202, { status: "accepted" }, { "x-pulse-contract": "2" }),
+  ],
+  ["closed socket", (c) => c.res.socket?.destroy()],
+];
+
+test("R8 notify outcomes: all nine answers are byte-equal, with the literal text", async () => {
+  const answers: string[] = [];
+  let current: (call: NotifyCall) => void = accepted;
+  const f = await fresh((call) => current(call));
+  for (const [, behavior] of outcomes) {
+    current = behavior;
+    for (const address of [K, U]) {
+      answers.push(
+        await answerFor({ name: "", behavior, isCalling: true, settle: finished }, address, f),
+      );
+    }
+  }
+  for (const answer of answers) assert.equal(answer, answers[0]);
+  const answer = answers[0] ?? "";
+  assert.match(answer, /^HTTP\/1\.1 200 /);
+  assert.ok(
+    answer.includes(
+      'If this address can be subscribed, we send it a confirmation link. The link works for 24 hours. If no email arrives within an hour, try again later or contact <a href="mailto:privacy@example.com">privacy@example.com</a>.',
+    ),
+  );
+  assert.match(answer, /<h2>Check your inbox<\/h2>/);
+  for (const header of ["location", "retry-after", "set-cookie", "etag"]) {
+    assert.doesNotMatch(answer, new RegExp(`^${header}:`, "im"));
+  }
+  assert.doesNotMatch(answer, /sub-[ku]|e2e\.invalid|evil\.example/);
+});
+
+test("R8: a forged Host and X-Forwarded-Host never reach the answer", async () => {
+  const f = await fresh(accepted);
+  const client = await rawClient(
+    f.port,
+    formRequest("/subscribe", `email=${K}`, {
+      host: "evil.example",
+      "x-forwarded-host": "evil.example",
+    }),
+  );
+  await waitUntil(() => f.scheduler.timers.length === 3, "timers");
+  f.scheduler.timers[1]?.fire();
+  await client.closed;
+  assert.doesNotMatch(client.received().toString(), /evil\.example/);
+});

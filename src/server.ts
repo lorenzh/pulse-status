@@ -32,7 +32,11 @@ import {
 import { assetEtag, etagFor, ifNoneMatchHits } from "./http-cache.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
 import { RESOLVED_WINDOW_MS } from "./render.ts";
+import type { SubscriptionContact } from "./settings.ts";
 import { renderState } from "./ssr.ts";
+import { createNotifyClient, type Schedule } from "./subscribe-client.ts";
+import { contactLink, subscribeSection } from "./subscribe-pages.ts";
+import { createSubscribeRoutes, type SubscribeRoutes } from "./subscribe-routes.ts";
 import { createSyndication } from "./syndication.ts";
 import { loadTheme, themeCss, validateName } from "./theme-config.ts";
 import { BROWSER_TIMEOUT_MARGIN_MS, MAX_UPSTREAM_TIMEOUT_MS } from "./upstream-timeout.ts";
@@ -67,7 +71,28 @@ export interface ServerOptions {
   metrics?: Metrics | undefined;
   /** Receives error detail that must not reach the client; default: discard. */
   log?: Logger | undefined;
+  /** Email subscriptions (R2); undefined means off, with today's answers. */
+  subscriptions?: ServerSubscriptions | undefined;
+  /** Timers of the subscription routes; default `setTimeout` with a cancel. */
+  schedule?: Schedule | undefined;
 }
+
+export interface ServerSubscriptions {
+  /** Base URL of the notify listener. */
+  notifyUrl: string;
+  /** Bearer token of the notify listener. */
+  token: string;
+  contact: SubscriptionContact;
+  /** Origin of PULSE_STATUS_PUBLIC_URL. */
+  origin: string;
+  /** The L9 admission cap; default 256. */
+  maxAdmitted?: number | undefined;
+}
+
+const defaultSchedule: Schedule = (fn, ms) => {
+  const handle = setTimeout(fn, ms);
+  return () => clearTimeout(handle);
+};
 
 export const DEFAULT_CACHE_MS = 2000;
 export const DEFAULT_UPSTREAM_TIMEOUT_MS = 4000;
@@ -203,6 +228,12 @@ const contractModules = new Set([
   "audit.js",
   "revision.js",
   "manual-incident-public.js",
+  "notify-channels.js",
+  "resend.js",
+  "runtime-settings.js",
+  "validate-runtime.js",
+  "subscriptions.js",
+  "validate-subscriptions.js",
 ]);
 // The contract's zod package, found from the contract's own location. Its .js files are served under
 // /pulse-contract/zod/ so the contract's `from "zod"` import stays same-origin.
@@ -344,7 +375,7 @@ function sendTaggedBody(
   res.writeHead(200, { "content-type": type, ...headers }).end(body);
 }
 
-function contentSecurityPolicy(logoOrigin: string | undefined): string {
+function contentSecurityPolicy(logoOrigin: string | undefined, hasForms: boolean): string {
   const img = logoOrigin === undefined ? "'self' data:" : `'self' data: ${logoOrigin}`;
   return [
     "default-src 'none'",
@@ -354,7 +385,7 @@ function contentSecurityPolicy(logoOrigin: string | undefined): string {
     "font-src 'self'",
     "connect-src 'self'",
     "base-uri 'none'",
-    "form-action 'none'",
+    hasForms ? "form-action 'self'" : "form-action 'none'",
     "frame-ancestors 'none'",
   ].join("; ");
 }
@@ -690,7 +721,8 @@ export function createStatusServer(options: ServerOptions): Server {
   const logo = resolveLogo(options.logo);
   const mark = wordmark(name, logo);
   const isHidden = options.hideDetails ?? true;
-  const csp = contentSecurityPolicy(logo?.origin);
+  const subscriptions = options.subscriptions;
+  const csp = contentSecurityPolicy(logo?.origin, subscriptions !== undefined);
   const ctx: ProxyContext = {
     apiBase: "",
     doFetch: options.fetch ?? fetch,
@@ -726,6 +758,28 @@ export function createStatusServer(options: ServerOptions): Server {
   const log: Logger = options.log ?? createLogger({ write: () => {} });
   const metrics = options.metrics ?? createMetrics({ now: ctx.now, pollMs: options.pollMs });
 
+  const contact = subscriptions === undefined ? "" : contactLink(subscriptions.contact);
+  const subscribeHtml = subscriptions === undefined ? "" : subscribeSection(contact);
+  const subscribeRoutes: SubscribeRoutes | undefined =
+    subscriptions === undefined
+      ? undefined
+      : createSubscribeRoutes({
+          origin: subscriptions.origin,
+          contact,
+          shell: { title: escapeHtml(title), wordmark: mark },
+          notify: createNotifyClient({
+            baseUrl: subscriptions.notifyUrl,
+            token: subscriptions.token,
+            fetch: ctx.doFetch,
+            schedule: options.schedule ?? defaultSchedule,
+            tokenTimeoutMs: ctx.timeoutMs,
+          }),
+          schedule: options.schedule ?? defaultSchedule,
+          now: ctx.now,
+          log,
+          maxAdmitted: subscriptions.maxAdmitted,
+        });
+
   // Read once: the template does not change while the server runs.
   const template = readFileSync(publicDir + "index.html", "utf8");
 
@@ -757,6 +811,7 @@ export function createStatusServer(options: ServerOptions): Server {
       feedLink,
       renderedLine: sections.rendered ?? "",
       checksTitle: sections.checksTitle ?? "Checks",
+      subscribe: subscribeHtml,
     };
     const html = template
       .replace(
@@ -808,6 +863,9 @@ export function createStatusServer(options: ServerOptions): Server {
   ): Promise<boolean> =>
     handleOps(req, res, ops) || (await syndicate(url, req.headers["if-none-match"], res));
 
+  // The subscribe form posts from the page; see `sendPage` in subscribe-routes.ts.
+  const pageReferrerPolicy = subscribeRoutes === undefined ? "no-referrer" : "same-origin";
+
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? "/", "http://localhost");
     res.setHeader("content-security-policy", csp);
@@ -815,12 +873,15 @@ export function createStatusServer(options: ServerOptions): Server {
     res.setHeader("x-frame-options", "DENY");
     res.setHeader("referrer-policy", "no-referrer");
     try {
+      // Before any await: the admission cap reserves its slot in this synchronous step (L9).
+      if (subscribeRoutes?.(req, res, url) === true) return;
       if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;
       }
       if (await serveGenerated(req, url, res)) return;
       if (url.pathname === "/" || url.pathname === "/index.html") {
+        res.setHeader("referrer-policy", pageReferrerPolicy);
         const { html, etag } = await page();
         if (etag !== undefined) {
           sendTaggedBody(req, res, html, etag, "text/html; charset=utf-8");

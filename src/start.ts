@@ -1,9 +1,37 @@
 import type { Server } from "node:http";
-import { type Logger, StartupError } from "@lorenzh/pulse-kit";
+import { type Logger, readSecretFile, StartupError } from "@lorenzh/pulse-kit";
 import { startApiPoll } from "./api-poll.ts";
 import { createMetrics, type Metrics } from "./metrics.ts";
-import { createStatusServer, type ServerOptions } from "./server.ts";
-import { readSettings, type Settings } from "./settings.ts";
+import { createStatusServer, type ServerOptions, type ServerSubscriptions } from "./server.ts";
+import { readSettings, type Settings, type SubscriptionSettings } from "./settings.ts";
+
+const TOKEN_FILE = "PULSE_STATUS_SUBSCRIPTIONS_TOKEN_FILE";
+const MIN_TOKEN_LENGTH = 32;
+const PRINTABLE_ASCII = /^[\x21-\x7e]+$/;
+
+/** Reads the bearer token once; the error never holds the token. */
+function readSubscriptions(
+  settings: SubscriptionSettings | undefined,
+  readFile: ((path: string) => string) | undefined,
+): ServerSubscriptions | undefined {
+  if (settings === undefined) return undefined;
+  const token = readSecretFile(settings.tokenFile, {
+    setting: TOKEN_FILE,
+    ...(readFile === undefined ? {} : { readFile }),
+  });
+  if (token.length < MIN_TOKEN_LENGTH || !PRINTABLE_ASCII.test(token)) {
+    throw new StartupError(
+      `${TOKEN_FILE}: the token must be at least ${MIN_TOKEN_LENGTH} printable ASCII characters`,
+      { setting: TOKEN_FILE },
+    );
+  }
+  return {
+    notifyUrl: settings.notifyUrl,
+    token,
+    contact: settings.contact,
+    origin: settings.origin,
+  };
+}
 
 export interface StartedServer {
   server: Server;
@@ -39,7 +67,9 @@ export function startFromSettings(
   settings: Settings,
   doFetch?: typeof fetch,
   log?: Logger,
+  readFile?: (path: string) => string,
 ): StartedServer {
+  const subscriptions = readSubscriptions(settings.subscriptions, readFile);
   const {
     port,
     apiUrl,
@@ -68,6 +98,7 @@ export function startFromSettings(
     fetch: doFetch,
     metrics,
     log,
+    subscriptions,
   });
   const startPolling = (): (() => void) =>
     startApiPoll({
