@@ -15,6 +15,7 @@ import {
   type NotifyCall,
   type RawClient,
   rawClient,
+  SMALL_ADMITTED,
   type StatusUnderTest,
   startFakeNotify,
   startStatus,
@@ -38,6 +39,7 @@ const accepted: SubscriptionAnswer = { status: "accepted" };
 async function fixture(
   onSubscribe: (call: NotifyCall) => void = (c) => answerJson(c.res, 202, accepted),
   onToken?: (call: NotifyCall) => void,
+  maxAdmitted?: number,
 ): Promise<{ notify: FakeNotify; status: StatusUnderTest }> {
   const scheduler = manualScheduler();
   const notify = await startFakeNotify((call) => {
@@ -48,7 +50,7 @@ async function fixture(
         status: call.path.endsWith("confirm") ? "confirmed" : "unsubscribed",
       });
   }, scheduler);
-  const status = await startStatus(notify.url, scheduler);
+  const status = await startStatus(notify.url, scheduler, {}, maxAdmitted);
   cleanups.push(
     () => notify.close(),
     () => status.close(),
@@ -435,9 +437,14 @@ async function probe(status: StatusUnderTest, records: Recorded[]): Promise<void
   first?.socket.destroy();
 }
 
-function heldFixture(): Promise<{ notify: FakeNotify; status: StatusUnderTest }> {
-  return fixture(() => undefined);
+/** The real cap of 256 by default; the fill tests pass the small cap through the same option. */
+function heldFixture(
+  maxAdmitted?: number,
+): Promise<{ notify: FakeNotify; status: StatusUnderTest }> {
+  return fixture(() => undefined, undefined, maxAdmitted);
 }
+
+const N = SMALL_ADMITTED;
 
 test("the review's race: 257 partial bodies admit exactly 256", async () => {
   const { notify, status } = await heldFixture();
@@ -476,12 +483,12 @@ test("the review's race: 257 partial bodies admit exactly 256", async () => {
   assert.equal(records.at(-1)?.status, 503);
 });
 
-test("self-check: an admission that counts after the body admits 257", async () => {
+test("self-check: an admission that counts after the body admits one more than the cap", async () => {
   // A wrong handler written here: the check before the body, the count after it.
   let waiting = 0;
   let releases = 0;
   const wrong = createServer((req, res) => {
-    if (waiting >= 256) {
+    if (waiting >= N) {
       res.writeHead(503).end();
       return;
     }
@@ -496,15 +503,15 @@ test("self-check: an admission that counts after the body admits 257", async () 
   cleanups.push(() => closeServer(wrong));
   const port = Number(new URL(url).port);
   const clients = await Promise.all(
-    Array.from({ length: 257 }, () => rawClient(port, `${PARTIAL}email=`)),
+    Array.from({ length: N + 1 }, () => rawClient(port, `${PARTIAL}email=`)),
   );
   cleanups.push(() => {
     for (const c of clients) c.socket.destroy();
   });
-  await waitUntil(() => records.length === 257, "257 requests");
+  await waitUntil(() => records.length === N + 1, "cap + 1 requests");
   for (const c of clients) c.write("a".repeat(24));
-  await waitUntil(() => releases === 257, "257 releases");
-  assert.equal(records.filter((r) => r.admitted).length, 257);
+  await waitUntil(() => releases === N + 1, "cap + 1 releases");
+  assert.equal(records.filter((r) => r.admitted).length, N + 1);
 });
 
 /** `since` is the timer count before the path started; counts only the path's own timers. */
@@ -588,12 +595,12 @@ const freePaths: [string, FreePath][] = [
   ],
 ];
 
-// One server with 255 held partial bodies serves every path: each path and its probe free
+// One server with N - 1 held partial bodies serves every path: each path and its probe free
 // their slots again before the next path starts, which the probe of the next path proves.
 test("L9: every free path frees exactly one slot at its response close", async () => {
-  const { status } = await heldFixture();
+  const { status } = await heldFixture(N);
   const records = recordAdmission(status.server);
-  await partials(status, records, 255);
+  await partials(status, records, N - 1);
   for (const [name, path] of freePaths) {
     const start = records.length;
     await path(status, status.scheduler.timers.length);
@@ -607,10 +614,10 @@ test("L9: every free path frees exactly one slot at its response close", async (
   }
 });
 
-test("L9: with 256 others admitted, a text/plain or invalid body still gets 503", async () => {
-  const { notify, status } = await heldFixture();
+test("L9: with the cap full, a text/plain or invalid body still gets 503", async () => {
+  const { notify, status } = await heldFixture(N);
   const records = recordAdmission(status.server);
-  await partials(status, records, 256);
+  await partials(status, records, N);
   const before = status.scheduler.timers.length;
   for (const request of [
     formRequest("/subscribe", validBody, { "content-type": "text/plain" }),
@@ -629,9 +636,9 @@ test("L9: with 256 others admitted, a text/plain or invalid body still gets 503"
 });
 
 test("L9 and L0 full: confirm and unsubscribe stay 200 and do not change the count", async () => {
-  const { notify, status } = await heldFixture();
+  const { notify, status } = await heldFixture(N);
   const records = recordAdmission(status.server);
-  const clients = await partials(status, records, 256);
+  const clients = await partials(status, records, N);
   for (const [i, c] of clients.slice(0, 8).entries())
     c.write(`a${i}%40e2e.invalid${"x".repeat(8)}`);
   await waitUntil(() => notify.calls.length === 8, "L0 full");
@@ -651,17 +658,17 @@ test("L9 and L0 full: confirm and unsubscribe stay 200 and do not change the cou
   assert.equal(records.at(-1)?.status, 503);
 });
 
-test("L9: closing all sockets restores 256 admissions and 1 refusal", async () => {
-  const { status } = await heldFixture();
+test("L9: closing all sockets restores the cap's admissions and 1 refusal", async () => {
+  const { status } = await heldFixture(N);
   const records = recordAdmission(status.server);
-  const first = await partials(status, records, 256);
+  const first = await partials(status, records, N);
   const closed = records.map((r) => r.closed);
   for (const c of first) c.socket.destroy();
   await Promise.all(closed);
   const start = records.length;
-  await partials(status, records, 257);
+  await partials(status, records, N + 1);
   const fresh = records.slice(start);
-  assert.equal(fresh.filter((r) => r.admitted).length, 256);
+  assert.equal(fresh.filter((r) => r.admitted).length, N);
   assert.equal(fresh.filter((r) => r.status === 503).length, 1);
 });
 
@@ -674,4 +681,25 @@ test("a closed client before the release cancels it and aborts the call", async 
   const release = status.scheduler.timers.find((t) => t.ms === 2000);
   assert.equal(release?.state, "cancelled");
   assert.equal(status.scheduler.timers.find((t) => t.ms === 1500)?.state, "cancelled");
+});
+
+test("the admission cap option must be a positive integer", () => {
+  for (const maxAdmitted of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(
+      () =>
+        createStatusServer({
+          apiUrl: "http://127.0.0.1:9",
+          pollMs: 1000,
+          cacheMs: 0,
+          subscriptions: {
+            notifyUrl: "http://127.0.0.1:9",
+            token: "t".repeat(32),
+            contact: { kind: "email", address: "privacy@example.com" },
+            origin: TEST_ORIGIN,
+            maxAdmitted,
+          },
+        }),
+      { name: "SubscribeOptionsError" },
+    );
+  }
 });

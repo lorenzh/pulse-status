@@ -15,6 +15,7 @@ import {
   manualScheduler,
   type NotifyCall,
   rawClient,
+  SMALL_ADMITTED,
   startFakeNotify,
   startStatus,
   statusOf,
@@ -118,14 +119,15 @@ const cases: TimingCase[] = [
     },
   },
   {
-    name: "L9 one below (255 admitted)",
+    name: "L9 one below (cap minus 1 admitted)",
     behavior: ok,
     isCalling: true,
     settle: finished,
     prepare: async (port, scheduler) => {
       const before = scheduler.timers.length;
-      for (let i = 0; i < 255; i++) await rawClient(port, `${formHead("/subscribe", 30)}email=`);
-      await waitUntil(() => scheduler.timers.length === before + 255, "255 admitted");
+      const count = SMALL_ADMITTED - 1;
+      for (let i = 0; i < count; i++) await rawClient(port, `${formHead("/subscribe", 30)}email=`);
+      await waitUntil(() => scheduler.timers.length === before + count, "cap minus 1 admitted");
     },
   },
 ];
@@ -154,7 +156,7 @@ async function runOrder(c: TimingCase, order: string[]): Promise<string[]> {
   held.clear();
   const scheduler = manualScheduler();
   const notify = await startFakeNotify(c.behavior, scheduler);
-  const status = await startStatus(notify.url, scheduler);
+  const status = await startStatus(notify.url, scheduler, {}, SMALL_ADMITTED);
   cleanups.push(
     () => notify.close(),
     () => status.close(),
@@ -173,7 +175,7 @@ async function runOrder(c: TimingCase, order: string[]): Promise<string[]> {
     }
     answers.push(withoutDate(driven.answer));
   }
-  assert.ok(scheduler.maxLive() <= 2 + (c.prepare === undefined ? 0 : 2 * 255 + 16));
+  assert.ok(scheduler.maxLive() <= 2 + (c.prepare === undefined ? 0 : 2 * SMALL_ADMITTED + 16));
   return answers;
 }
 
@@ -189,7 +191,7 @@ for (const c of cases) {
 test("D22: at most 2 live timers per request below every limit", async () => {
   const scheduler = manualScheduler();
   const notify = await startFakeNotify(() => undefined, scheduler);
-  const status = await startStatus(notify.url, scheduler);
+  const status = await startStatus(notify.url, scheduler, {}, SMALL_ADMITTED);
   cleanups.push(
     () => notify.close(),
     () => status.close(),
@@ -201,7 +203,7 @@ test("D22: at most 2 live timers per request below every limit", async () => {
 test("D22: requests refused before the address register 0 timers or exactly [5000]", async () => {
   const scheduler = manualScheduler();
   const notify = await startFakeNotify(() => undefined, scheduler);
-  const status = await startStatus(notify.url, scheduler);
+  const status = await startStatus(notify.url, scheduler, {}, SMALL_ADMITTED);
   cleanups.push(
     () => notify.close(),
     () => status.close(),
@@ -226,8 +228,10 @@ test("D22: requests refused before the address register 0 timers or exactly [500
     assert.ok(timers.every((t) => t.state === "cancelled"));
   }
   // L9 full: 0 timers.
-  for (let i = 0; i < 256; i++) await rawClient(status.port, `${formHead("/subscribe", 30)}email=`);
-  await waitUntil(() => scheduler.timers.length >= 256 + 3, "256 admitted");
+  for (let i = 0; i < SMALL_ADMITTED; i++) {
+    await rawClient(status.port, `${formHead("/subscribe", 30)}email=`);
+  }
+  await waitUntil(() => scheduler.timers.length >= SMALL_ADMITTED + 3, "cap admitted");
   const start = scheduler.timers.length;
   const busy = await rawClient(status.port, formRequest("/subscribe", `email=${K}`));
   await busy.closed;

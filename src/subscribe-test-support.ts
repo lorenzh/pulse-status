@@ -127,6 +127,8 @@ export function closeServer(server: Server): Promise<void> {
 }
 
 export const TEST_TOKEN = "status-test-token-0123456789abcdefghij";
+/** A small L9 cap for the fill tests; one test keeps the real 256 boundary. */
+export const SMALL_ADMITTED = 16;
 export const TEST_ORIGIN = "https://status.example.com";
 
 export interface StatusUnderTest {
@@ -143,6 +145,7 @@ export async function startStatus(
   notifyUrl: string,
   scheduler: ManualScheduler,
   extra: Partial<ServerOptions> = {},
+  maxAdmitted?: number,
 ): Promise<StatusUnderTest> {
   const logs: string[] = [];
   const record = (message: string, fields?: Record<string, unknown>): void => {
@@ -161,6 +164,7 @@ export async function startStatus(
       token: TEST_TOKEN,
       contact: { kind: "email", address: "privacy@example.com" },
       origin: TEST_ORIGIN,
+      maxAdmitted,
     },
     ...extra,
   });

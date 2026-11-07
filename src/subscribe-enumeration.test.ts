@@ -10,6 +10,7 @@ import {
   manualScheduler,
   type NotifyCall,
   rawClient,
+  SMALL_ADMITTED,
   startFakeNotify,
   startStatus,
   statusOf,
@@ -34,7 +35,7 @@ interface Fixture {
 async function fresh(behavior: (call: NotifyCall) => void): Promise<Fixture> {
   const scheduler = manualScheduler();
   const notify = await startFakeNotify(behavior, scheduler);
-  const status = await startStatus(notify.url, scheduler);
+  const status = await startStatus(notify.url, scheduler, {}, SMALL_ADMITTED);
   cleanups.push(
     () => notify.close(),
     () => status.close(),
@@ -73,33 +74,15 @@ type Case = {
 
 const accepted = (call: NotifyCall): void => answerJson(call.res, 202, { status: "accepted" });
 
+// "below every limit", "L0 full" and "L8" are proven byte-equal in K/P/U and U/P/K orders by the
+// D22 cases of subscribe-timing.test.ts ("202 for K, a closed socket for U", "L0 full",
+// "no answer, ..."); they are not repeated here.
 const releaseCases: Case[] = [
   {
-    name: "below every limit (K at once, U never)",
-    behavior: (call) => (isK(call) ? accepted(call) : undefined),
-    isCalling: true,
-  },
-  {
-    name: "L0 full",
-    behavior: () => undefined,
-    isCalling: false,
-    prepare: async (f) => {
-      for (let i = 0; i < 8; i++) {
-        await rawClient(f.port, formRequest("/subscribe", `email=h${i}%40e2e.invalid`));
-      }
-      await waitUntil(() => f.notify.calls.length === 8, "8 held");
-    },
-  },
-  {
-    name: "L8 (notify never answers)",
-    behavior: () => undefined,
-    isCalling: true,
-  },
-  {
-    name: "L9 one below (128 waiting, 127 partial)",
+    name: "L9 one below (half waiting, half minus 1 partial)",
     behavior: accepted,
     isCalling: false,
-    prepare: (f) => fill(f, 128, 127),
+    prepare: (f) => fill(f, SMALL_ADMITTED / 2, SMALL_ADMITTED / 2 - 1),
     isSharable: true,
   },
 ];
@@ -113,7 +96,7 @@ async function answerFor(c: Case, address: string, reuse?: Fixture): Promise<str
   const f = reuse ?? (await fresh(c.behavior));
   if (reuse === undefined) await c.prepare?.(f);
   const driven = await driveSubscribe(f.port, f.scheduler, f.notify, address, {
-    // 128 waiting answers hold L0 under "one below", so that case makes no call either.
+    // Half the cap of waiting answers (at least 8) hold L0 under "one below", so that case makes no call either.
     isCalling: c.isCalling,
     ...(c.settle === undefined ? {} : { settle: c.settle }),
   });
@@ -139,11 +122,11 @@ for (const c of releaseCases) {
   });
 }
 
-test("R8 L9 full (128 waiting, 128 partial): valid and invalid get the same 503 page", async () => {
+test("R8 L9 full (half waiting, half partial): valid and invalid get the same 503 page", async () => {
   const answers: string[] = [];
   // A refused request takes no slot and reads nothing, so one full fixture serves every order.
   const f = await fresh(accepted);
-  await fill(f, 128, 128);
+  await fill(f, SMALL_ADMITTED / 2, SMALL_ADMITTED / 2);
   for (const body of [
     `email=${K}`,
     `email=${U}`,

@@ -85,6 +85,8 @@ export interface ServerSubscriptions {
   contact: SubscriptionContact;
   /** Origin of PULSE_STATUS_PUBLIC_URL. */
   origin: string;
+  /** The L9 admission cap; default 256. */
+  maxAdmitted?: number | undefined;
 }
 
 const defaultSchedule: Schedule = (fn, ms) => {
@@ -775,6 +777,7 @@ export function createStatusServer(options: ServerOptions): Server {
           schedule: options.schedule ?? defaultSchedule,
           now: ctx.now,
           log,
+          maxAdmitted: subscriptions.maxAdmitted,
         });
 
   // Read once: the template does not change while the server runs.

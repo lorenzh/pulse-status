@@ -42,6 +42,13 @@ export interface SubscribeRouteOptions {
   schedule: Schedule;
   now: () => number;
   log: Logger;
+  /** The L9 cap; default SUBSCRIBE_MAX_ADMITTED. A positive integer. */
+  maxAdmitted?: number | undefined;
+}
+
+/** An option of the subscription routes is not valid. */
+export class SubscribeOptionsError extends Error {
+  override name = "SubscribeOptionsError";
 }
 
 /** Answers a request synchronously up to its first await; `false` means "not a subscription route". */
@@ -116,6 +123,10 @@ function throttledLog(now: () => number, write: () => void): () => void {
 
 export function createSubscribeRoutes(options: SubscribeRouteOptions): SubscribeRoutes {
   const { shell, contact, schedule, log } = options;
+  const maxAdmitted = options.maxAdmitted ?? SUBSCRIBE_MAX_ADMITTED;
+  if (!Number.isSafeInteger(maxAdmitted) || maxAdmitted < 1) {
+    throw new SubscribeOptionsError("maxAdmitted must be a positive integer");
+  }
   let admitted = 0;
   let inFlight = 0;
   const logBusy = throttledLog(options.now, () => log.warn("subscription request refused (busy)"));
@@ -231,7 +242,7 @@ export function createSubscribeRoutes(options: SubscribeRouteOptions): Subscribe
       return;
     }
     // Check and reservation in one synchronous step, before any body byte (L9).
-    if (admitted >= SUBSCRIBE_MAX_ADMITTED) {
+    if (admitted >= maxAdmitted) {
       logBusy();
       sendPage(res, 503, busyPage);
       return;
