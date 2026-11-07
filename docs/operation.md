@@ -205,7 +205,7 @@ With `PULSE_STATUS_SUBSCRIPTIONS_URL` set, the page has a form under "Maintenanc
 
 All these pages have `cache-control: no-store`. With subscriptions on, the CSP has `form-action 'self'`; without them, `form-action 'none'`, `405` for every `POST` and `404` for these paths.
 
-The subscribe answer does not tell whether an address is known. Status answers every valid address with the same bytes, written by one timer 2000 ms after the address passed, whatever notify answered and when. The call to notify ends after 1500 ms. A form is posted from the configured origin only: an `Origin` header must equal the origin of `PULSE_STATUS_PUBLIC_URL`, and without it a `Sec-Fetch-Site` header must be `same-origin` or `none`. `Host`, `X-Forwarded-*` and `Referer` are never read for this.
+The subscribe answer does not tell whether an address is known. Status answers every valid address with the same bytes, written by one timer 2000 ms after the address passed, whatever notify answered and when. The call to notify ends after 1500 ms. A form is posted from the configured origin only: an `Origin` header must be present and equal the origin of `PULSE_STATUS_PUBLIC_URL`; a missing or `null` Origin gets `403`. A `Sec-Fetch-Site` header, when sent, must also be `same-origin` or `none`. A client without JavaScript still works, because browsers send `Origin` on every form POST; `curl` must send `-H 'Origin: <public origin>'`. `Host`, `X-Forwarded-*` and `Referer` are never read for this.
 
 Logs carry fixed texts and the failure kind of a notify call (`status <code>`, `timeout`, `network`, `version`, `invalid body`). They never hold an address, a token or the notify URL.
 

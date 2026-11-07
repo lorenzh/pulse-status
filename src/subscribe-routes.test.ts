@@ -110,7 +110,7 @@ test("origin, type, size and fields are refused with their codes and no notify c
   assert.equal(notify.calls.length, 0);
 });
 
-test("origin check on all three POST routes: real goes on; null, foreign and cross-site are 403", async () => {
+test("origin check on all three POST routes: real goes on; missing, null, foreign and cross-site are 403", async () => {
   const routes: [string, string][] = [
     ["/subscribe", "email=sub-a%40e2e.invalid"],
     ["/subscribe/confirm", `token=${CONFIRM_TOKEN}`],
@@ -118,7 +118,9 @@ test("origin check on all three POST routes: real goes on; null, foreign and cro
   ];
   const origins: [string, Record<string, string>, boolean][] = [
     ["real", { origin: TEST_ORIGIN, "sec-fetch-site": "same-origin" }, true],
-    ["missing", {}, true],
+    ["missing", { origin: "" }, false],
+    ["missing same-origin", { origin: "", "sec-fetch-site": "same-origin" }, false],
+    ["real cross-site", { origin: TEST_ORIGIN, "sec-fetch-site": "cross-site" }, false],
     ["null", { origin: "null" }, false],
     ["null same-origin", { origin: "null", "sec-fetch-site": "same-origin" }, false],
     ["foreign", { origin: "https://evil.example" }, false],

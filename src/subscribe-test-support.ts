@@ -209,9 +209,13 @@ export function formHead(
     host: "status.example.com",
     "content-type": "application/x-www-form-urlencoded",
     "content-length": String(length),
+    origin: TEST_ORIGIN,
     ...headers,
   };
-  const lines = Object.entries(all).map(([k, v]) => `${k}: ${v}`);
+  // An empty value drops the header, so a test can send a request without it.
+  const lines = Object.entries(all)
+    .filter(([, v]) => v !== "")
+    .map(([k, v]) => `${k}: ${v}`);
   return `POST ${path} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
 }
 

@@ -70,12 +70,15 @@ function sendPage(res: ServerResponse, status: number, html: string, hasForm = f
   res.end(html);
 }
 
-/** R2 origin check. `Host`, `X-Forwarded-*` and `Referer` are never read. */
+/**
+ * Origin check (R2 with the manager's decision on #819): `Origin` must be present and equal the
+ * configured origin; a missing or `null` Origin is refused. `Sec-Fetch-Site`, when sent, must also
+ * be `same-origin` or `none`. `Host`, `X-Forwarded-*` and `Referer` are never read.
+ */
 function isOriginAllowed(req: IncomingMessage, origin: string): boolean {
-  const sent = req.headers.origin;
   const site = req.headers["sec-fetch-site"];
-  if (sent !== undefined) return sent === origin;
-  return site === undefined || site === "same-origin" || site === "none";
+  if (site !== undefined && site !== "same-origin" && site !== "none") return false;
+  return req.headers.origin === origin;
 }
 
 function isForm(req: IncomingMessage): boolean {
