@@ -67,6 +67,8 @@ type Case = {
   isCalling: boolean;
   prepare?: (f: Fixture) => Promise<void>;
   settle?: (call: NotifyCall | undefined) => Promise<void>;
+  /** One filled fixture serves both requests of an order. */
+  isSharable?: boolean;
 };
 
 const accepted = (call: NotifyCall): void => answerJson(call.res, 202, { status: "accepted" });
@@ -98,12 +100,18 @@ const releaseCases: Case[] = [
     behavior: accepted,
     isCalling: false,
     prepare: (f) => fill(f, 128, 127),
+    isSharable: true,
   },
 ];
 
-async function answerFor(c: Case, address: string): Promise<string> {
-  const f = await fresh(c.behavior);
-  await c.prepare?.(f);
+/**
+ * A fresh fixture per request. Only "L9 one below" reuses its filled fixture for one order: its
+ * request is released and closed before the next starts, which frees its slot (proven by the
+ * L9 free-path tests), so the next request finds the same 255 admitted.
+ */
+async function answerFor(c: Case, address: string, reuse?: Fixture): Promise<string> {
+  const f = reuse ?? (await fresh(c.behavior));
+  if (reuse === undefined) await c.prepare?.(f);
   const driven = await driveSubscribe(f.port, f.scheduler, f.notify, address, {
     // 128 waiting answers hold L0 under "one below", so that case makes no call either.
     isCalling: c.isCalling,
@@ -116,8 +124,16 @@ async function answerFor(c: Case, address: string): Promise<string> {
 
 for (const c of releaseCases) {
   test(`R8 ${c.name}: K and U get byte-equal answers in both orders`, async () => {
-    const ku = [await answerFor(c, K), await answerFor(c, U)];
-    const uk = [await answerFor(c, U), await answerFor(c, K)];
+    const shared = async (): Promise<Fixture | undefined> => {
+      if (c.isSharable !== true) return undefined;
+      const f = await fresh(c.behavior);
+      await c.prepare?.(f);
+      return f;
+    };
+    const first = await shared();
+    const ku = [await answerFor(c, K, first), await answerFor(c, U, first)];
+    const second = await shared();
+    const uk = [await answerFor(c, U, second), await answerFor(c, K, second)];
     assert.equal(ku[0], ku[1]);
     assert.equal(uk[0], uk[1]);
     assert.equal(ku[0], uk[0]);
@@ -126,9 +142,16 @@ for (const c of releaseCases) {
 
 test("R8 L9 full (128 waiting, 128 partial): valid and invalid get the same 503 page", async () => {
   const answers: string[] = [];
-  for (const body of [`email=${K}`, `email=${U}`, "email=not-an-address", `email=${U}`]) {
-    const f = await fresh(accepted);
-    await fill(f, 128, 128);
+  // A refused request takes no slot and reads nothing, so one full fixture serves every order.
+  const f = await fresh(accepted);
+  await fill(f, 128, 128);
+  for (const body of [
+    `email=${K}`,
+    `email=${U}`,
+    `email=${U}`,
+    `email=${K}`,
+    "email=not-an-address",
+  ]) {
     const calls = f.notify.calls.length;
     const client = await rawClient(f.port, formRequest("/subscribe", body));
     await client.closed;
