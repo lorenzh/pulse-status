@@ -1090,7 +1090,17 @@ export function createStatusServer(options: ServerOptions): Server {
         return;
       }
       // Subscription requests reach admission before any await (L9).
-      if (subscribeRoutes?.(req, res, url) === true) return;
+      if (subscribeRoutes !== undefined) {
+        // A subscription page reads its branding when it is written, possibly after an await;
+        // its CSP must come from the same, current view.
+        const writeHead = res.writeHead.bind(res) as (...args: unknown[]) => ServerResponse;
+        res.writeHead = ((...args: unknown[]) => {
+          res.setHeader("content-security-policy", currentView().settings.csp);
+          return writeHead(...args);
+        }) as typeof res.writeHead;
+        if (subscribeRoutes(req, res, url)) return;
+        res.writeHead = writeHead as typeof res.writeHead;
+      }
       if (!isRead) {
         res.writeHead(405, { allow: "GET, HEAD" }).end();
         return;

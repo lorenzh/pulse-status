@@ -77,6 +77,58 @@ test("subscriptions use live branding, allow same-origin forms and wait for sett
   }
 });
 
+test("a delayed subscription answer carries the csp of the logo it shows", async () => {
+  const resolve = (logoUrl: string): EffectiveSettings =>
+    resolveSettings({
+      env: {},
+      file: { settings: {}, themeVia: "settings file" },
+      database: { logoUrl },
+      defaultTheme,
+    });
+  let current = resolve("https://old.example/logo.svg");
+  const timers: { run: () => void; ms: number }[] = [];
+  const server = createStatusServer({
+    apiUrl: "http://api.test",
+    pollMs: 1000,
+    cacheMs: 0,
+    now: () => 1000,
+    fetch: Object.assign(async () => new Response("{}", { headers: JSON_HEADERS }), {
+      preconnect: () => {},
+    }),
+    schedule: (run, ms) => {
+      timers.push({ run, ms });
+      return () => {};
+    },
+    runtime: { current: () => current, isReady: () => true },
+    subscriptions: {
+      notifyUrl: "http://notify.test",
+      token: "subscription-sentinel-token",
+      contact: { kind: "email", address: "privacy@example.com" },
+      origin: "https://status.example.com",
+    },
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  servers.push(server);
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const answer = fetch(`${base}/subscribe`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      origin: "https://status.example.com",
+    },
+    body: "email=a%40example.com",
+  });
+  while (!timers.some((t) => t.ms === 2000)) await new Promise((r) => setImmediate(r));
+  current = resolve("https://new.example/logo.svg");
+  timers.find((t) => t.ms === 2000)?.run();
+  const response = await answer;
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /https:\/\/new\.example\/logo\.svg/);
+  const csp = response.headers.get("content-security-policy") ?? "";
+  assert.match(csp, /https:\/\/new\.example/);
+  assert.doesNotMatch(csp, /old\.example/);
+});
+
 const check = {
   id: "web",
   name: "Web",
