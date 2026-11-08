@@ -1,6 +1,6 @@
 # Install and run
 
-pulse-status needs a running [pulse-api](https://github.com/lorenzh/pulse-api/blob/main/docs/install.md). The pulse-api repository also has a Compose file that starts the whole stack, including this page.
+pulse-status needs a running [pulse-api](https://github.com/lorenzh/pulse-api/blob/main/docs/install.md). The `full` setup of [pulse-deploy](https://github.com/lorenzh/pulse-deploy/blob/main/full/README.md) starts the whole stack, including this page, from [`full/compose.yaml`](https://github.com/lorenzh/pulse-deploy/blob/main/full/compose.yaml).
 
 ## With Bun
 
