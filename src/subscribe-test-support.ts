@@ -276,6 +276,8 @@ export interface DriveOptions {
   settle?: (call: NotifyCall | undefined) => Promise<void> | void;
   /** Fire the call's own timeout before the release. */
   isCallTimeoutFired?: boolean;
+  /** Runs before the bytes are counted and the release fires (for example: wait for an early answer). */
+  beforeRelease?: (client: RawClient) => Promise<void> | void;
 }
 
 /**
@@ -316,6 +318,7 @@ export async function driveSubscribe(
   }
   // Give a wrong handler every chance to write early.
   for (let turn = 0; turn < 50; turn++) await new Promise((r) => setImmediate(r));
+  await options.beforeRelease?.(client);
   const bytesBeforeRelease = client.received().length;
   scheduler.timers[start + 1]?.fire();
   await client.closed;
