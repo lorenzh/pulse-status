@@ -14,6 +14,7 @@ import {
   type ManualScheduler,
   manualScheduler,
   type NotifyCall,
+  type RawClient,
   rawClient,
   SMALL_ADMITTED,
   startFakeNotify,
@@ -247,6 +248,7 @@ async function wrongServer(
   scheduler: ManualScheduler,
   notifyUrl: string,
   wrong: "early answer" | "call timeout 2000",
+  gate?: Promise<void>,
 ): Promise<number> {
   const write = (res: ServerResponse): void => {
     if (!res.writableEnded) res.writeHead(200, { "content-type": "text/html" }).end("answer");
@@ -266,15 +268,20 @@ async function wrongServer(
         validate: (raw) => validateSubscriptionAnswer(raw),
         schedule: scheduler.schedule,
         timeoutMs: wrong === "call timeout 2000" ? 2000 : 1500,
-      }).then(() => {
-        if (wrong === "early answer") write(res);
-      });
+      })
+        .then(() => gate)
+        .then(() => {
+          if (wrong === "early answer") write(res);
+        });
     });
   });
   const url = await listen(server);
   cleanups.push(() => closeServer(server));
   return Number(new URL(url).port);
 }
+
+const earlyBytes = (client: RawClient): Promise<void> =>
+  waitUntil(() => client.received().length > 0, "early answer bytes");
 
 test("self-check: an early answer fails check 2, a 2000 call timeout fails check 1", async () => {
   for (const wrong of ["early answer", "call timeout 2000"] as const) {
@@ -285,6 +292,7 @@ test("self-check: an early answer fails check 2, a 2000 call timeout fails check
     const driven = await driveSubscribe(port, scheduler, notify, K, {
       isCalling: true,
       settle: finished,
+      ...(wrong === "early answer" ? { beforeRelease: earlyBytes } : {}),
     });
     if (wrong === "early answer") {
       assert.ok(driven.bytesBeforeRelease > 0);
@@ -297,4 +305,25 @@ test("self-check: an early answer fails check 2, a 2000 call timeout fails check
       assert.throws(() => checkRequest(driven, { isCalling: true }), /1500/);
     }
   }
+});
+
+test("self-check: an early answer let through just before the release is counted", async () => {
+  const scheduler = manualScheduler();
+  const notify = await startFakeNotify(ok, scheduler);
+  cleanups.push(() => notify.close());
+  const gate = Promise.withResolvers<void>();
+  const port = await wrongServer(scheduler, notify.url, "early answer", gate.promise);
+  const releaseStates: string[] = [];
+  const driven = await driveSubscribe(port, scheduler, notify, K, {
+    isCalling: true,
+    settle: finished,
+    beforeRelease: async (client) => {
+      gate.resolve();
+      await earlyBytes(client);
+      releaseStates.push(...scheduler.timers.filter((t) => t.ms === 2000).map((t) => t.state));
+    },
+  });
+  assert.ok(driven.bytesBeforeRelease > 0);
+  assert.deepEqual(releaseStates, ["live"]);
+  assert.throws(() => checkRequest(driven, { isCalling: true }), /0/);
 });
