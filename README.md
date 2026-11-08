@@ -56,7 +56,7 @@ Released images are on `ghcr.io/lorenzh/pulse-status` for linux/amd64 and linux/
 docker pull ghcr.io/lorenzh/pulse-status:0.1.0
 ```
 
-pulse-api's repository has a Compose file that starts the whole stack with `docker compose up`.
+The `full` setup of [pulse-deploy](https://github.com/lorenzh/pulse-deploy/blob/main/full/README.md) starts the whole stack, including this page, from [`full/compose.yaml`](https://github.com/lorenzh/pulse-deploy/blob/main/full/compose.yaml). From a pulse-deploy checkout, run `scripts/init-secrets.sh` once, then `docker compose -f full/compose.yaml up -d` ([start, stop, reset](https://github.com/lorenzh/pulse-deploy/blob/main/full/README.md#start-stop-reset)). The page is published on host port `${PULSE_STATUS_PORT:-8080}` on all interfaces and listens on 8080 in the container. The api is not published on the host.
 
 ## Documentation
 
