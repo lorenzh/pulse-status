@@ -144,7 +144,7 @@ function harness(options: Options): Harness {
   });
 
   const drain = async (): Promise<void> => {
-    for (let i = 0; i < 30; i += 1) await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 10; i += 1) await new Promise((r) => setImmediate(r));
   };
   const run = async (untilMs: number): Promise<void> => {
     for (;;) {
@@ -185,7 +185,7 @@ function gaps(times: number[]): number[] {
 
 /** Runs the fake clock until `count` calls to `path` started (or a time limit). */
 async function runUntil(h: Harness, path: string, count: number): Promise<void> {
-  while (starts(h, path).length < count && h.now() < 2_000_000) await h.run(h.now() + 1000);
+  while (starts(h, path).length < count && h.now() < 2_000_000) await h.run(h.now() + 30_000);
 }
 
 async function heartbeat(
