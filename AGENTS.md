@@ -55,6 +55,10 @@ repository. Bun 1.4.0 (runtime, package manager, test runner), ESM, strict TypeS
 - Name a function by its effect (`postResult`, `applyResult`); a pure query reads as a noun or question (`quorumStatus`, `isStale`).
 - Booleans start with `is`, `has`, or `can`. Files are kebab-case.
 
+## Code conventions
+
+The pulse [code conventions](https://github.com/lorenzh/pulse-meta/blob/main/docs/code-conventions.md) apply to every change. Search the browser modules (`src/render.ts`, `src/sections.ts`, `src/components-view.ts`), `@lorenzh/pulse-kit` and the contract before writing a helper, and move the second copy of markup or formatting into a shared one. Rendering and formatting stay small pure functions of their input.
+
 ## Errors
 
 - Throw only `Error` subclasses with a `name`. Wrap with `{ cause }` instead of losing the original.
